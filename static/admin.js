@@ -1023,6 +1023,26 @@
       row.append(n, a); bd.append(row);
     });
     const parts = [bd];
+    // Spotify leads the meters because it is the ceiling that actually binds now: a
+    // shared ~780 Searches/day for the WHOLE app on one client_id, so exhausting it
+    // 429s the on-demand door for every user at once (7.3h, on 2026-07-16) — and it's
+    // the one limit a bigger Render box cannot buy off. It also grows with every person
+    // invited, which none of the other meters do. costMeter's warn/bad thresholds (50/80%)
+    // read correctly here: this is a budget to stay UNDER, not capacity to fill.
+    if (u.spotify && u.spotify.ceiling) {
+      const s = u.spotify;
+      // null (not 0) means the counter itself couldn't be read — say so rather than
+      // report a reassuring zero.
+      const od = s.on_demand_today == null ? "?" : s.on_demand_today;
+      parts.push(costMeter(
+        "Spotify Searches today (door " + od + " + prewarm " + s.prewarm_today + ")",
+        s.spent_today, s.ceiling,
+        s.spent_today + " / " + s.ceiling + " · " + s.headroom + " left"));
+    } else if (u.spotify_error) {
+      const e = document.createElement("div"); e.className = "cost-note";
+      e.textContent = "Spotify burn unavailable: " + u.spotify_error;
+      parts.push(e);
+    }
     if (u.concurrency_now != null && cap.render_threads) {
       parts.push(costMeter("Render requests in flight (this worker · peak "
         + (u.concurrency_peak == null ? "—" : u.concurrency_peak) + ")",
@@ -1046,11 +1066,14 @@
         fmtSize(u.db_bytes) + " / " + (cap.supabase_db_gb || "—") + " GB"));
     }
     const note = document.createElement("div"); note.className = "cost-note";
-    note.textContent = "First to bump: the Render box, not Supabase. 0.5 vCPU "
-      + "carries the beta and likely 150–250 casual daily users; when cold-starts "
-      + "or concurrency tighten, Starter → Standard adds ~$18/mo for 4× headroom. "
-      + "Supabase Pro buys daily backups, not capacity — egress and true "
-      + "MAU live in the Supabase dashboard.";
+    note.textContent = "First to bump is SPOTIFY, not the box: its ~780 Searches/day "
+      + "is shared by the whole app on one client_id, so running it out 429s the "
+      + "on-demand door for everyone at once — and it's the only ceiling here that "
+      + "grows with each person invited, and that money can't lift. The prewarm's "
+      + "share is capped (tools/prewarm_spotify.sh LIMIT); the rest is real door "
+      + "opens. After that it's the Render box, not Supabase — when cold-starts or "
+      + "concurrency tighten, more vCPU is a cheap fix. Supabase Pro buys daily "
+      + "backups, not capacity — egress and true MAU live in the Supabase dashboard.";
     parts.push(note);
     meters.replaceChildren(...parts);
 

@@ -23,6 +23,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import config
 import db
+import opsdb
 from poolshape import (  # noqa: F401 - re-exported so pooldb.<name> call sites keep working
     _door_platforms,
     _door_shape,
@@ -1030,6 +1031,21 @@ def backfill_youtube(uid, *, resolver=None):
 # (§IV.3.a.i / §IX.8.7). NEVER add this to the forever full-calendar crawl_doors.sh
 # loop: a calendar-wide crawl would be the §IV.2.d.i spider/index the Terms forbid.
 
+def _spotify_configured():
+    """Does THIS host actually hold Spotify creds — i.e. can a call go out at all?
+
+    The burn counter needs this because `coverage_study.spotify_album` no-ops CLEANLY
+    without creds: it returns (False, None, False), byte-identical to a genuine
+    no-match. Counting that would report quota spent on a box that never called
+    anything — a dev sim, the public tree, a lapsed app — and this panel's whole job is
+    to be an honest read of a shared, invisible budget. Prod holds creds, so every call
+    counted there is a real Search.
+    Read from the env, not config, because that's where coverage_study reads them (and
+    it re-reads until they appear, so a mid-life config change is picked up)."""
+    return bool(os.environ.get("SPOTIFY_CLIENT_ID")
+                and os.environ.get("SPOTIFY_CLIENT_SECRET"))
+
+
 def _spotify_resolver():
     """coverage_study.spotify_album, or None if the cascade module doesn't expose it
     (e.g. a test that injected a stand-in coverage_study). Lazy via the same importer
@@ -1095,6 +1111,17 @@ def backfill_spotify(uid, *, resolver=None, ttl_days=None, now=None):
             return "evicted"
         return "absent"
     hit, url, err = resolver(prow["artist"] or "", prow["title"] or "")
+    # A Search just went out — this is the ONLY line in the app that spends Spotify
+    # quota, so it's the only honest place to count it. Everything above short-circuits
+    # on the cache ('have'/'skip') or on having no resolver, and spends nothing.
+    # Counted per-host (opsdb): on prod that's real users' door opens — the half of the
+    # ~780/day budget that grows with every person invited and was never measured; on
+    # the Mac it's the prewarm's own burn. A miss/err costs a Search just like a hit,
+    # so all three outcomes count — but only where creds mean a call could REALLY go
+    # out (see _spotify_configured: a credless no-op is shaped exactly like a no-match).
+    if _spotify_configured():
+        opsdb.record_spotify_search(
+            "err" if err else ("filled" if (hit and url) else "miss"), now=now_dt)
     if err:
         return "err"                       # transient: leave the row as-is
     if not hit or not url:

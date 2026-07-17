@@ -60,6 +60,7 @@ import db
 import feedback
 import fetch_art
 import journal
+import opsdb
 import pooldb
 import prefetch
 import store
@@ -1895,6 +1896,29 @@ def api_admin_cost():
             usage["concurrency_peak"] = _concurrency["peak"]
     except Exception:  # noqa: BLE001 - a gauge read is never worth a failure
         pass
+    # Spotify's daily Search budget — the one ceiling that a bigger box can't buy off,
+    # and the only one that grows with every person invited. Both spenders, both
+    # MEASURED (no configured number to drift): the prewarm's own `attempted` from the
+    # Mac-written pool log, and real users' door opens counted on THIS host (opsdb —
+    # not pool.sqlite, which the rsync replaces wholesale). Blowing the ceiling 429s
+    # the door for everyone at once, so the honest reading is headroom, not usage.
+    try:
+        burn = opsdb.spotify_burn_today()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        prewarm = sum(r.get("attempted") or 0 for r in pooldb.spotify_log(50)
+                      if (r.get("run_at") or "").startswith(today))
+        on_demand = (burn or {}).get("searches")
+        spent = (on_demand or 0) + prewarm
+        usage["spotify"] = {
+            "ceiling": config.SPOTIFY_DAILY_CEILING,
+            "on_demand_today": on_demand,          # None = counter unreadable, not zero
+            "prewarm_today": prewarm,
+            "spent_today": spent,
+            "headroom": max(config.SPOTIFY_DAILY_CEILING - spent, 0),
+            "detail": burn,
+        }
+    except Exception as e:  # noqa: BLE001 - report, never sink the panel
+        usage["spotify_error"] = str(e)
     out["usage"] = usage
     accounts = usage.get("accounts")
     out["cost_per_account"] = (round(out["fixed_monthly"] / accounts, 2)

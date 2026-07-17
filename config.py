@@ -37,6 +37,11 @@ SEARCH_DB_PATH = Path(os.environ.get("AOTD_SEARCH_DB", DATA_DIR / "search.db"))
 POOL_DB_PATH = Path(os.environ.get("AOTD_POOL_DB", DATA_DIR / "pool.sqlite"))
 POOL_ENABLED = os.environ.get("AOTD_USE_POOL", "") not in ("", "0", "false", "False")
 
+# ops.sqlite — counters this HOST owns and writes (opsdb.py). Deliberately NOT a table
+# in pool.sqlite: rsync_pool.sh replaces that file WHOLESALE several times a day, which
+# would silently reset anything the server wrote. Same disk, never in the rsync.
+OPS_DB_PATH = Path(os.environ.get("AOTD_OPS_DB", DATA_DIR / "ops.sqlite"))
+
 # UC1 Phase 0 — the source-neutral catalog entity layer (UNIFIED_CATALOG_DESIGN.md,
 # Appendix A). Stable ULID `alb_id`s + an `entity_members` index over the pool, built
 # additively by tools/build_catalog_entities.py and read via catalogdb.py. Carried
@@ -103,6 +108,14 @@ DOOR_HTTP_BACKOFF = float(os.environ.get("AOTD_DOOR_BACKOFF", "0"))
 # (§IX.8.7's delete-on-termination, self-enforcing). Default 2 days = today +
 # tomorrow, matching the nightly prewarm horizon.
 SPOTIFY_CACHE_TTL_DAYS = int(os.environ.get("AOTD_SPOTIFY_TTL_DAYS", "2"))
+
+# The whole app's Spotify Search budget for one day — MEASURED 2026-07-16, not a
+# documented figure (dev mode publishes none). Prod uses ONE client_id, so blowing it
+# 429s the on-demand door for EVERY user at once; that day it cost a 7.3h ban. Two
+# spenders share it: the bounded prewarm (tools/prewarm_spotify.sh LIMIT) and real
+# users' door opens (counted per-host in opsdb.spotify_burn). /admin shows both against
+# this number. It is a ceiling to stay UNDER, never a target.
+SPOTIFY_DAILY_CEILING = int(os.environ.get("AOTD_SPOTIFY_CEILING", "780"))
 
 # Your listening journal + notes. This is the one piece of irreplaceable,
 # user-authored data, so it lives in its OWN file that build_db.py never
