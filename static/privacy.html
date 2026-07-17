@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Music Forest &#8212; Privacy Policy</title>
+<style>
+  :root {
+    --ground:#14150e; --panel:#1c1e14; --panel-2:#23261a; --raise:#2b2e1f;
+    --line:#3a3d2c; --line-soft:#2c2f21;
+    --ink:#e9ead9; --ink-soft:#abb096; --ink-faint:#7f8468;
+    --accent:#9cc178; --accent-ink:#14150e;
+    --serif:"Iowan Old Style","Palatino Linotype","Book Antiqua",Palatino,Georgia,serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --ground:#e7e9dd; --panel:#f2f3ea; --panel-2:#fbfcf5; --raise:#ffffff;
+      --line:#ccd0bd; --line-soft:#dde0d1;
+      --ink:#25281c; --ink-soft:#585d47; --ink-faint:#868b70;
+      --accent:#4d7736; --accent-ink:#ffffff;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#14150e; --panel:#1c1e14; --panel-2:#23261a; --raise:#2b2e1f;
+    --line:#3a3d2c; --line-soft:#2c2f21;
+    --ink:#e9ead9; --ink-soft:#abb096; --ink-faint:#7f8468;
+    --accent:#9cc178; --accent-ink:#14150e;
+  }
+  :root[data-theme="light"] {
+    --ground:#e7e9dd; --panel:#f2f3ea; --panel-2:#fbfcf5; --raise:#ffffff;
+    --line:#ccd0bd; --line-soft:#dde0d1;
+    --ink:#25281c; --ink-soft:#585d47; --ink-faint:#868b70;
+    --accent:#4d7736; --accent-ink:#ffffff;
+  }
+
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--ground); color:var(--ink); font-family:var(--sans); line-height:1.62; -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(120% 80% at 50% -10%, color-mix(in oklab, var(--accent) 6%, transparent), transparent 60%); }
+  .wrap { max-width:760px; margin:0 auto; padding:clamp(1.2rem,4vw,2.6rem) clamp(1rem,4vw,1.6rem) 5rem; }
+
+  .top { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:2.2rem; }
+  .home { display:inline-flex; align-items:center; gap:.55rem; text-decoration:none; color:var(--ink); }
+  .home .mark { width:22px; height:22px; flex:none; }
+  .home .name { font-family:var(--serif); font-weight:500; font-size:1.05rem; letter-spacing:-.01em; }
+  .home:hover .name { color:var(--accent); }
+  .doclinks { font-family:var(--mono); font-size:.72rem; letter-spacing:.04em; }
+  .doclinks a { color:var(--ink-soft); text-decoration:none; border-bottom:1px solid var(--line); }
+  .doclinks a[aria-current] { color:var(--accent); border-bottom-color:var(--accent); }
+  .doclinks a:hover { color:var(--ink); }
+  .doclinks .sep { color:var(--ink-faint); margin:0 .5rem; }
+
+  .eyebrow { font-family:var(--mono); font-size:.72rem; letter-spacing:.22em; text-transform:uppercase; color:var(--ink-faint); margin:0 0 .8rem; display:flex; align-items:center; gap:.6rem; }
+  .eyebrow::before { content:""; width:1.4rem; height:1px; background:var(--accent); }
+  h1 { font-family:var(--serif); font-weight:600; font-size:clamp(1.9rem,5vw,2.7rem); line-height:1.05; letter-spacing:-.01em; margin:0 0 .5rem; text-wrap:balance; }
+  .effective { font-family:var(--mono); font-size:.78rem; color:var(--ink-faint); margin:0 0 .4rem; }
+  .lede { font-size:1.04rem; color:var(--ink-soft); margin:1rem 0 0; }
+  .lede b { color:var(--ink); font-weight:600; }
+
+  .short { border:1px solid var(--line-soft); background:var(--panel); border-radius:12px; padding:1.1rem 1.3rem; margin:2rem 0 0; }
+  .short h2 { font-size:.82rem; font-family:var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--accent); margin:0 0 .7rem; }
+  .short ul { margin:0; padding-left:1.1rem; }
+  .short li { margin:.45rem 0; color:var(--ink-soft); font-size:.94rem; }
+  .short li b { color:var(--ink); font-weight:600; }
+
+  section { margin-top:2.6rem; scroll-margin-top:1rem; }
+  h2.sec { font-family:var(--serif); font-weight:600; font-size:1.3rem; margin:0 0 .7rem; letter-spacing:-.005em; }
+  h2.sec .n { font-family:var(--mono); font-size:.8rem; color:var(--accent); margin-right:.6rem; font-weight:400; }
+  h3.sub { font-size:1rem; margin:1.3rem 0 .3rem; color:var(--ink); }
+  p { margin:.7rem 0 0; }
+  p, li { color:var(--ink-soft); }
+  p b, li b { color:var(--ink); font-weight:600; }
+  ul.body { margin:.6rem 0 0; padding-left:1.2rem; }
+  ul.body li { margin:.4rem 0; }
+  .note { border-left:2px solid var(--accent); padding:.2rem 0 .2rem 1rem; margin:1.1rem 0 0; color:var(--ink-soft); font-size:.94rem; }
+  .note b { color:var(--ink); }
+
+  .tablewrap { overflow-x:auto; margin:1rem 0 0; }
+  table { border-collapse:collapse; width:100%; font-size:.9rem; min-width:520px; }
+  th, td { text-align:left; vertical-align:top; padding:.55rem .7rem; border-bottom:1px solid var(--line-soft); }
+  th { font-family:var(--mono); font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-faint); font-weight:400; }
+  td { color:var(--ink-soft); }
+  td b { color:var(--ink); }
+
+  .rule { height:1px; background:linear-gradient(90deg,var(--line),transparent); border:0; margin:3rem 0 0; }
+  footer { margin-top:2rem; color:var(--ink-faint); font-size:.82rem; }
+  footer a { color:var(--ink-soft); }
+  a { color:var(--accent); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:3px; border-radius:3px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <a class="home" href="/" title="Back to Music Forest">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M16 3 L23 14 L18.5 14 L25 24 L7 24 L13.5 14 L9 14 Z" fill="var(--accent)"/>
+        <rect x="14.6" y="23" width="2.8" height="6" fill="var(--ink-faint)"/>
+      </svg>
+      <span class="name">Music Forest</span>
+    </a>
+    <nav class="doclinks">
+      <a href="/privacy" aria-current="page">Privacy</a>
+      <span class="sep">·</span>
+      <a href="/terms">Terms</a>
+    </nav>
+  </div>
+
+  <p class="eyebrow">Privacy Policy</p>
+  <h1>Your notebook is yours, and no one else can read it.</h1>
+  <p class="effective">Effective date: July 11, 2026</p>
+  <p class="lede">Music Forest is a personal field notebook for your listening life — records
+    released on this date, any year, and a private place to write. It is <b>not</b> a recommender,
+    an ad product, or an engagement machine,
+    and this policy reflects that: we collect as little as possible, we don't track you, and the
+    notebook you write is end-to-end encrypted so that <b>we cannot read it</b>.</p>
+
+  <p style="margin-top:1.6rem">This policy covers the hosted service at musicforest.lol.</p>
+
+  <div class="short">
+    <h2>The short version</h2>
+    <ul>
+      <li><b>Your notebook is end-to-end encrypted.</b> Your notes, choices, trails, and platform
+        marks are encrypted on your device with a key derived from your passphrase. We store only
+        encrypted data and <b>cannot read it</b>. Your passphrase and encryption keys never leave
+        your device.</li>
+      <li><b>We don't track you.</b> No advertising, no analytics, no third-party trackers, no
+        behavioral profiling, no selling or sharing of your data. Ever.</li>
+      <li><b>We keep almost no logs about you.</b> Our application logs don't record your IP address
+        or anything you write.</li>
+      <li><b>You're in control.</b> You can export your entire notebook at any time, and you can ask
+        us to delete your account and data.</li>
+      <li><b>The one thing we can read</b> is feedback you deliberately send us — because you asked
+        us to look at it.</li>
+    </ul>
+  </div>
+
+  <section id="who">
+    <h2 class="sec"><span class="n">1</span>Who we are</h2>
+    <p>The service is operated by Clancy Emanuel (operating as Music Forest). For any privacy
+      question, or to exercise the rights below, contact us at
+      <a href="mailto:info@musicforest.lol">info@musicforest.lol</a>.</p>
+  </section>
+
+  <section id="collect">
+    <h2 class="sec"><span class="n">2</span>What we collect, and why</h2>
+    <h3 class="sub">a) Account information</h3>
+    <p>To sign in you provide an <b>email address</b> and a <b>password</b>, or you sign in with
+      <b>Google</b>, or you use a one-time email sign-in link. We use this only to authenticate you
+      and to contact you about the service (for example, an invite or an account notice).
+      Authentication is handled by our provider, Supabase (and Google, if you choose Google
+      sign-in). We do not receive or store your password in readable form.</p>
+    <h3 class="sub">b) Your notebook (end-to-end encrypted)</h3>
+    <p>The notes, choices, trails, and platform availability marks you create are <b>encrypted on
+      your device before they reach us</b>. We store only the encrypted result and the timestamps
+      needed to sync it across your devices. Because the encryption key is derived from your
+      passphrase and never leaves your device, <b>we cannot read your notebook, and neither can our
+      hosting or database providers.</b> The "connections" the app surfaces from your notes are
+      computed on your device and are never stored or transmitted.</p>
+    <h3 class="sub">c) Feedback you send us</h3>
+    <p>If you use the "Send feedback" button, we receive your message and — to help us fix what
+      you're reporting — a snapshot of your current screen (a screenshot and a copy of the page),
+      plus basic technical details (browser type, screen/window size, language, and the in-app URL).
+      <b>This is the one place your content is readable by us, and it is only ever sent when you
+      click Send.</b> Please note the screenshot and page snapshot capture whatever is on your
+      screen at that moment — <b>if you are viewing your notebook, that text may be included</b> — so
+      avoid sending feedback from a screen you'd rather we not see.</p>
+    <h3 class="sub">d) Access requests</h3>
+    <p>If the service is invite-only and you ask for an invite, we collect the <b>email address</b>
+      and any <b>note</b> you submit, plus your browser's User-Agent, so we can review and respond.
+      We use this only to manage invitations.</p>
+    <h3 class="sub">e) Technical and security data</h3>
+    <p>Like any website, our hosting provider processes standard request information, <b>including
+      your IP address</b>, to deliver and secure the service. We use your IP address transiently and
+      in memory to rate-limit abuse of public endpoints; our own application logs record only
+      non-identifying request metadata (the request method, the path without its query string, a
+      status code, timing, an opaque request identifier, and your opaque account identifier) and
+      <b>do not record your IP address or anything you write</b>.</p>
+    <p><b>We do not:</b> run advertising or ad trackers; use analytics or behavioral profiling;
+      build a profile of your tastes to "recommend" things; or sell, rent, or share your personal
+      information with anyone for their own purposes.</p>
+  </section>
+
+  <section id="cookies">
+    <h2 class="sec"><span class="n">3</span>Cookies and local storage</h2>
+    <p>We don't use advertising or tracking cookies. The app stores a few things <b>in your own
+      browser</b> to function: your sign-in session, your on-device preferences (such as which
+      streaming services to show and your auto-lock timing), and — if you opt in to "stay unlocked
+      on this device" — a device-trust record protected by your device's biometrics or PIN. The app
+      also caches its own code so it works offline. None of this is sent to us as tracking, and you
+      can clear it at any time by signing out and clearing your browser's site data.</p>
+  </section>
+
+  <section id="subprocessors">
+    <h2 class="sec"><span class="n">4</span>Who processes data for us (sub-processors)</h2>
+    <p>We share data only with the service providers needed to run the app, and only for that
+      purpose:</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Provider</th><th>Role</th><th>What it handles</th></tr></thead>
+        <tbody>
+          <tr><td><b>Supabase</b></td><td>Authentication + encrypted database + feedback storage</td>
+            <td>Your email/login; your <b>encrypted</b> notebook data (unreadable to Supabase);
+              feedback you send</td></tr>
+          <tr><td><b>Render</b></td><td>Hosting</td>
+            <td>Serves the app; processes standard request data including IP addresses</td></tr>
+          <tr><td><b>Google</b></td><td>Optional sign-in provider</td>
+            <td>Only if you choose "Continue with Google"</td></tr>
+          <tr><td><b>jsDelivr</b> (CDN)</td><td>Serves two open-source security libraries to your browser</td>
+            <td>Your IP address, as with loading any web resource</td></tr>
+          <tr><td><b>Apple</b> (mzstatic) and the <b>Cover Art Archive</b> / Internet Archive</td>
+            <td>Album cover images</td>
+            <td>Your browser loads cover images directly from these services, which means they
+              receive your IP address and which covers you view</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>To provide album information and "listen on" links, our <b>servers</b> (not your browser) also
+      contact music data services — Apple's iTunes Search API, Odesli, Deezer, MusicBrainz,
+      Wikipedia, and Spotify. These receive the album or artist being looked up, but <b>not your IP
+      address or identity.</b></p>
+    <p>When you click a "Listen on …" link (Spotify, Apple Music, YouTube Music, Deezer, TIDAL,
+      Amazon Music, Pandora, or Bandcamp), you leave our app and that service's own privacy policy
+      applies. We send those links with a "no-referrer" policy, so we don't disclose which page you
+      came from.</p>
+  </section>
+
+  <section id="where">
+    <h2 class="sec"><span class="n">5</span>Where your data is processed</h2>
+    <p>The Service is operated from and intended for users in the <b>United States</b>. Our hosting
+      is in the United States (Render, Oregon) and our database/auth provider stores data in the
+      United States (Supabase, AWS us-east-2, Ohio). If you access the Service from outside the
+      United States, you do so on your own initiative and consent to your information being
+      processed in the United States.</p>
+  </section>
+
+  <section id="retention">
+    <h2 class="sec"><span class="n">6</span>How long we keep data</h2>
+    <ul class="body">
+      <li><b>Your encrypted notebook and keys:</b> kept until you delete the items or your account.</li>
+      <li><b>Account information:</b> kept while your account exists.</li>
+      <li><b>Feedback:</b> kept while we work on what you reported, then deleted — no later than
+        <b>six months</b> after you sent it.</li>
+      <li><b>Access requests:</b> deleted within <b>six months</b> of our decision, and no later than
+        <b>twelve months</b> after your last request even if we never got to it.</li>
+      <li><b>Rate-limit data:</b> transient, in memory only.</li>
+      <li><b>Hosting logs:</b> retained by our hosting provider per its standard practice.</li>
+    </ul>
+  </section>
+
+  <section id="rights">
+    <h2 class="sec"><span class="n">7</span>Your rights and choices</h2>
+    <p>Whatever your location, you can:</p>
+    <ul class="body">
+      <li><b>Export</b> your entire notebook at any time from within the app (it decrypts on your
+        device and downloads as a portable file).</li>
+      <li><b>Delete</b> individual notebook entries in the app.</li>
+      <li><b>Delete your account and associated data</b> from the account menu ("Delete account"),
+        which irreversibly erases your encrypted notebook + keys and removes your login/email.</li>
+      <li><b>Clear local data</b> by signing out and clearing your browser's site data.</li>
+    </ul>
+    <p>Depending on where you live, you may also have rights to <b>access</b>, <b>correct</b>,
+      <b>restrict</b> or <b>object to</b> processing, and to <b>data portability</b>, and the right
+      to <b>withdraw consent</b> and to <b>lodge a complaint</b> with your data protection authority.
+      To exercise any of these, contact us at
+      <a href="mailto:info@musicforest.lol">info@musicforest.lol</a>. We won't discriminate against
+      you for exercising your rights.</p>
+    <p class="note"><b>Note on our ability to help with access/correction requests:</b> because your
+      notebook is end-to-end encrypted, <b>we can't read, retrieve, or correct its contents for you</b>
+      — only you can, using the in-app export and editing tools. This is a privacy feature, not an
+      evasion. We can delete the encrypted data and your account on request.</p>
+  </section>
+
+  <section id="gdpr">
+    <h2 class="sec"><span class="n">8</span>GDPR (EEA/UK) — legal bases</h2>
+    <p>The Service is directed to users in the United States. To the extent the GDPR or UK GDPR
+      nonetheless applies to you, we rely on:</p>
+    <ul class="body">
+      <li><b>Contract</b> — to create your account and provide the sync service you asked for.</li>
+      <li><b>Legitimate interests</b> — to secure the service and prevent abuse (e.g. transient
+        IP-based rate limiting), and to review feedback you send us.</li>
+      <li><b>Consent</b> — where required, e.g. optional Google sign-in or any future optional
+        feature.</li>
+    </ul>
+    <p>The data controller is Clancy Emanuel (operating as Music Forest), reachable at
+      <a href="mailto:info@musicforest.lol">info@musicforest.lol</a>; a postal address is available
+      on request.</p>
+  </section>
+
+  <section id="ccpa">
+    <h2 class="sec"><span class="n">9</span>California (CCPA/CPRA)</h2>
+    <p>We <b>do not sell or share</b> personal information as those terms are defined under
+      California law, and we do not use it for cross-context behavioral advertising. California
+      residents have rights to know, delete, and correct their personal information, and not to be
+      discriminated against for exercising them. Contact
+      <a href="mailto:info@musicforest.lol">info@musicforest.lol</a> to make a request.</p>
+  </section>
+
+  <section id="children">
+    <h2 class="sec"><span class="n">10</span>Children</h2>
+    <p>The service is not directed to children under 16, and we do not knowingly collect their
+      personal information. If you believe a child has provided us personal information, contact us
+      and we will delete it.</p>
+  </section>
+
+  <section id="security">
+    <h2 class="sec"><span class="n">11</span>Security</h2>
+    <p>Your notebook is protected with end-to-end encryption (AES-GCM, with keys derived from your
+      passphrase using Argon2id); we hold only ciphertext and cannot decrypt it. We serve the app
+      over HTTPS with a strict Content-Security-Policy and related protections, pin our third-party
+      scripts with Subresource Integrity, and guard server-side fetches against abuse. No system is
+      perfectly secure, but we design to hold as little readable data as possible. When you set up
+      your notebook you are shown a <b>recovery code</b> (once, at signup): either your passphrase or
+      that code can unlock your notebook, and the code is the reset path if you forget your
+      passphrase — we store only wrapped keys we cannot open. <b>Important: if you lose both your
+      passphrase and your recovery code (and haven't enabled device unlock), your encrypted notebook
+      cannot be recovered — by you or by us.</b></p>
+  </section>
+
+  <section id="changes">
+    <h2 class="sec"><span class="n">12</span>Changes to this policy</h2>
+    <p>We may update this policy; we'll change the effective date above and, for material changes,
+      provide a more prominent notice.</p>
+  </section>
+
+  <section id="contact">
+    <h2 class="sec"><span class="n">13</span>Contact</h2>
+    <p>Questions or requests: <a href="mailto:info@musicforest.lol">info@musicforest.lol</a>, Clancy
+      Emanuel (operating as Music Forest). A postal address is available on request.</p>
+  </section>
+
+  <hr class="rule">
+  <footer>
+    <p>See also the <a href="/terms">Terms of Service</a>. &nbsp;·&nbsp; <a href="/">Return to Music
+      Forest</a>.</p>
+  </footer>
+
+</div>
+</body>
+</html>

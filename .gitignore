@@ -1,0 +1,27 @@
+# --- data & secrets (never commit) ---
+data/
+secrets.env
+secrets.env.*
+*.db
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# --- local env / tooling ---
+.venv/
+venv/
+node_modules/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- editor / OS ---
+.claude/
+.DS_Store
+*.swp
+
+# --- build/art caches (regenerated at runtime) ---
+static/art/*
+!static/art/.gitkeep

@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Music Forest — feedback (operator)</title>
+<!-- Same inline tree as index.html — without it every /admin load 404s
+     /favicon.ico into the console. -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2314150e'/%3E%3Cpath d='M16 5 L24 19 H8 Z' fill='%238fae72'/%3E%3Cpath d='M16 12 L23 24 H9 Z' fill='%238fae72'/%3E%3Crect x='14.5' y='23' width='3' height='4' fill='%239a7b5a'/%3E%3C/svg%3E">
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 1.5rem;
+    background: #111; color: #e8e8e8;
+    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    max-width: 880px; margin-inline: auto;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 .25rem; }
+  .muted { color: #9a9a9a; }
+  a { color: #8ab4f8; }
+  input[type=email] {
+    background: #1c1c1c; border: 1px solid #333; color: #eee;
+    padding: .5rem .6rem; border-radius: 6px; width: 16rem; max-width: 100%;
+  }
+  button {
+    background: #2a2a2a; border: 1px solid #444; color: #eee;
+    padding: .5rem .8rem; border-radius: 6px; cursor: pointer;
+  }
+  button:hover { background: #353535; }
+  /* !important so it beats id-specificity display rules (e.g. #toolbar's
+     display:flex), which would otherwise keep .hidden elements visible. */
+  .hidden { display: none !important; }
+  .card {
+    border: 1px solid #2a2a2a; border-radius: 10px;
+    padding: 1rem; margin: 1rem 0; background: #161616;
+  }
+  .card h3 { margin: 0 0 .35rem; font-size: 1rem; font-weight: 600; }
+  .meta { font-size: .82rem; color: #9a9a9a; margin-bottom: .5rem; }
+  .msg { white-space: pre-wrap; margin: .5rem 0; }
+  .blobs { display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-start; }
+  .blobs img {
+    max-width: 320px; max-height: 240px; border: 1px solid #333; border-radius: 6px;
+  }
+  details { margin-top: .5rem; }
+  details pre {
+    background: #0e0e0e; border: 1px solid #262626; border-radius: 6px;
+    padding: .6rem; overflow: auto; font-size: .8rem; max-height: 18rem;
+  }
+  #status { margin: .5rem 0; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+
+  /* --- Triage layer (keep/skip/notes + export) --- */
+  #toolbar {
+    display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
+    padding: .6rem 0; margin: .5rem 0 1rem;
+    background: #111; border-bottom: 1px solid #2a2a2a;
+  }
+  #toolbar select {
+    background: #1c1c1c; border: 1px solid #333; color: #eee;
+    padding: .4rem .5rem; border-radius: 6px;
+  }
+  #toolbar .spacer { flex: 1; }
+  #counts b { color: #e8e8e8; }
+  button.primary { background: #2f6f4f; border-color: #2f6f4f; color: #eafff2; font-weight: 600; }
+  button.primary:hover { background: #357f5a; }
+  .card.kept { border-color: #2f6f4f; }
+  .card.skipped { opacity: .5; }
+  .card.done { opacity: .55; border-style: dashed; }
+  .done-btn.is-done { background: #234a34; border-color: #2f6f4f; color: #d6ffe6; }
+  .pointer { font-size: .82rem; margin: .4rem 0 0; color: #9a9a9a; }
+  .pointer b { color: #8ab4f8; font-family: ui-monospace, Menlo, monospace; }
+  .triage { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: .75rem; }
+  .seg { display: inline-flex; border: 1px solid #444; border-radius: 6px; overflow: hidden; }
+  .seg button { border: none; border-radius: 0; background: #1c1c1c; }
+  .seg button.on-keep { background: #2f6f4f; color: #eafff2; font-weight: 600; }
+  .seg button.on-skip { background: #7a3b28; color: #ffe9e0; font-weight: 600; }
+  .triage input.note {
+    flex: 1; min-width: 12rem; background: #1c1c1c; border: 1px solid #333; color: #eee;
+    padding: .45rem .55rem; border-radius: 6px; font: inherit;
+  }
+
+  /* --- Access requests --- */
+  h2 { font-size: 1.05rem; margin: 1.5rem 0 .5rem; }
+  .req .email { font-weight: 600; font-size: 1rem; word-break: break-all; }
+  .req .row-top { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+  .badge { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em;
+    border-radius: 999px; padding: .12rem .5rem; border: 1px solid #444; color: #ccc; }
+  .badge.new { background: #243a52; border-color: #335; color: #cfe3ff; }
+  .badge.invited { background: #234a34; border-color: #2f6f4f; color: #d6ffe6; }
+  .badge.declined { background: #4a2a22; border-color: #7a3b28; color: #ffded2; }
+  .badge.ok { background: #234a34; border-color: #2f6f4f; color: #d6ffe6; }
+  .badge.running { background: #243a52; border-color: #335; color: #cfe3ff; }
+  .badge.throttled { background: #4a3a22; border-color: #8a6a2f; color: #ffeccb; }
+  .badge.stale { background: #4a2a22; border-color: #7a3b28; color: #ffded2; }
+  .badge.error { background: #4a2a22; border-color: #7a3b28; color: #ffded2; }
+  .badge.never { background: #2a2a2a; border-color: #444; color: #bbb; }
+  #crawlStatus.attention { color: #ffd9c7; }
+
+  /* --- H4: the attention panel (now the body of the Summary tab) --- */
+  .attn-strip { display: flex; gap: .5rem; flex-wrap: wrap; align-items: flex-start; margin: .5rem 0 .9rem; }
+  /* Each chip is a tap-to-explain <details>: summary = label + live status, body =
+     what-it-is / why-it-matters. Pull-open, never auto-expands. */
+  .attn-chip {
+    border: 1px solid #333; border-radius: 10px; overflow: hidden;
+    background: #161616; flex: 1 1 12rem; min-width: 12rem;
+  }
+  .attn-chip > summary {
+    list-style: none; display: block; cursor: pointer; user-select: none;
+    position: relative; padding: .5rem 1.5rem .5rem .65rem;
+  }
+  .attn-chip > summary::-webkit-details-marker { display: none; }
+  .attn-chip > summary:hover { background: #1b1b1b; }
+  .attn-chip > summary::after {
+    content: "▸"; position: absolute; top: .55rem; right: .65rem;
+    color: #6a6a6a; font-size: .7rem; transition: transform .15s ease;
+  }
+  .attn-chip[open] > summary::after { transform: rotate(90deg); }
+  .attn-chip[open] > summary { border-bottom: 1px solid #262626; }
+  .attn-chip .k {
+    display: block; font-size: .72rem; text-transform: uppercase;
+    letter-spacing: .04em; color: #9a9a9a; margin-bottom: .2rem;
+  }
+  .attn-chip .v { font-size: .86rem; }
+  .attn-chip.ok { border-color: #2f6f4f; }
+  .attn-chip.warn { border-color: #8a6a2f; }
+  .attn-chip.bad { border-color: #7a3b28; }
+  .attn-explain { padding: .5rem .65rem .6rem; font-size: .82rem; color: #c7c7c7; line-height: 1.5; }
+  .attn-explain p { margin: .15rem 0 0; }
+  .attn-explain b {
+    display: block; margin-top: .55rem; font-size: .68rem; text-transform: uppercase;
+    letter-spacing: .05em; color: #9a9a9a; font-weight: 600;
+  }
+  .attn-explain b:first-child { margin-top: 0; }
+  .watch-row {
+    display: flex; gap: .6rem; align-items: baseline;
+    padding: .32rem 0; border-top: 1px solid #222; font-size: .9rem;
+  }
+  .watch-row:first-child { border-top: 0; }
+  .badge.due { background: #4a2a22; border-color: #7a3b28; color: #ffded2; }
+  .badge.waiting { background: #4a3a22; border-color: #8a6a2f; color: #ffeccb; }
+  .badge.gated { background: #2a2a2a; border-color: #444; color: #bbb; }
+  .badge.open { background: #234a34; border-color: #2f6f4f; color: #d6ffe6; }
+  .watch-id { color: #8ab4f8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; white-space: nowrap; }
+  .watch-note { color: #9a9a9a; font-size: .82rem; }
+  .req .note { white-space: pre-wrap; margin: .5rem 0; }
+  .req .req-actions { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .6rem; }
+  .req .ua { font-size: .75rem; color: #7a7a7a; word-break: break-all; }
+  .copied { color: #8fd6a8; font-size: .8rem; margin-left: .3rem; }
+
+  /* --- H4b: the cost panel --- */
+  .cost-hero { display: flex; align-items: baseline; gap: .8rem; flex-wrap: wrap; margin: .4rem 0 1rem; }
+  .cost-hero .big { font-size: 2.4rem; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+  .cost-hero .big .unit { font-size: 1rem; color: #9a9a9a; font-weight: 400; margin-left: .15rem; }
+  .cost-hero .sub { font-size: .86rem; color: #9a9a9a; max-width: 22rem; }
+  .cost-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .6rem; margin-bottom: 1rem; }
+  .kpi { background: #161616; border: 1px solid #262626; border-radius: 10px; padding: .6rem .75rem; }
+  .kpi .k { display: block; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: #9a9a9a; margin-bottom: .25rem; }
+  .kpi .v { font-size: 1.3rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .cost-breakdown { border: 1px solid #262626; border-radius: 10px; margin-bottom: 1rem; overflow: hidden; }
+  .cost-breakdown .brow { display: flex; justify-content: space-between; padding: .5rem .7rem; font-size: .88rem; border-top: 1px solid #222; }
+  .cost-breakdown .brow:first-child { border-top: 0; }
+  .cost-breakdown .brow .amt { color: #9a9a9a; font-variant-numeric: tabular-nums; }
+  .meter-row { margin-bottom: .7rem; }
+  .meter-head { display: flex; justify-content: space-between; align-items: baseline; font-size: .84rem; margin-bottom: .3rem; }
+  .meter-head .mv { color: #9a9a9a; font-variant-numeric: tabular-nums; }
+  .meter-track { height: 8px; background: #1c1c1c; border: 1px solid #2a2a2a; border-radius: 999px; overflow: hidden; }
+  .meter-fill { height: 100%; background: #3a6ea5; border-radius: 999px; }
+  .meter-fill.warn { background: #8a6a2f; }
+  .meter-fill.bad { background: #7a3b28; }
+  .cost-note { border-left: 3px solid #8a6a2f; background: #201d14; border-radius: 0; padding: .6rem .7rem; margin-top: .4rem; font-size: .84rem; line-height: 1.5; color: #ffeccb; }
+
+  /* --- Pool tab: records per listening service, per day ---------------------
+     Reuses .meter-row/.meter-head/.meter-track from the cost panel, but the
+     polarity is INVERTED there vs here: a cost meter is bad when it's full, a
+     service meter is bad when it's EMPTY. Hence its own fill classes rather than
+     reusing .meter-fill.warn/.bad, whose meaning would be backwards. */
+  .pool-days { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 1rem; }
+  .pool-day { border: 1px solid #2a2a2a; border-radius: 12px; background: #141414; padding: .85rem .9rem 1rem; }
+  .pool-day.lead { border-color: #3a3a2a; }
+  .pool-head { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; margin-bottom: .15rem; }
+  .pool-when { font-size: .95rem; font-weight: 600; text-transform: capitalize; }
+  .pool-date { font-size: .8rem; color: #9a9a9a; font-variant-numeric: tabular-nums; }
+  .pool-total { font-size: .8rem; color: #9a9a9a; margin: 0 0 .8rem; font-variant-numeric: tabular-nums; }
+  .pool-badge { font-size: .68rem; letter-spacing: .04em; text-transform: uppercase; border: 1px solid #3a3a2a; color: #9a9a9a; border-radius: 999px; padding: .1em .45em; }
+  .pool-fill { height: 100%; border-radius: 999px; background: #4a9d6a; }
+  .pool-fill.warn { background: #c79a3f; }
+  .pool-fill.bad  { background: #c0563e; }
+  .pool-note { font-size: .82rem; color: #9a9a9a; line-height: 1.5; margin: .1rem 0 1rem; max-width: 66ch; }
+
+  /* --- Beta capacity band (Summary): the ceilings that bite as invites go out --- */
+  .capacity { border: 1px solid #2a2a2a; border-radius: 12px; background: #141414; padding: .8rem .9rem 1rem; margin: 0 0 1rem; }
+  .capacity .cap-head { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; margin-bottom: .1rem; }
+  .capacity .cap-title { font-size: .95rem; font-weight: 600; }
+  .capacity .cap-verdict { font-size: .8rem; display: inline-flex; align-items: center; gap: .35rem; }
+  .capacity .cap-verdict .dot { width: .55rem; height: .55rem; }
+  .capacity .cap-sub { font-size: .8rem; color: #9a9a9a; margin: 0 0 .8rem; }
+  .capacity .cap-meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: .35rem 1.2rem; }
+  .capacity .cap-chips { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .7rem; }
+  .cap-chip { border: 1px solid #333; border-radius: 10px; background: #161616; padding: .45rem .6rem; flex: 1 1 12rem; min-width: 11rem; }
+  .cap-chip .k { display: block; font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; color: #9a9a9a; margin-bottom: .2rem; }
+  .cap-chip .v { font-size: .84rem; display: flex; align-items: center; gap: .4rem; }
+  .cap-chip.ok { border-color: #2f6f4f; } .cap-chip.warn { border-color: #8a6a2f; } .cap-chip.bad { border-color: #7a3b28; }
+  .cap-note { font-size: .78rem; color: #8a8a8a; margin: .7rem 0 0; line-height: 1.5; }
+
+  /* --- Tabbed console (2026-07-05): a sticky tab bar + one panel per area, so the
+     page is navigable rather than a long scroll. Summary is always one click away;
+     every other tab is a door (the tab lives in the URL hash, so refresh + back
+     return you to your place). Heading to a tab expands nothing — detail is
+     pull-open. Summary *is* the attention view (Option A). --- */
+  .tabs {
+    position: sticky; top: 0; z-index: 5;
+    display: flex; gap: .3rem; flex-wrap: wrap;
+    padding: .5rem 0; margin: .25rem 0 1.25rem;
+    background: #111; border-bottom: 1px solid #2a2a2a;
+  }
+  .tabs button {
+    display: inline-flex; align-items: center; gap: .45rem;
+    background: transparent; border: 1px solid transparent; color: #bdbdbd;
+    padding: .45rem .8rem; border-radius: 8px; font: inherit; font-size: .92rem;
+  }
+  .tabs button:hover { background: #1c1c1c; color: #e8e8e8; }
+  .tabs button.active { background: #1e1e1e; border-color: #3a3a3a; color: #fff; font-weight: 600; }
+  .tabs button:focus-visible { outline: 2px solid #3a6ea5; outline-offset: 2px; }
+  .tabdot { width: .5rem; height: .5rem; border-radius: 999px; background: transparent; flex: 0 0 auto; }
+  .tabdot.ok { background: #4a9d6a; }
+  .tabdot.warn { background: #c79a3f; }
+  .tabdot.bad { background: #c0563e; }
+
+  .dot { width: .55rem; height: .55rem; border-radius: 999px; background: #666; flex: 0 0 auto; }
+  .dot.ok { background: #4a9d6a; }
+  .dot.warn { background: #c79a3f; }
+  .dot.bad { background: #c0563e; }
+
+  .panel[hidden] { display: none; }
+  .panel > h2:first-child { margin-top: .25rem; }
+
+  /* Summary tiles: a status glance that doubles as a door into each tab. */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: .6rem; margin: .25rem 0 1.5rem; }
+  .tile {
+    display: flex; flex-direction: column; gap: .5rem; text-align: left;
+    background: #161616; border: 1px solid #2a2a2a; border-radius: 12px;
+    padding: .7rem .8rem; font: inherit; color: #e8e8e8; cursor: pointer;
+  }
+  .tile:hover { border-color: #3a3a3a; background: #1a1a1a; }
+  .tile:focus-visible { outline: 2px solid #3a6ea5; outline-offset: 2px; }
+  .tile .tk { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: #9a9a9a; }
+  .tile .tv { display: flex; align-items: center; gap: .5rem; font-size: 1.05rem; }
+
+  /* System-health disclosure on Summary: collapsed by default (green telemetry
+     stays tucked away); pull-open, never auto-expands. */
+  details.sys { border: 1px solid #2a2a2a; border-radius: 10px; background: #141414; margin: .5rem 0 0; overflow: hidden; }
+  details.sys > summary {
+    list-style: none; cursor: pointer; user-select: none;
+    display: flex; align-items: center; gap: .55rem;
+    padding: .7rem .85rem; font-size: .95rem; font-weight: 600;
+  }
+  details.sys > summary::-webkit-details-marker { display: none; }
+  details.sys > summary:hover { background: #181818; }
+  details.sys > summary .chev { color: #9a9a9a; font-size: .7rem; transition: transform .15s ease; }
+  details.sys[open] > summary .chev { transform: rotate(90deg); }
+  details.sys > summary .spacer { flex: 1; }
+  details.sys > summary .muted { font-weight: 400; }
+  details.sys[open] > summary { border-bottom: 1px solid #242424; }
+  .sys-body { padding: .8rem .85rem .85rem; }
+
+  .row-controls { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin-bottom: .7rem; }
+  .row-controls .spacer { flex: 1; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div>
+      <h1>Operator console</h1>
+      <p class="muted">Access requests + beta feedback (neither is E2EE, by design).</p>
+    </div>
+    <span style="display:flex;gap:8px;align-items:center">
+      <a href="/static/admin.catalog.html" style="text-decoration:none;padding:6px 12px;border:1px solid var(--line,#3a3a2a);border-radius:8px;color:inherit;font-size:13px" title="Explore the catalog by data-quality confidence (UC1)">🗺️ Catalog Confidence</a>
+      <a href="/static/admin.precision.html" style="text-decoration:none;padding:6px 12px;border:1px solid var(--line,#3a3a2a);border-radius:8px;color:inherit;font-size:13px" title="Hand-label the UC1 Phase 2 cross-source merges — precision gate (mobile-friendly)">🎯 Cluster Precision</a>
+      <button id="signout" class="hidden">Sign out</button>
+    </span>
+  </div>
+
+  <div id="login" class="hidden card">
+    <p>Sign in with the operator account to read submissions.</p>
+    <p><button id="googleSignin" class="primary">Continue with Google</button></p>
+    <p class="muted">or get a one-time email link:</p>
+    <p><input type="email" id="email" placeholder="you@example.com" autocomplete="email">
+       <button id="sendlink">Email me a magic link</button></p>
+    <p id="loginStatus" class="muted"></p>
+  </div>
+
+  <p id="status" class="muted">Loading…</p>
+
+  <!-- Signed-in console: a tab bar + one panel per area. Opens on Summary (the
+       "where should my attention be?" glance); every other tab is a door you step
+       into and back out of at zero cost — the active tab lives in the URL hash, so
+       a refresh or a shared link returns you to the same place. Every inner ID is
+       unchanged, so admin.js populates each panel exactly as before. Hidden until
+       signed in. -->
+  <div id="console" class="hidden">
+    <nav class="tabs" role="tablist" aria-label="Console sections">
+      <button data-tab="summary" class="active">Summary<span class="tabdot" data-dotfor="summary"></span></button>
+      <button data-tab="feedback">Feedback<span class="tabdot" data-dotfor="feedback"></span></button>
+      <button data-tab="requests">Requests<span class="tabdot" data-dotfor="requests"></span></button>
+      <button data-tab="backlog">Backlog<span class="tabdot" data-dotfor="backlog"></span></button>
+      <button data-tab="pool">Pool<span class="tabdot" data-dotfor="pool"></span></button>
+      <button data-tab="crawler">Door crawler<span class="tabdot" data-dotfor="crawler"></span></button>
+      <button data-tab="cost">Cost<span class="tabdot" data-dotfor="cost"></span></button>
+    </nav>
+
+    <!-- SUMMARY (home / attention, H4): a status tile per working area — each one a
+         door into its tab — then "what needs you": the live attention chips
+         (availability runway, Spotify stamp pulse, door-crawler health, retention
+         sweep) and the human watch-list parsed from BACKLOG.md's ⏳ markers.
+         /api/admin/attention. This is Option A: Summary *is* the attention view. -->
+    <section class="panel" data-panel="summary">
+      <h2>Where should my attention be?</h2>
+      <!-- Beta capacity: the ceilings that actually bite as invites go out
+           (INVITE_ROLLOUT_PLAN §2) — the Render box (threads / RAM / disk), the
+           Supabase database, and the upstream API health (Apple+Odesli doors via
+           the crawler, Spotify quota). Prominent + always visible, populated from
+           the cost + attention payloads the Summary already loads. Hidden until it
+           has data so it never flashes an empty frame. -->
+      <div id="betaCapacity" class="capacity" hidden></div>
+      <div id="summaryTiles" class="tiles"></div>
+      <!-- Pipeline health (availability runway / Spotify / crawler / retention) is
+           tucked into a collapsed disclosure: when it's all green it needs nothing,
+           so it stays a quiet one-line row labelled "all green"; a non-green signal
+           turns the dot amber/red (and the Summary tab dot with it) so you know to
+           pull it open. It never auto-expands. -->
+      <details id="sysHealth" class="sys">
+        <summary><span class="chev">▶</span>System health<span id="attnDot" class="dot"></span><span class="spacer"></span><span id="sysLabel" class="muted"></span></summary>
+        <div class="sys-body">
+          <div class="row-controls"><span class="spacer"></span>
+            <button id="attnRefresh" title="Reload system health">↻ Refresh</button>
+          </div>
+          <div id="attnStrip" class="attn-strip"></div>
+        </div>
+      </details>
+    </section>
+
+    <!-- BACKLOG: the human watch-list parsed from BACKLOG.md's ⏳ markers — the
+         things you're waiting on or owe — on its own tab so it doesn't crowd the
+         Summary. Same /api/admin/attention payload as System health; the Backlog
+         tab dot goes red only when an item is actually due. -->
+    <section class="panel" data-panel="backlog" hidden>
+      <div class="row-controls"><span class="spacer"></span>
+        <button id="backlogRefresh" title="Reload the watch-list">↻ Refresh</button>
+      </div>
+      <div id="attnWatch"></div>
+      <p id="attnStatus" class="muted"></p>
+    </section>
+
+    <!-- FEEDBACK: the triage workflow (keep/skip/notes + export). -->
+    <section class="panel" data-panel="feedback" hidden>
+      <h2 id="fbHead" class="hidden">Feedback</h2>
+      <div id="toolbar" class="hidden">
+        <label>Show
+          <select id="filter">
+            <option value="all">All</option>
+            <option value="untriaged">Untriaged</option>
+            <option value="keep">Kept</option>
+            <option value="skip">Skipped</option>
+            <option value="done">Done</option>
+          </select>
+        </label>
+        <span id="counts" class="muted"></span>
+        <span class="spacer"></span>
+        <button id="reset" title="Clear keep/skip/notes saved in this browser">Reset triage</button>
+        <button id="export" class="primary">Export kept → brief + screenshots (.zip)</button>
+      </div>
+      <div id="list"></div>
+    </section>
+
+    <!-- ACCESS REQUESTS (Phase D admin view). Read-only over the 0003 admin-read RLS
+         policy; inviting/declining stays a privileged SQL-editor action (one-click
+         "copy the ready-to-run SQL" per row). -->
+    <section class="panel" data-panel="requests" hidden>
+      <div class="row-controls">
+        <label class="muted">Show
+          <select id="reqFilter">
+            <option value="new">New</option>
+            <option value="all">All</option>
+            <option value="invited">Invited</option>
+            <option value="declined">Declined</option>
+          </select>
+        </label>
+        <span id="reqCounts" class="muted"></span>
+        <span class="spacer"></span>
+        <button id="reqRefresh" title="Reload access requests">↻ Refresh</button>
+      </div>
+      <p id="reqStatus" class="muted"></p>
+      <div id="reqList"></div>
+    </section>
+
+    <!-- CRAWLER HEALTH (local door prewarm heartbeat, rsynced up in pool.sqlite).
+         Read-only view so you can see the crawler is alive. /api/admin/crawl-status. -->
+    <!-- Pool: how many of a day's records each listening service can actually play.
+         Today + tomorrow, because today flatters — Spotify/Apple are filled by jobs
+         that work on the current day, so today can read healthy while the machine
+         behind it is dead. Tomorrow is warmed overnight and browsed by nobody, so
+         it's the honest one; the tab dot + Summary tile are driven off it. -->
+    <section class="panel" data-panel="pool" hidden>
+      <h2>Records per listening service</h2>
+      <p class="pool-note">What a person gets when they pick their services. <strong>Read tomorrow, not today</strong> — today is warmed by jobs and inflated by whatever's been browsed; tomorrow is the leading indicator, so a thin number there means a job didn't run and you have a day to fix it.</p>
+      <div class="row-controls"><span class="spacer"></span>
+        <button id="poolRefresh" title="Reload the per-service counts">↻ Refresh</button>
+      </div>
+      <div id="poolStatus" class="muted"></div>
+      <div id="poolDays" class="pool-days"></div>
+    </section>
+
+    <section class="panel" data-panel="crawler" hidden>
+      <div class="row-controls">
+        <span id="crawlBadge" class="badge"></span>
+        <span class="spacer"></span>
+        <button id="crawlRefresh" title="Reload crawler status">↻ Refresh</button>
+      </div>
+      <p id="crawlStatus" class="muted"></p>
+    </section>
+
+    <!-- COST PANEL (H4b): "what does the hosted app cost me?" — the flat monthly nut
+         + headroom before the next bill changes. Fixed costs are config; usage
+         measured live. /api/admin/cost. See INVITE_ROLLOUT_PLAN.md. -->
+    <section class="panel" data-panel="cost" hidden>
+      <div class="row-controls"><span class="spacer"></span>
+        <button id="costRefresh" title="Reload the cost panel">↻ Refresh</button>
+      </div>
+      <div id="costHero" class="cost-hero"></div>
+      <div id="costKpis" class="cost-kpis"></div>
+      <div id="costMeters"></div>
+      <p id="costStatus" class="muted"></p>
+    </section>
+  </div>
+
+  <!-- Same SRI-pinned supabase-js the main app loads (CSP allows jsDelivr only). -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.8/dist/umd/supabase.js" integrity="sha384-b4JKVkST7Jkb2qRVyZEamH2WA+trxThEkVN6z3JXWfUDFNZd14MnE/qRvt/zy2J5" crossorigin="anonymous"></script>
+  <!-- No inline scripts: the strict CSP (script-src 'self' jsDelivr) forbids them. -->
+  <script src="/static/admin.js"></script>
+</body>
+</html>

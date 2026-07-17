@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Music Forest &#8212; Terms of Service</title>
+<style>
+  :root {
+    --ground:#14150e; --panel:#1c1e14; --panel-2:#23261a; --raise:#2b2e1f;
+    --line:#3a3d2c; --line-soft:#2c2f21;
+    --ink:#e9ead9; --ink-soft:#abb096; --ink-faint:#7f8468;
+    --accent:#9cc178; --accent-ink:#14150e;
+    --serif:"Iowan Old Style","Palatino Linotype","Book Antiqua",Palatino,Georgia,serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --ground:#e7e9dd; --panel:#f2f3ea; --panel-2:#fbfcf5; --raise:#ffffff;
+      --line:#ccd0bd; --line-soft:#dde0d1;
+      --ink:#25281c; --ink-soft:#585d47; --ink-faint:#868b70;
+      --accent:#4d7736; --accent-ink:#ffffff;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#14150e; --panel:#1c1e14; --panel-2:#23261a; --raise:#2b2e1f;
+    --line:#3a3d2c; --line-soft:#2c2f21;
+    --ink:#e9ead9; --ink-soft:#abb096; --ink-faint:#7f8468;
+    --accent:#9cc178; --accent-ink:#14150e;
+  }
+  :root[data-theme="light"] {
+    --ground:#e7e9dd; --panel:#f2f3ea; --panel-2:#fbfcf5; --raise:#ffffff;
+    --line:#ccd0bd; --line-soft:#dde0d1;
+    --ink:#25281c; --ink-soft:#585d47; --ink-faint:#868b70;
+    --accent:#4d7736; --accent-ink:#ffffff;
+  }
+
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--ground); color:var(--ink); font-family:var(--sans); line-height:1.62; -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(120% 80% at 50% -10%, color-mix(in oklab, var(--accent) 6%, transparent), transparent 60%); }
+  .wrap { max-width:760px; margin:0 auto; padding:clamp(1.2rem,4vw,2.6rem) clamp(1rem,4vw,1.6rem) 5rem; }
+
+  .top { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:2.2rem; }
+  .home { display:inline-flex; align-items:center; gap:.55rem; text-decoration:none; color:var(--ink); }
+  .home .mark { width:22px; height:22px; flex:none; }
+  .home .name { font-family:var(--serif); font-weight:500; font-size:1.05rem; letter-spacing:-.01em; }
+  .home:hover .name { color:var(--accent); }
+  .doclinks { font-family:var(--mono); font-size:.72rem; letter-spacing:.04em; }
+  .doclinks a { color:var(--ink-soft); text-decoration:none; border-bottom:1px solid var(--line); }
+  .doclinks a[aria-current] { color:var(--accent); border-bottom-color:var(--accent); }
+  .doclinks a:hover { color:var(--ink); }
+  .doclinks .sep { color:var(--ink-faint); margin:0 .5rem; }
+
+  .eyebrow { font-family:var(--mono); font-size:.72rem; letter-spacing:.22em; text-transform:uppercase; color:var(--ink-faint); margin:0 0 .8rem; display:flex; align-items:center; gap:.6rem; }
+  .eyebrow::before { content:""; width:1.4rem; height:1px; background:var(--accent); }
+  h1 { font-family:var(--serif); font-weight:600; font-size:clamp(1.9rem,5vw,2.7rem); line-height:1.05; letter-spacing:-.01em; margin:0 0 .5rem; text-wrap:balance; }
+  .effective { font-family:var(--mono); font-size:.78rem; color:var(--ink-faint); margin:0 0 .4rem; }
+  .lede { font-size:1.04rem; color:var(--ink-soft); margin:1rem 0 0; }
+  .lede b { color:var(--ink); font-weight:600; }
+
+  section { margin-top:2.6rem; scroll-margin-top:1rem; }
+  h2.sec { font-family:var(--serif); font-weight:600; font-size:1.3rem; margin:0 0 .7rem; letter-spacing:-.005em; }
+  h2.sec .n { font-family:var(--mono); font-size:.8rem; color:var(--accent); margin-right:.6rem; font-weight:400; }
+  p { margin:.7rem 0 0; }
+  p, li { color:var(--ink-soft); }
+  p b, li b { color:var(--ink); font-weight:600; }
+  ul.body { margin:.6rem 0 0; padding-left:1.2rem; }
+  ul.body li { margin:.4rem 0; }
+
+  .rule { height:1px; background:linear-gradient(90deg,var(--line),transparent); border:0; margin:3rem 0 0; }
+  footer { margin-top:2rem; color:var(--ink-faint); font-size:.82rem; }
+  footer a { color:var(--ink-soft); }
+  a { color:var(--accent); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:3px; border-radius:3px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <a class="home" href="/" title="Back to Music Forest">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M16 3 L23 14 L18.5 14 L25 24 L7 24 L13.5 14 L9 14 Z" fill="var(--accent)"/>
+        <rect x="14.6" y="23" width="2.8" height="6" fill="var(--ink-faint)"/>
+      </svg>
+      <span class="name">Music Forest</span>
+    </a>
+    <nav class="doclinks">
+      <a href="/privacy">Privacy</a>
+      <span class="sep">·</span>
+      <a href="/terms" aria-current="page">Terms</a>
+    </nav>
+  </div>
+
+  <p class="eyebrow">Terms of Service</p>
+  <h1>The agreement between you and Music Forest.</h1>
+  <p class="effective">Effective date: July 11, 2026</p>
+  <p class="lede">These Terms of Service ("<b>Terms</b>") are a contract between you and Clancy
+    Emanuel (operating as Music Forest) ("we", "us") governing your use of the Music Forest service
+    at musicforest.lol and its related apps (the "<b>Service</b>"). By using the Service you agree to
+    these Terms and to our <a href="/privacy">Privacy Policy</a>. If you don't agree, don't use the
+    Service.</p>
+
+  <section id="what">
+    <h2 class="sec"><span class="n">1</span>What the Service is</h2>
+    <p>Music Forest is a personal field notebook for your listening life. It helps you
+      notice, reflect on, and connect albums, and it links out to third-party music platforms where
+      you can listen. It is not a music-streaming service and does not host or provide music.</p>
+  </section>
+
+  <section id="eligibility">
+    <h2 class="sec"><span class="n">2</span>Eligibility and accounts</h2>
+    <p>You must be at least 16 years old to use the Service. If you create an account, you agree to
+      provide accurate information, to keep your password and, importantly, your <b>encryption
+      passphrase</b> secure, and that you are responsible for activity under your account. Tell us
+      promptly at <a href="mailto:info@musicforest.lol">info@musicforest.lol</a> if you suspect
+      unauthorized use.</p>
+    <p><b>Encryption and recovery.</b> Your notebook is end-to-end encrypted with a key derived from a
+      passphrase only you hold. At signup you are shown a <b>recovery code</b>, which is the only
+      reset path for a lost passphrase. This means <b>if you lose both your passphrase and your
+      recovery code (and haven't enabled device unlock), we cannot recover your notebook or reset
+      access to its contents.</b> You accept this trade-off as a condition of the privacy the Service
+      provides.</p>
+  </section>
+
+  <section id="acceptable">
+    <h2 class="sec"><span class="n">3</span>Acceptable use</h2>
+    <p>You agree not to:</p>
+    <ul class="body">
+      <li>break the law or infringe others' rights using the Service;</li>
+      <li>access, probe, or disrupt the Service, its infrastructure, or other users' data without
+        authorization (including circumventing the encryption, rate limits, RLS, or security
+        controls);</li>
+      <li>attempt to access data that isn't yours, or reverse the sync/auth layer to impersonate
+        another user;</li>
+      <li>upload malware, or use the Service to store or transmit unlawful content;</li>
+      <li>scrape, overload, or make automated bulk requests beyond normal personal use; or</li>
+      <li>misuse the feedback or invite-request channels (e.g. spam, or submitting others' personal
+        information).</li>
+    </ul>
+    <p>We may suspend or terminate access that violates these Terms or that threatens the Service or
+      other users.</p>
+  </section>
+
+  <section id="content">
+    <h2 class="sec"><span class="n">4</span>Your content</h2>
+    <p><b>You own what you write.</b> Your notebook — your notes, choices, trails, connections, and
+      marks — is <b>yours</b>. We do not claim ownership of it. Because it is end-to-end encrypted,
+      we can't read it; we only store and sync the encrypted data so you can use it across devices,
+      and we process it solely to provide the Service to you.</p>
+    <p><b>Feedback.</b> If you send us feedback, you grant us permission to use it to operate and
+      improve the Service. As explained in the Privacy Policy, feedback (including any screenshot or
+      page snapshot you send) is readable by us — send only what you're comfortable sharing.</p>
+    <p><b>Export and deletion.</b> You can export your notebook at any time, delete individual
+      entries, and delete your entire account and its data yourself from the account menu (or by
+      asking us), as described in the Privacy Policy.</p>
+  </section>
+
+  <section id="ip">
+    <h2 class="sec"><span class="n">5</span>Our content and intellectual property</h2>
+    <p>The Service itself — its software, design, text, and branding (including the names "Music
+      Forest", "Album of the Day", and "Date with an Album", and the musicforest.lol identity) — is
+      owned by Clancy Emanuel (operating as Music Forest) or its licensors and is protected by
+      intellectual property laws. These Terms don't grant you any right to our name, logo, or
+      branding beyond using the Service as intended.</p>
+    <p>Album metadata and cover art are provided by third-party sources (including the Discogs data
+      dump, MusicBrainz, the Cover Art Archive, and Apple), and remain subject to their respective
+      rights and licenses. We credit these sources in the app and use their data in accordance with
+      their terms.</p>
+  </section>
+
+  <section id="doors">
+    <h2 class="sec"><span class="n">6</span>Third-party platforms and links ("doors")</h2>
+    <p>The Service links out to third-party music platforms — including <b>Spotify, Apple Music,
+      YouTube Music, Deezer, TIDAL, Amazon Music, Pandora, and Bandcamp</b> — so you can listen
+      there. <b>We don't control these platforms, don't endorse them, and aren't responsible for
+      them</b> — their content, availability, pricing, accuracy of a given link, or their terms and
+      privacy practices. A "Listen on …" link is a convenience, not a guarantee that a title is
+      available on that service. Your use of any third-party platform is governed by that platform's
+      own terms.</p>
+  </section>
+
+  <section id="availability">
+    <h2 class="sec"><span class="n">7</span>Availability, changes, and beta status</h2>
+    <p>The Service is provided on an ongoing but <b>as-available</b> basis and may currently be in a
+      beta or invite-only phase. We may add, change, suspend, or discontinue features (or the whole
+      Service) at any time, and we may impose limits or require re-authentication. We aim to give
+      reasonable notice of material changes but can't always. We are not liable for any
+      unavailability, or for data loss caused by factors outside our reasonable control — please use
+      the export feature to keep your own backup of anything important to you.</p>
+  </section>
+
+  <section id="warranty">
+    <h2 class="sec"><span class="n">8</span>Disclaimer of warranties</h2>
+    <p>The Service is provided <b>"as is" and "as available," without warranties of any kind</b>,
+      whether express, implied, or statutory, including implied warranties of merchantability,
+      fitness for a particular purpose, title, and non-infringement. We do not warrant that the
+      Service will be uninterrupted, error-free, or secure, that defects will be corrected, or that
+      any data (including third-party album data or availability links) is accurate or complete. Some
+      jurisdictions don't allow certain warranty exclusions, so some of the above may not apply to
+      you.</p>
+  </section>
+
+  <section id="liability">
+    <h2 class="sec"><span class="n">9</span>Limitation of liability</h2>
+    <p>To the maximum extent permitted by law, in no event will Clancy Emanuel (operating as Music
+      Forest) be liable for any indirect, incidental, special, consequential, exemplary, or punitive
+      damages, or for any loss of data, profits, or goodwill, arising out of or related to your use
+      of (or inability to use) the Service, even if advised of the possibility. To the maximum extent
+      permitted by law, our total liability for any claim relating to the Service will not exceed the
+      greater of the amount you paid us for the Service in the 12 months before the claim (which,
+      during the free beta, is $0) or USD $100. Some jurisdictions don't allow certain limitations, so
+      some of the above may not apply to you, and nothing here limits liability that cannot be limited
+      by law.</p>
+  </section>
+
+  <section id="indemnity">
+    <h2 class="sec"><span class="n">10</span>Indemnification</h2>
+    <p>You agree to indemnify and hold harmless Clancy Emanuel (operating as Music Forest) from
+      claims arising out of your misuse of the Service or violation of these Terms or of law or
+      third-party rights.</p>
+  </section>
+
+  <section id="termination">
+    <h2 class="sec"><span class="n">11</span>Termination</h2>
+    <p>You may stop using the Service and delete your account at any time. We may suspend or terminate
+      your access if you materially violate these Terms, or if we discontinue the Service. On
+      termination, your right to use the Service ends; you can export your notebook beforehand, and
+      you may ask us to delete your account data as described in the Privacy Policy. Sections that by
+      their nature should survive termination (e.g. content ownership, disclaimers, limitation of
+      liability, governing law) will survive.</p>
+  </section>
+
+  <section id="tos-changes">
+    <h2 class="sec"><span class="n">12</span>Changes to these Terms</h2>
+    <p>We may update these Terms; we'll update the effective date and, for material changes, give more
+      prominent notice. Continuing to use the Service after changes take effect means you accept the
+      updated Terms.</p>
+  </section>
+
+  <section id="law">
+    <h2 class="sec"><span class="n">13</span>Governing law and disputes</h2>
+    <p>These Terms are governed by the laws of the State of Connecticut, USA, without regard to
+      conflict-of-laws rules, and the state and federal courts located in Connecticut will have
+      exclusive jurisdiction, except where mandatory local consumer-protection law provides
+      otherwise.</p>
+  </section>
+
+  <section id="misc">
+    <h2 class="sec"><span class="n">14</span>Miscellaneous</h2>
+    <p>These Terms (with the Privacy Policy) are the entire agreement between you and us regarding the
+      Service. If any provision is unenforceable, the rest remains in effect. Our not enforcing a
+      provision isn't a waiver. You may not assign these Terms; we may assign them to a successor.</p>
+  </section>
+
+  <section id="tos-contact">
+    <h2 class="sec"><span class="n">15</span>Contact</h2>
+    <p>Questions about these Terms: <a href="mailto:info@musicforest.lol">info@musicforest.lol</a>,
+      Clancy Emanuel (operating as Music Forest). A postal address is available on request.</p>
+  </section>
+
+  <hr class="rule">
+  <footer>
+    <p>See also the <a href="/privacy">Privacy Policy</a>. &nbsp;·&nbsp; <a href="/">Return to Music
+      Forest</a>.</p>
+  </footer>
+
+</div>
+</body>
+</html>

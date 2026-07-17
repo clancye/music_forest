@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Catalog Confidence — Music Forest admin</title>
+<!-- Same SRI-pinned supabase-js the admin page loads, to reuse the operator session. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.8/dist/umd/supabase.js" integrity="sha384-b4JKVkST7Jkb2qRVyZEamH2WA+trxThEkVN6z3JXWfUDFNZd14MnE/qRvt/zy2J5" crossorigin="anonymous"></script>
+<style>
+  :root {
+    --bg: #f1ede1; --bg-glow: #f7f3e8; --panel: #fbf8ef; --panel-2: #ece6d5;
+    --line: #d8d1bd; --ink: #2b2b1f; --muted: #726c58; --accent: #5d7d45;
+    --focus: #3f6f8f;
+    --q-strong: #7abf82; --q-teal: #63bcac; --q-amber2: #e6b455; --q-orange: #e79663;
+    --q-red: #de8072; --q-slate: #8ba4c6; --q-violet: #b89ad8;
+    --block-ink: #1c2016; --block-line: rgba(20,24,14,.28); --tile-bg: #ffffff;
+    --radius: 12px; --radius-sm: 8px;
+    --serif: "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, serif;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    --shadow: 0 1px 2px rgba(40,36,20,.12), 0 8px 24px rgba(40,36,20,.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14150e; --bg-glow: #23241a; --panel: #20221a; --panel-2: #2a2c20;
+      --line: #3a3a2a; --ink: #ece4cf; --muted: #a39c82; --accent: #86a86a;
+      --focus: #7fb2d8; --block-ink: #12140c; --block-line: rgba(0,0,0,.32);
+      --tile-bg: #262819; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.45);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f1ede1; --bg-glow: #f7f3e8; --panel: #fbf8ef; --panel-2: #ece6d5;
+    --line: #d8d1bd; --ink: #2b2b1f; --muted: #726c58; --accent: #5d7d45;
+    --focus: #3f6f8f; --block-ink: #1c2016; --block-line: rgba(20,24,14,.28);
+    --tile-bg: #ffffff; --shadow: 0 1px 2px rgba(40,36,20,.12), 0 8px 24px rgba(40,36,20,.10);
+  }
+  :root[data-theme="dark"] {
+    --bg: #14150e; --bg-glow: #23241a; --panel: #20221a; --panel-2: #2a2c20;
+    --line: #3a3a2a; --ink: #ece4cf; --muted: #a39c82; --accent: #86a86a;
+    --focus: #7fb2d8; --block-ink: #12140c; --block-line: rgba(0,0,0,.32);
+    --tile-bg: #262819; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.45);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: var(--sans); color: var(--ink);
+    background: radial-gradient(120% 80% at 100% 0%, var(--bg-glow), transparent 55%), var(--bg);
+  }
+  .cc-wrap { min-height: 100vh; padding: clamp(14px,2.4vw,28px); display: flex; flex-direction: column; gap: 14px; }
+  .cc-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .cc-eyebrow { font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin: 0 0 4px; }
+  .cc-title { font-family: var(--serif); font-size: clamp(22px,3vw,30px); font-weight: 600; margin: 0; }
+  .cc-tools { display: flex; gap: 8px; align-items: center; }
+  .cc-btn { font: 600 12.5px var(--sans); color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 7px 13px; cursor: pointer; }
+  .cc-btn:hover { border-color: var(--accent); }
+  .cc-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .cc-crumbs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .cc-crumb { font: 12.5px var(--sans); color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; }
+  .cc-crumb:hover, .cc-crumb:focus-visible { border-color: var(--accent); outline: none; }
+  .cc-crumb .k { color: var(--muted); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; }
+  .cc-crumb .dot { width: 9px; height: 9px; border-radius: 3px; box-shadow: inset 0 0 0 1px var(--block-line); }
+  .cc-crumb--root { font-family: var(--serif); }
+  .cc-sep { color: var(--muted); opacity: .6; }
+  .cc-context { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+  .cc-split { font-size: 13.5px; } .cc-split b { font-family: var(--serif); } .cc-split .hint { color: var(--muted); }
+  .cc-count { font: 13px var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); } .cc-count b { color: var(--ink); }
+  .cc-stage { position: relative; flex: 1; min-height: 340px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .cc-map { position: absolute; inset: 0; }
+  .cc-block { position: absolute; border: none; border-radius: 7px; cursor: pointer; padding: 9px 11px; overflow: hidden; text-align: left; display: flex; flex-direction: column; gap: 2px; color: var(--block-ink); box-shadow: inset 0 0 0 1px var(--block-line); transition: filter .12s; font-family: var(--sans); }
+  .cc-block:hover { filter: brightness(1.06) saturate(1.05); z-index: 3; }
+  .cc-block:focus-visible { outline: 3px solid var(--focus); outline-offset: -3px; z-index: 4; }
+  .cc-block .bl-label { font-weight: 700; font-size: 14px; line-height: 1.15; text-shadow: 0 1px 0 rgba(255,255,255,.28); }
+  .cc-block .bl-count { font: 12px var(--mono); font-variant-numeric: tabular-nums; opacity: .82; }
+  .cc-block .bl-pct { font-size: 11px; opacity: .7; }
+  .cc-block .bl-drill { margin-top: auto; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; opacity: .62; font-weight: 600; }
+  .cc-block.is-tiny { padding: 5px 7px; } .cc-block.is-tiny .bl-count, .cc-block.is-tiny .bl-pct, .cc-block.is-tiny .bl-drill { display: none; } .cc-block.is-tiny .bl-label { font-size: 11px; }
+  .cc-leaf { position: absolute; inset: 0; overflow: auto; padding: 14px; }
+  .cc-leaf-head { font-size: 13px; color: var(--muted); margin: 0 0 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .cc-leaf-head .swatch { width: 12px; height: 12px; border-radius: 3px; box-shadow: inset 0 0 0 1px var(--block-line); }
+  .cc-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px,1fr)); gap: 8px; }
+  .cc-tile { background: var(--tile-bg); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 9px 11px; min-height: 52px; display: flex; flex-direction: column; gap: 2px; }
+  .cc-tile .t-artist { font-weight: 600; font-size: 13px; } .cc-tile .t-title { font-family: var(--serif); font-size: 13.5px; color: var(--muted); line-height: 1.2; }
+  .cc-more { margin-top: 14px; padding: 12px 14px; border: 1px dashed var(--line); border-radius: var(--radius-sm); color: var(--muted); font-size: 13px; text-align: center; } .cc-more b { color: var(--ink); font-family: var(--mono); }
+  .cc-msg { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--muted); font-size: 14px; line-height: 1.5; }
+  .cc-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
+  .cc-legend .lg-title { font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 700; margin-right: 4px; }
+  .cc-leg-item { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; }
+  .cc-leg-item .sw { width: 13px; height: 13px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--block-line); flex: none; }
+  .cc-leg-item .n { font: 11.5px var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+  .cc-tip { position: fixed; z-index: 50; pointer-events: none; max-width: 300px; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow); padding: 10px 12px; font-size: 12.5px; opacity: 0; transform: translateY(4px); transition: opacity .12s, transform .12s; }
+  .cc-tip.on { opacity: 1; transform: translateY(0); }
+  .cc-tip .tp-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; } .cc-tip .tp-sw { width: 11px; height: 11px; border-radius: 3px; box-shadow: inset 0 0 0 1px var(--block-line); } .cc-tip .tp-label { font-weight: 700; } .cc-tip .tp-count { font-family: var(--mono); color: var(--muted); } .cc-tip .tp-blurb { color: var(--muted); line-height: 1.35; }
+  .cc-foot { font-size: 11.5px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  .cc-foot kbd { font: 11px var(--mono); background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; color: var(--ink); }
+  @media (prefers-reduced-motion: reduce) { .cc-block, .cc-tip { transition: none; } }
+</style>
+</head>
+<body>
+<div class="cc-wrap">
+  <header class="cc-head">
+    <div>
+      <p class="cc-eyebrow">Admin · Catalog QA · <span id="ccScope">live entity_quality</span></p>
+      <h1 class="cc-title">Catalog Confidence</h1>
+    </div>
+    <div class="cc-tools">
+      <a class="cc-btn" href="/admin">← Admin</a>
+      <button class="cc-btn" id="ccReset" type="button">↺ Root</button>
+      <button class="cc-btn" id="ccTheme" type="button">◐ Theme</button>
+    </div>
+  </header>
+  <nav class="cc-crumbs" id="ccCrumbs" aria-label="Drill path"></nav>
+  <div class="cc-context"><div class="cc-split" id="ccSplit"></div><div class="cc-count" id="ccCount"></div></div>
+  <div class="cc-stage" id="ccStage" role="group" aria-label="Treemap"></div>
+  <div class="cc-legend" id="ccLegend"></div>
+  <footer class="cc-foot">
+    <span><kbd>← ↑ → ↓</kbd> move</span><span><kbd>Enter</kbd> drill in</span>
+    <span><kbd>Esc</kbd> / <kbd>⌫</kbd> up</span>
+    <span>Click a block to split by the next dimension that still varies.</span>
+  </footer>
+</div>
+<div class="cc-tip" id="ccTip" role="status" aria-live="polite"></div>
+<script src="/static/admin.catalog.js"></script>
+</body>
+</html>

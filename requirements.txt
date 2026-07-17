@@ -1,0 +1,15 @@
+flask>=3.0
+requests>=2.31
+lxml>=5.0
+# Optional but recommended: validates downloaded cover art (dimensions /
+# decompression-bomb guard, S5). The code degrades gracefully if it's absent —
+# the magic-byte + size checks still run — but with Pillow installed an oversized
+# or bomb image is rejected before it's cached. Only used in cache mode + the
+# "Fix art" path; hotlink mode downloads no image bytes.
+Pillow>=10.0
+anyascii
+
+# The keyless YouTube Music crawler dep (ytmusicapi) is intentionally NOT here: it
+# lives in requirements-crawler.txt so it installs on the local crawler machine only,
+# never on the host (the Render build installs requirements.txt + requirements-hosted
+# .txt, so anything here would land on the host too). See requirements-crawler.txt.
