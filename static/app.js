@@ -5,7 +5,7 @@
 // service-worker cache name — because the worker can swap its cache to a new build
 // in the background while a resumed PWA keeps running old code, which made a stale
 // page wrongly report "up to date". BUMP THIS WITH sw.js VERSION on any shell change.
-window.__MF_BUILD = "v222";
+window.__MF_BUILD = "v226";
 
 // --- tiny helpers -----------------------------------------------------------
 const $ = (sel) => document.querySelector(sel);
@@ -1593,13 +1593,62 @@ function advanceDeck() {
 // deckState.kept so it can be undone (DELETE the row) and counted. Marks the key
 // kept immediately; the real id fills in once the POST lands. Shared by the deck's
 // Keep and Album details' Keep.
+// A keep goes straight to the network — there's no outbox — so a keep tapped while
+// the origin is unreachable used to depend entirely on the reader noticing a 6-second
+// toast. Two ways that loses real work: a RELEASE swaps Render's instance and the
+// origin 502s for ~27 s (measured 2026-07-18), and a phone drops signal for about as
+// long. Worse, markMet() has already run by then, so once the toast fades the record
+// won't be dealt again today either — the keep is gone with no second chance.
+//
+// So retry quietly first, on the failures that PROVE the write never reached the app
+// (see `neverReached` in recordChoice — a 500 is excluded, since /api/choices has no
+// idempotency key and the row may already exist). These delays cover the measured
+// release window, and it stays a rescue, not a sync engine.
+const KEEP_RETRY_DELAYS = [3000, 8000, 20000];
+
+// Whether a failed write PROVABLY never reached the app — the only case where
+// re-POSTing is safe, because /api/choices has no idempotency key and every POST
+// inserts a new row.
+//   502/503/504  Render's gateway answering while it swaps instances on a release;
+//                the request never got to the app, so a retry can't double-write.
+//   500          the app DID process it and may have committed before failing.
+//                Retrying that is how you'd get two copies of one keep.
+// (A rejected fetch never completed either; recordChoice tags those directly.)
+function writeNeverReachedApp(status) {
+  return status >= 502 && status <= 504;
+}
+
+async function keepWriteWithRetry(a) {
+  for (let i = 0; ; i++) {
+    try {
+      await recordChoice(a, null, { quiet: true });
+      return true;
+    } catch (e) {
+      // The note editor may have landed the row while we were waiting (it re-records
+      // when currentChoiceId is null) — then there's nothing left to retry.
+      if (currentChoiceId != null) return true;
+      if (!e || !e.neverReached || i >= KEEP_RETRY_DELAYS.length) return false;
+      await new Promise((r) => setTimeout(r, KEEP_RETRY_DELAYS[i]));
+    }
+  }
+}
+
 async function recordKeep(a, key) {
   key = key || albumKey(a);
   markMet(key);                                               // don't re-serve today
   deckState.kept.set(key, deckState.kept.get(key) || null);   // kept now (count)
-  recordChoice(a, null);                 // sets currentChoiceId + recordChoicePromise
-  const p = recordChoicePromise;         // this write's promise
-  try { await p; } catch (e) { return; }
+  if (!await keepWriteWithRetry(a)) {
+    // Out of retries. Hand the record BACK to the day: markMet above would otherwise
+    // keep it out of the deck for the rest of today even though nothing was saved,
+    // which turns a failed write into a record the reader can never reach again. Now
+    // the worst case is meeting it a second time — recoverable, and honest.
+    unmarkMet(key);
+    if (deckState) deckState.kept.delete(key);
+    updateSetAsideBar();
+    showToast("Couldn't save that keep — it's back in today's records", "Retry",
+      () => recordKeep(a, key));
+    return;
+  }
   // Sequential keeps only: currentChoiceId is this row's id. Don't clobber an id
   // we already have (a rapid interleave would mis-track, but we never undo those).
   if (deckState && deckState.kept.get(key) == null && currentChoiceId != null) {
@@ -1791,7 +1840,7 @@ function closeChoiceReveal() {
 // Record a keep as a chosen-only choice row (not_chosen null). Kept general — it
 // still accepts not_chosen and PATCHes when currentChoiceId is already set, which
 // the note composer's re-record fallback relies on.
-async function recordChoice(chosen, not_chosen) {
+async function recordChoice(chosen, not_chosen, opts = {}) {
   // Identity travels as uid; chosen_id/not_chosen_id ride along as Discogs provenance
   // (NULL for an MB-only pool album) so the server/store can still snapshot the
   // album and the forest (albums.db) keeps its release_id seeds.
@@ -1807,11 +1856,21 @@ async function recordChoice(chosen, not_chosen) {
   // it doesn't throw — so `r.ok` is the honest signal, not the fetch rejecting).
   recordChoicePromise = (async () => {
     if (currentChoiceId == null) {
-      const r = await fetch("/api/choices", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) throw new Error("POST /api/choices → " + r.status);
+      let r;
+      try {
+        r = await fetch("/api/choices", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      } catch (netErr) {
+        netErr.neverReached = true;      // the request never completed — safe to re-POST
+        throw netErr;
+      }
+      if (!r.ok) {
+        const err = new Error("POST /api/choices → " + r.status);
+        err.neverReached = writeNeverReachedApp(r.status);
+        throw err;
+      }
       const data = await r.json().catch(() => ({}));
       if (data.id == null) throw new Error("POST /api/choices returned no id");
       currentChoiceId = data.id;
@@ -1833,6 +1892,9 @@ async function recordChoice(chosen, not_chosen) {
     // retry; currentChoiceId stays null so the retry re-POSTs a fresh row. (Callers
     // fire-and-forget, so this catch also keeps the rejection from going unhandled;
     // saveChoiceReason awaits `recordChoicePromise` directly to see the failure.)
+    // `opts.quiet`: the caller is running its own retry loop (recordKeep) and owns
+    // the message, so don't toast once per attempt.
+    if (opts.quiet) throw e;
     showToast("Couldn't save your keep — tap to retry", "Retry",
       () => recordChoice(chosen, not_chosen));
   }
@@ -6327,5 +6389,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   // even if the fetch fails (clientConfig keeps its legacy defaults).
   await loadClientConfig();
   init();
+  // Mark a fresh install as caught up with THIS build, before anyone opens the
+  // What's-new door. It has to happen on boot rather than on first open: the
+  // mark is what "since you last updated" is measured from, so leaving it unset
+  // until someone looks would make every later update read as nothing-new.
+  if (window.AOTDWhatsNew) window.AOTDWhatsNew.primeSeen(localStorage, window.__MF_BUILD);
   openAlbumDeepLink();          // a shared ?album=<uid> link opens that record's door
 });

@@ -31,13 +31,43 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 let passed = 0, failed = 0;
 function ok(c, m) { if (c) passed++; else { failed++; console.error("  ✗ FAIL:", m); } }
 
-function loadClassifier() {
-  const src = fs.readFileSync(path.join(ROOT, "static/auth-ui.js"), "utf8");
-  const m = src.match(/function classifyAuthError\(e\)\s*\{[\s\S]*?\n  \}/);
+function authSrc() {
+  return fs.readFileSync(path.join(ROOT, "static/auth-ui.js"), "utf8");
+}
+
+function lift(re, what) {
+  const m = authSrc().match(re);
   if (!m) throw new Error(
-    "could not extract classifyAuthError from static/auth-ui.js — if it was renamed " +
-    "or reformatted, update this test rather than deleting it");
-  return new Function(`${m[0]}\nreturn classifyAuthError;`)();
+    `could not extract ${what} from static/auth-ui.js — if it was renamed or ` +
+    "reformatted, update this test rather than deleting it");
+  return m[0];
+}
+
+function loadClassifier() {
+  const stem = lift(/function isInviteRejection\(text\)\s*\{[\s\S]*?\n  \}/,
+                    "isInviteRejection");
+  const fn = lift(/function classifyAuthError\(e\)\s*\{[\s\S]*?\n  \}/,
+                  "classifyAuthError");
+  return new Function(`${stem}\n${fn}\nreturn classifyAuthError;`)();
+}
+
+// The SEND path (sendLinkFlow) decides the same thing separately: does this error
+// mean "not invited" — and so route to the Request-access screen — or is it a
+// genuine error to show inline? It used to test its own regex, which missed BOTH of
+// the hook's real messages, so every gate refusal rendered as a raw string with no
+// way forward. This lifts the live condition out of sendLinkFlow and runs it, so the
+// two paths are pinned to the same evidence.
+function loadSendPathTest() {
+  const stem = lift(/function isInviteRejection\(text\)\s*\{[\s\S]*?\n  \}/,
+                    "isInviteRejection");
+  // Anchored on `otp_disabled` only, not on the rest of the condition: a regression
+  // that swaps the invite test back out should then RUN and fail on the messages
+  // below, naming them — rather than throwing here about an unmatched pattern.
+  const cond = lift(/if \(code === "otp_disabled"[\s\S]*?\) \{/,
+                    "sendLinkFlow's rejection branch");
+  const body = cond.replace(/^if \(/, "return (").replace(/\) \{$/, ");");
+  return new Function(
+    `${stem}\nreturn function (code, msg) { ${body} };`)();
 }
 
 // The hook's rejection messages, read from the migration that authors them.
@@ -86,6 +116,32 @@ function main() {
   //    the hook says "invite". "invalid" must not be mistaken for "invite".
   ok(classify({ code: "", description: "invalid" }) === "link-expired",
      "'invalid' is not read as 'invite'");
+
+  // 5. THE SEND PATH decides the same thing, and used to decide it differently.
+  //    sendLinkFlow's own regex tested for "not invited"; the hook actually says
+  //    "isn't invited", so it matched NEITHER message and every refusal fell through
+  //    to the raw provider string with no Request-access button (2026-07-18).
+  const rejects = loadSendPathTest();
+  for (const msg of msgs) {
+    ok(rejects("", msg) === true,
+       `send path routes the hook's message to Request access: ${JSON.stringify(msg.slice(0, 40))}…`);
+  }
+  ok(rejects("otp_disabled", "") === true, "otp_disabled still routes there");
+  ok(rejects("", "Signups not allowed for otp") === true,
+     "the legacy shouldCreateUser wording still routes there");
+
+  //    ...and must NOT swallow errors that are the reader's problem to see.
+  ok(rejects("", "Email link is invalid or has expired") === false,
+     "an expired link is not an invite refusal (the 2026-07-16 bug, on this path)");
+  ok(rejects("", "Failed to fetch") === false, "a network error stays inline");
+  ok(rejects("", "Email rate limit exceeded") === false, "a rate limit stays inline");
+  ok(rejects("", "") === false, "an empty message is not a refusal");
+
+  //    Both paths must agree on every hook message — that agreement IS the fix.
+  for (const msg of msgs) {
+    ok((classify({ code: "", description: msg }) === "not-invited") === rejects("", msg),
+       `both paths agree on: ${JSON.stringify(msg.slice(0, 40))}…`);
+  }
 
   console.log(`  ${passed} passed, ${failed} failed`);
   if (failed) process.exit(1);

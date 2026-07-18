@@ -121,6 +121,8 @@
       '<div class="acct-pop hidden">' +
         '<button class="acct-start" title="Start your Notebook — sync it, back it up, and keep it for good">Start your Notebook →</button>' +
         '<button class="acct-whatis" title="What is Music Forest?">What is this?</button>' +
+        // Guests run the same shell and get the same updates, so the same door.
+        '<button class="acct-whatsnew" title="What has changed since you last updated">What&#39;s new</button>' +
         '<button class="acct-request" title="Can’t find a record? Ask us to add it">Request a record</button>' +
         '<button class="acct-signin" title="Already have a Notebook? Sign in.">Sign in</button>' +
       '</div>';
@@ -141,6 +143,10 @@
     _guestMenu.querySelector(".acct-whatis").addEventListener("click", (e) => {
       e.stopPropagation(); close();
       if (window.AOTDOnboarding) window.AOTDOnboarding.show({ first: false });
+    });
+    _guestMenu.querySelector(".acct-whatsnew").addEventListener("click", (e) => {
+      e.stopPropagation(); close();
+      if (window.AOTDWhatsNew) window.AOTDWhatsNew.show();
     });
     _guestMenu.querySelector(".acct-request").addEventListener("click", (e) => {
       e.stopPropagation(); close();
@@ -395,10 +401,27 @@
   // on a screen the operator never sees. An invited beta tester hit exactly this on
   // 2026-07-16: `type=invite` verify, so the hook had not even run (an emailed invite
   // creates the account at send time), yet the app blamed the invite list.
+  // The invite gate's rejection, in EITHER of the hook's two wordings (migration
+  // 0004): "Music Forest is invite-only…" and "This email isn't invited…". Matched on
+  // the stem "invit" so both land — and so does a reword — while staying clear of
+  // Supabase's expiry vocabulary ("invalid" / "expired"), which must never be read as
+  // an accusation.
+  //
+  // ONE predicate, shared by the OAuth-return classifier below and sendLinkFlow's
+  // send path. They used to test separately, and the send path's `not invited` missed
+  // BOTH real messages ("isn't invited" doesn't contain "not invited"), so every gate
+  // refusal there fell through to the raw provider string — no Request-access button,
+  // printed under a form still offering a fresh link, in the sage "error" colour. The
+  // return path was correct and tested; the send path was neither. Sharing this is
+  // what keeps them from drifting apart again.
+  function isInviteRejection(text) {
+    return /invit/i.test((text == null ? "" : text).toString());
+  }
+
   function classifyAuthError(e) {
     const code = ((e && e.code) || "").toString().toLowerCase();
     const desc = ((e && e.description) || "").toString();
-    if (/invit/i.test(desc)) return "not-invited";
+    if (isInviteRejection(desc)) return "not-invited";
     if (code === "otp_expired" || /expired|invalid/i.test(desc)) return "link-expired";
     return "unknown";
   }
@@ -472,8 +495,10 @@
     } catch (err) {
       const code = (err && (err.code || err.name) || "").toString();
       const msg = (err && err.message || "").toString();
-      if (code === "otp_disabled"
-          || /not allowed for otp|signups?\s+not\s+allowed|not invited/i.test(msg)) {
+      // isInviteRejection is the SHARED test (see its note): the hook's real wording
+      // is "isn't invited", which the old `not invited` alternative never matched.
+      if (code === "otp_disabled" || isInviteRejection(msg)
+          || /not allowed for otp|signups?\s+not\s+allowed/i.test(msg)) {
         renderSignupRejected();
       } else {
         setStatus(isNetErr(err) ? NET_ERR_MSG : (msg || "Could not send the link."), "error");
@@ -1549,6 +1574,10 @@
         // menu (no emoji); the email rides the Sign out row instead of a header.
         '<button class="acct-update-ready hidden" title="A new version is ready — reload to update">' +
           'Update ready<span class="acct-reload">reload →</span></button>' +
+        // Sits directly under the update row so it's to hand at the one moment it's
+        // wanted — you just updated and something looks different. Pull-only: no
+        // badge, no unread count, never opens itself (VISION P4).
+        '<button class="acct-whatsnew" title="What has changed since you last updated">What&#39;s new</button>' +
         '<button class="acct-whatis" title="What is Music Forest? Re-open the welcome.">What is this?</button>' +
         '<button class="acct-settings-toggle" aria-expanded="false" title="Quick unlock, backups, account password, and app updates">Settings<span class="acct-caret">▸</span></button>' +
         '<div class="acct-settings hidden">' +
@@ -1627,6 +1656,12 @@
       // Keep the menu open behind the native confirm/prompt; the flow tears the
       // menu down itself on success (via doSignOut).
       deleteAccountFlow(_acctMenu.querySelector(".acct-delete"));
+    });
+    _acctMenu.querySelector(".acct-whatsnew").addEventListener("click", (e) => {
+      e.stopPropagation();
+      pop.classList.add("hidden");
+      btn.setAttribute("aria-expanded", "false");
+      if (window.AOTDWhatsNew) window.AOTDWhatsNew.show();
     });
     // Phase F: a pull-only "What is this?" door — re-opens the welcome/ethos for
     // returning or curious hands. Never touches the once-per-device flag.

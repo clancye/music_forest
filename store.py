@@ -671,8 +671,56 @@ class PostgresStore:
                 cur.execute("SELECT COUNT(DISTINCT user_id) FROM journal_rows "
                             "WHERE updated_at >= now() - interval '30 days'")
                 out["active_savers_30d"] = cur.fetchone()[0]
+            out["invites"] = self._invite_funnel(days)
             return out
         except Exception as e:  # noqa: BLE001 - report, never 500 the panel
+            return {"available": False, "error": str(e)}
+
+    def _invite_funnel(self, days=30):
+        """Invite → account, from auth.users. Its OWN statement + guard so a Supabase
+        schema that lacks `invited_at`/`confirmed_at` degrades to available:False here
+        instead of taking the whole Usage panel down with it.
+
+        WHY THIS EXISTS. Supabase's "Invite user" creates the auth.users row at SEND
+        time, so `created_at` is when *we invited them*, not when they joined — which
+        made the panel's "accounts created" histogram really a record of invite waves
+        (15 rows on 2026-07-17 = the 15 invites sent that day, not 15 signups). The
+        honest join signal is `confirmed_at`: for a magic-link invite, confirming the
+        email IS the moment the account becomes theirs.
+
+        Counts only over rows that were actually invited (`invited_at IS NOT NULL`), so
+        an operator account made another way can't inflate "never opened it". Returns
+        counts + the accept latency (median/max) + a per-day JOINED series to sit beside
+        the invited one. Metadata only — no address ever leaves this query."""
+        try:
+            with self._cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) AS invited, "
+                    "COUNT(*) FILTER (WHERE confirmed_at IS NOT NULL) AS joined, "
+                    "COUNT(*) FILTER (WHERE confirmed_at IS NULL) AS never_opened, "
+                    "COUNT(*) FILTER (WHERE confirmed_at IS NULL "
+                    "  AND invited_at < now() - interval '7 days') AS cold, "
+                    "EXTRACT(EPOCH FROM percentile_cont(0.5) WITHIN GROUP "
+                    "  (ORDER BY confirmed_at - invited_at)) AS median_s, "
+                    "EXTRACT(EPOCH FROM MAX(confirmed_at - invited_at)) AS max_s "
+                    "FROM auth.users WHERE invited_at IS NOT NULL")
+                row = cur.fetchone()
+                keys = ["invited", "joined", "never_opened", "cold",
+                        "median_accept_s", "max_accept_s"]
+                out = {"available": True}
+                out.update(dict(zip(keys, row)))
+                for k in ("median_accept_s", "max_accept_s"):
+                    out[k] = None if out[k] is None else int(out[k])
+                # The series the old "accounts created" chart should have been: the day
+                # someone actually joined, not the day we mailed them.
+                cur.execute(
+                    "SELECT to_char(date_trunc('day', confirmed_at), 'YYYY-MM-DD') AS d, "
+                    "COUNT(*) AS n FROM auth.users "
+                    "WHERE confirmed_at >= now() - (%s || ' days')::interval "
+                    "GROUP BY 1 ORDER BY 1", (int(days),))
+                out["joined_by_day"] = [{"day": d, "n": n} for d, n in cur.fetchall()]
+            return out
+        except Exception as e:  # noqa: BLE001 - one optional block, never the panel
             return {"available": False, "error": str(e)}
 
 

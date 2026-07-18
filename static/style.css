@@ -2520,16 +2520,16 @@ body.auth-pending > *:not(#authGate) { visibility: hidden; }
    separators + more width keep names from feeling squished. */
 .acct-update-ready,
 .acct-export, .acct-import, .acct-setpw, .acct-devtrust, .acct-update,
-.acct-whatis, .acct-signin, .acct-settings-toggle, .acct-signout, .acct-delete,
-.acct-start, .acct-request {
+.acct-whatis, .acct-whatsnew, .acct-signin, .acct-settings-toggle, .acct-signout,
+.acct-delete, .acct-start, .acct-request {
   display: flex; align-items: center; gap: var(--sp-10);
   width: 100%; padding: 10px var(--sp-12); margin: 0 0 2px; border-radius: 8px;
   cursor: pointer; background: transparent; color: var(--muted);
   border: 1px solid transparent; font: inherit; font-size: 13px; font-weight: 500;
   text-align: left; letter-spacing: .01em;
 }
-.acct-export:hover, .acct-import:hover, .acct-whatis:hover, .acct-signin:hover,
-.acct-setpw:hover, .acct-devtrust:hover, .acct-update:hover,
+.acct-export:hover, .acct-import:hover, .acct-whatis:hover, .acct-whatsnew:hover,
+.acct-signin:hover, .acct-setpw:hover, .acct-devtrust:hover, .acct-update:hover,
 .acct-settings-toggle:hover, .acct-start:hover, .acct-request:hover {
   background: color-mix(in srgb, var(--living) 16%, transparent); color: var(--text);
 }
@@ -2791,3 +2791,48 @@ body:has(.modal:not(.hidden):not(#feedbackModal)) .acct-menu { display: none; }
   transition: filter .15s ease;
 }
 .take-note-pill:hover, .take-note-pill:focus-visible { filter: brightness(1.06); outline: none; }
+
+/* --- What's new (whatsnew.js) ------------------------------------------------
+   A pull-only door on the account menu: what changed since you last updated, in
+   three tiers, most-felt first. Styled off the same panel/line tokens as .modal
+   so it reads as one of the app's own sheets, not a bolted-on changelog. */
+.wn-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 70;
+  display: flex; align-items: center; justify-content: center;
+  padding: max(var(--sp-16), var(--safe-top)) max(var(--sp-16), var(--safe-right))
+           max(var(--sp-16), var(--safe-bottom)) max(var(--sp-16), var(--safe-left));
+}
+.wn-card {
+  position: relative; background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  width: min(560px, 100%); max-height: 80vh; overflow-y: auto;
+  padding: var(--sp-24) var(--sp-24) var(--sp-16);
+}
+.wn-close {
+  position: absolute; top: var(--sp-8); right: var(--sp-8);
+  background: none; border: 0; color: var(--muted); font-size: 18px;
+  line-height: 1; padding: var(--sp-8); cursor: pointer;
+}
+.wn-close:hover { color: var(--text); }
+.wn-kicker {
+  margin: 0 0 var(--sp-16); font-family: var(--font-serif); font-size: 20px;
+  color: var(--text);
+}
+.wn-section { margin: 0 0 var(--sp-24); }
+.wn-section:last-child { margin-bottom: var(--sp-8); }
+.wn-section-title {
+  margin: 0 0 var(--sp-12); font-size: 13px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted);
+  border-bottom: 1px solid var(--line); padding-bottom: var(--sp-6);
+}
+/* The tier heading is the load-bearing bit — it tells you whether to read on. */
+.wn-tier {
+  margin: var(--sp-16) 0 var(--sp-6); font-size: 14px; font-weight: 600;
+  color: var(--accent-2);
+}
+.wn-tier:first-of-type { margin-top: 0; }
+.wn-list { margin: 0; padding-left: var(--sp-18); }
+.wn-list li {
+  margin: 0 0 var(--sp-6); font-size: 14px; line-height: 1.55; color: var(--text);
+}
+.wn-empty { margin: 0; font-size: 14px; color: var(--muted); }

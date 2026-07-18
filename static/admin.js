@@ -1254,10 +1254,67 @@
       const seen = document.createElement("p"); seen.className = "muted usage-sub";
       seen.textContent = "dormant (no sign-in in 30 days): " + acc.dormant + " of " + acc.total;
       parts.push(seen);
+      // Invite → account. Supabase's "Invite user" creates the auth.users row at SEND
+      // time, so created_at is when WE invited someone, not when they joined; this block
+      // reads invited_at/confirmed_at instead and is the honest version of the chart
+      // below it. Degrades quietly when the auth schema has no invite columns.
+      const inv = acc.invites || {};
+      // Always render the section when the query RAN, even at zero. Hiding it on an
+      // empty cohort meant staging — which has one, uninvited account — drew nothing
+      // at all, so the block couldn't be checked anywhere before prod. An empty state
+      // that says which case it is beats a section that silently isn't there.
+      if (inv.available === false) {
+        parts.push(sectionLabel("Invites → accounts"));
+        parts.push(usageHint("Couldn't read the invite columns from Supabase auth"
+          + (inv.error ? ": " + inv.error : ".")
+          + " The rest of this panel is unaffected."));
+      } else if (inv.available && !inv.invited) {
+        parts.push(sectionLabel("Invites → accounts"));
+        parts.push(usageHint("No invited accounts on this instance yet. Supabase's "
+          + "“Invite user” stamps invited_at; an account made any other way "
+          + "isn't counted here, which is why a dev/staging project usually reads zero."));
+      } else if (inv.available) {
+        parts.push(sectionLabel("Invites → accounts"));
+        const funnel = document.createElement("div"); funnel.className = "cost-kpis";
+        funnel.append(
+          costKpi("Invited", String(inv.invited)),
+          costKpi("Joined", String(inv.joined)),
+          costKpi("Never opened it", String(inv.never_opened)));
+        parts.push(funnel);
+        const pct = Math.round((inv.joined / inv.invited) * 100);
+        const rate = document.createElement("p"); rate.className = "usage-nb";
+        rate.textContent = pct + "% of invites became accounts";
+        parts.push(rate);
+        if (inv.median_accept_s != null) {
+          parts.push(usageHint("Median time from invite to joining: "
+            + humanDuration(inv.median_accept_s)
+            + (inv.max_accept_s != null ? " · longest " + humanDuration(inv.max_accept_s) : "")
+            + ". Sign-in links expire, so a long tail here is worth reading next to the "
+            + "expiry window, not just as hesitation."));
+        }
+        if (inv.cold) {
+          const cold = document.createElement("p"); cold.className = "muted usage-sub";
+          cold.textContent = inv.cold + " invited more than 7 days ago and still "
+            + "haven't opened it";
+          parts.push(cold);
+        }
+        const joined = inv.joined_by_day || [];
+        if (joined.length) {
+          parts.push(sectionLabel("Joined · last 30 days"));
+          parts.push(usageBars(joined.map((h) => [h.day, h.n])));
+          parts.push(usageHint("The day each person actually joined."));
+        }
+      }
       const hist = acc.signups_by_day || [];
       if (hist.length) {
-        parts.push(sectionLabel("Accounts created · last 30 days"));
+        // Deliberately NOT "accounts created": for an invited user the row is created
+        // when the invite is sent, so this is a record of invite waves. Kept because
+        // that IS useful — just not as a signup count.
+        parts.push(sectionLabel("Invites sent · last 30 days"));
         parts.push(usageBars(hist.map((h) => [h.day, h.n])));
+        parts.push(usageHint("When accounts were created in Supabase — which for an "
+          + "invited person is when the invite went out, not when they joined. "
+          + (inv.available ? "The joined chart above is the arrival signal." : "")));
       }
     } else {
       parts.push(sectionLabel("Accounts"));
@@ -1313,6 +1370,19 @@
   function usageHint(text) {
     const d = document.createElement("p"); d.className = "usage-hint";
     d.textContent = text; return d;
+  }
+  // Seconds → a legible span ("3h 12m", "4d 2h", "45m"). Two units at most: the
+  // question this answers is "roughly how long did people take to accept an invite",
+  // and "3h 12m 07s" is precision nobody reads. Rounds, never floors to a bare "0".
+  function humanDuration(secs) {
+    const s = Math.max(0, Math.round(Number(secs) || 0));
+    if (s < 60) return s + "s";
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + "m";
+    const h = Math.floor(m / 60), rm = m % 60;
+    if (h < 24) return rm ? h + "h " + rm + "m" : h + "h";
+    const d = Math.floor(h / 24), rh = h % 24;
+    return rh ? d + "d " + rh + "h" : d + "d";
   }
   // A compact vertical bar trend of one counter over the last `days` days (UTC, matching
   // opsdb's day buckets). Generates the full timeline and fills missing days with zero so
