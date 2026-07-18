@@ -159,3 +159,22 @@ def test_fts_query_strips_operators():
 def test_fts_query_empty():
     assert dbmod._fts_query("   ") is None
     assert dbmod._fts_query("!!!") is None
+
+
+# B26: a 1-char token is matched exactly, not as a prefix — `a*` constrains
+# nothing but makes bm25 score ~1/6 of the index ("a tribe called quest" was
+# 526 ms; 6 ms now). 2+ chars is a real narrowing and keeps its prefix.
+
+def test_fts_query_single_char_token_is_exact():
+    assert dbmod._fts_query("a") == "a"
+    assert dbmod._fts_query("a tribe called quest") == "a tribe* called* quest*"
+
+
+def test_fts_query_two_char_token_keeps_its_prefix():
+    assert dbmod._fts_query("u2") == "u2*"
+    assert dbmod._fts_query("ra") == "ra*"
+
+
+def test_fts_query_single_char_still_field_scoped():
+    assert dbmod._fts_query("a tribe", field="artist") == \
+        "artist:a artist:tribe*"

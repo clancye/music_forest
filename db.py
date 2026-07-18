@@ -681,6 +681,19 @@ def _fts_query(q, field=None):
     them — typing "mile dav" matches "Miles Davis". We keep only word
     characters so stray quotes/operators can't break the MATCH syntax.
 
+    B26 EXCEPTION: a ONE-CHARACTER token is matched EXACTLY, not as a prefix.
+    A 1-char prefix constrains nothing — `a*` matches every word starting with
+    "a", ~1/6 of the whole index — but it costs enormously, because `ORDER BY
+    rank` then has to bm25-score that entire doclist. Measured 2026-07-18 over
+    3.5 M albums: `a tribe called quest` 526 ms -> 6 ms (83x), `a perfect
+    circle` 529 ms -> 73x, bare `a` 1772 ms -> 140 ms. Those are REAL queries,
+    not a synthetic worst case — any band whose name starts with a bare "A" hit
+    the slow path. Results are unchanged for every query with no 1-char token,
+    and effectively unchanged for the ones above (same albums, occasional
+    trivial reorder); a bare `a` actually gets *better* (albums really called
+    "A_A" rather than arbitrary a-prefixed ones). A 2-char prefix IS a real
+    narrowing ("ra" -> Radiohead), so the line is drawn at 1.
+
     If *field* is one of the indexed column names, every token is scoped to
     that column (e.g. ``artist:miles* artist:davis*``)."""
     import re
@@ -689,7 +702,8 @@ def _fts_query(q, field=None):
         return None
     col = field if field in _FTS_FIELDS else None
     prefix = f"{col}:" if col else ""
-    return " ".join(f"{prefix}{t}*" for t in toks)
+    return " ".join(f"{prefix}{t}" if len(t) == 1 else f"{prefix}{t}*"
+                    for t in toks)
 
 
 def search_albums(q, limit=500, month=None, day=None, field=None):
