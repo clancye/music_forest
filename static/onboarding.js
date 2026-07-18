@@ -56,7 +56,7 @@
     howItWorks: "How Music Forest works ↗",
     closeTitle: "Close",
     // The first-run guided tour — four gentle cues, in order, each pointing at one
-    // control. keep/shelve vocab + "private to you" (BRAND); one plain line each,
+    // control. keep/skip vocab + "private to you" (BRAND); one plain line each,
     // no pressure; skippable at any step.
     tour: [
       // Platforms: adaptive target. Signed in, the "Where you listen" control is
@@ -85,14 +85,14 @@
       // content — the app never says what to write (VISION P2 / BRAND).
       // Leads with the act, not the icon: the earlier line read "The ✎ … writes a
       // note", which made the pencil the actor when the person is (BRAND: active,
-      // from the user's side). The question shape mirrors the Shelve step.
+      // from the user's side). The question shape mirrors the Skip step.
       // Owner's ask + pick, 2026-07-16.
       { sel: ".deck-cover",
         text: "Tap the album to open its details — the story behind it, the tracklist, and the people on it. Want to write about a single song? Tap the ✎ beside its track. ✕ (or Esc) brings you back, right where you left off." },
       { sel: "#deckListen",
         text: "Tap Listen to play the record where you already listen — it opens in a new tab, so you never lose your place here." },
       { sel: "#setAsideBtn",
-        text: "Want to see a different one? Shelve the current one — it's on a shelf you can reopen any time. Nothing's lost." },
+        text: "Want to see a different one? Skip the current one — it goes to a list you can reopen any time. Nothing's lost." },
       // The delete gesture rides HERE, on Keep, rather than on the Notebook step:
       // "keep" is the word that sounds permanent, so the reassurance belongs in the
       // same breath as the commitment. (Neither step has Notebook rows on screen —
@@ -245,7 +245,7 @@
   }
 
   // --- the first-run guided tour (a gentle, non-modal, skippable sequence) ----
-  // A short ordered walk — platforms → album → shelve → keep → Notebook → Feedback — one soft cue
+  // A short ordered walk — platforms → album → skip → keep → Notebook → Feedback — one soft cue
   // at a time, each floated by its target with a pointer and a highlight. Non-modal
   // (no backdrop): the records stay reachable, and ✕ / Esc / "Skip the tour" leave
   // at any step (VISION: pull, not push; a cue, never a corridor). Shown once per
@@ -257,7 +257,7 @@
 
   function _tourKey(e) {
     if (e.key !== "Escape") return;
-    // A door (album details, feedback, the shelf) owns Escape — let it close itself
+    // A door (album details, feedback, the skipped pile) owns Escape — let it close itself
     // and keep the tour on its current step (the cue is hidden behind the door and
     // returns when it closes). We listen in the CAPTURE phase so we see the modal
     // here BEFORE app.js's handler closes it; only end the tour when Escape has no
@@ -290,7 +290,7 @@
   function _placeTour() {
     if (!_tourEl || !_tourTarget) return;
     // The target can be swapped out from under us when the view re-renders mid-tour:
-    // tapping Shelve/Keep advances the deck and rebuilds its buttons, so the cached
+    // tapping Skip/Keep advances the deck and rebuilds its buttons, so the cached
     // #setAsideBtn / #keepBtn detaches. A detached node reports a 0,0 rect, which would
     // park the cue at the very top of the screen. Re-resolve the current step's live
     // element and move the highlight with it (a later reflow catches it if it's briefly
@@ -303,8 +303,8 @@
       _tourTarget = live;
       _tourTarget.classList.add("mf-tour-target");
     }
-    // Yield while another door owns the screen (album details, feedback, the shelf
-    // sheet): hide the cue so it never floats over a modal, then resume on close. The
+    // Yield while another door owns the screen (album details, feedback, the skipped
+    // pile): hide the cue so it never floats over a modal, then resume on close. The
     // cue itself is `.mf-hint` with role=dialog but NO aria-modal, so it's excluded.
     if (document.querySelector('.modal:not(.hidden), [aria-modal="true"]:not(.hidden)')) {
       _tourEl.style.visibility = "hidden";

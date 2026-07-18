@@ -1433,7 +1433,9 @@ def availability_runway(today=None):
 
     EXPENSIVE (~seconds on the ~2M-row pool): the server caches the result;
     don't call this per-request."""
-    today = today or date.today()
+    # The reader's day (ET), so "runway from today" counts the same days the app
+    # actually serves — on a UTC box this walked from tomorrow all evening.
+    today = today or config.today_local()
     try:
         with _conn() as c:
             rows = c.execute(

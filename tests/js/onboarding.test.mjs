@@ -80,7 +80,7 @@ function main() {
       "platforms step has both header and ☰-menu copy");
     ok(/deck-cover/.test(t[1].sel), "step 2 points at the album (tap for details)");
     ok(t[2].sel === "#deckListen", "step 3 points at Listen (the #deckListen element)");
-    ok(t[3].sel === "#setAsideBtn", "step 4 points at Shelve (the #setAsideBtn element)");
+    ok(t[3].sel === "#setAsideBtn", "step 4 points at Skip (the #setAsideBtn element)");
     ok(t[4].sel === "#keepBtn", "step 5 points at Keep");
     ok(/journal/.test(t[5].sel), "step 6 points at the Notebook tab");
     ok(/feedbackBtn/.test(t[6].sel), "step 7 points at the Feedback button");

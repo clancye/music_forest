@@ -9,15 +9,19 @@ Unlike uidmap (pure of Flask), these are deliberately request-COUPLED — they
 read ``flask.request`` directly, so they can only be called inside a request
 context. server.py re-imports the names, so its call sites are unchanged.
 """
-from datetime import date
-
 from flask import request
+
+import config
 
 
 def _parse_md(arg):
-    """Parse a MM-DD query arg, defaulting to today."""
+    """Parse a MM-DD query arg, defaulting to today.
+
+    "Today" is config.today_local() — the reader's day (America/New_York), NOT the
+    server's process date. On Render (UTC) those differ from 20:00 ET to midnight, and
+    date.today() there served an East-Coast reader TOMORROW's records all evening."""
     if not arg:
-        t = date.today()
+        t = config.today_local()
         return t.month, t.day
     month, day = (int(x) for x in arg.split("-"))
     return month, day
@@ -26,7 +30,7 @@ def _parse_md(arg):
 def _md_or_today():
     if request.args.get("date"):
         return _parse_md(request.args.get("date"))
-    t = date.today()
+    t = config.today_local()
     return t.month, t.day
 
 

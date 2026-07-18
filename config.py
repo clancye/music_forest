@@ -6,11 +6,45 @@ same code runs locally today and can be deployed/shared later without edits.
 Override any value by exporting the matching env var before running.
 """
 import os
+from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 # --- Paths ------------------------------------------------------------------
 # Project root = folder this file lives in.
 ROOT = Path(__file__).resolve().parent
+
+# --- What day is it? --------------------------------------------------------
+# "Today" means the READER's day, not the server's process clock. Render runs UTC,
+# where date.today() flips at 20:00 ET — so all evening an East-Coast reader was shown
+# TOMORROW's records. Caught 2026-07-16, minutes after the first 15 beta invites went
+# out: the day rolled to a barely-warmed 07-17 at 8pm ET (228 Spotify links vs 07-16's
+# 626), so the people just invited got the thinnest possible version of the app.
+#
+# ET is also the zone the PIPELINE already thinks in: the crawler and prewarm run on
+# the Mac and warm ET-today + ET-tomorrow. Anchoring the server to ET therefore makes
+# what's SERVED match what's WARMED — an alignment UTC never had, and the real reason
+# the evening looked so thin.
+#
+# Deliberately ONE zone, not per-reader: the day is a shared server-side anchor (the
+# pool, the prefetch warm, /admin's panels all key off it), so a single zone keeps them
+# consistent, and the beta is US-only (docs/legal). A genuinely per-reader day means
+# threading the reader's zone through every caller — a real change, worth doing only if
+# the app goes wide.
+APP_TZ = os.environ.get("AOTD_TZ", "America/New_York")
+
+
+def today_local():
+    """The calendar date in APP_TZ — what a reader means by "today".
+
+    Falls back to the process date if the zone can't be loaded (a bad AOTD_TZ, or a
+    slim image with no tzdata — which is why `tzdata` is pinned in requirements.txt).
+    The fallback is the OLD behaviour, i.e. the bug, so it must stay unreachable: if
+    the served day ever looks 4-5 hours ahead again, suspect this."""
+    try:
+        return datetime.now(ZoneInfo(APP_TZ)).date()
+    except Exception:  # noqa: BLE001 — a bad zone must never take the day down
+        return date.today()
 
 # Where large data lives. Keep dumps + db out of the code dir if you like by
 # exporting AOTD_DATA_DIR=/some/big/disk.

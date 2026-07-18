@@ -79,6 +79,22 @@
     flex: 1; min-width: 12rem; background: #1c1c1c; border: 1px solid #333; color: #eee;
     padding: .45rem .55rem; border-radius: 6px; font: inherit;
   }
+  /* Undo toast — shown when a Keep/Skip slips a card out of the working list. */
+  #fbToast {
+    position: fixed; left: 50%; bottom: 1.25rem; transform: translate(-50%, 1rem);
+    display: flex; align-items: center; gap: .75rem; z-index: 40;
+    background: #1c1c1c; border: 1px solid #3a3a2a; border-radius: 8px;
+    padding: .55rem .8rem; color: #ece4cf; font-size: .9rem;
+    box-shadow: 0 6px 20px rgba(0,0,0,.45);
+    opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s;
+  }
+  #fbToast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+  #fbToast .fb-undo {
+    background: #2f6f4f; border: 1px solid #2f6f4f; color: #eafff2;
+    padding: .3rem .7rem; border-radius: 6px; font-weight: 600;
+  }
+  #fbToast .fb-undo:hover { background: #357f5a; }
+  @media (prefers-reduced-motion: reduce) { #fbToast { transition: none; } }
 
   /* --- Access requests --- */
   h2 { font-size: 1.05rem; margin: 1.5rem 0 .5rem; }
@@ -169,6 +185,23 @@
   .meter-fill.warn { background: #8a6a2f; }
   .meter-fill.bad { background: #7a3b28; }
   .cost-note { border-left: 3px solid #8a6a2f; background: #201d14; border-radius: 0; padding: .6rem .7rem; margin-top: .4rem; font-size: .84rem; line-height: 1.5; color: #ffeccb; }
+
+  /* --- Usage tab: anonymized, aggregate signals only ------------------------ */
+  .usage-badge { font-size: .76rem; color: #9fbf9f; background: #16201a; border: 1px solid #26402c; border-radius: 999px; padding: .25rem .7rem; }
+  .usage-seclabel { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: #8a8a8a; margin: 1.4rem 0 .5rem; }
+  .usage-sub { font-size: .84rem; margin: .35rem 0 0; }
+  .usage-hint { font-size: .78rem; line-height: 1.45; color: #8f8f8f; margin: .2rem 0 .9rem; max-width: 62ch; }
+  .usage-nb { font-size: .95rem; font-variant-numeric: tabular-nums; margin: 0; }
+  .usage-foot { font-size: .8rem; line-height: 1.5; margin-top: 1.4rem; border-left: 3px solid #26402c; background: #14180f; padding: .55rem .7rem; color: #b7c3ab; }
+  .usage-hist { display: flex; flex-direction: column; gap: .3rem; }
+  .usage-hrow { display: flex; align-items: center; gap: .6rem; font-size: .82rem; }
+  .usage-hrow .uh-lab { width: 6.5rem; flex: none; color: #9a9a9a; font-variant-numeric: tabular-nums; }
+  .usage-hrow .meter-track { flex: 1; }
+  .usage-hrow .uh-n { width: 2.5rem; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
+  .usage-trend { display: flex; align-items: flex-end; gap: 4px; height: 84px; padding: .2rem 0; }
+  .usage-trend .ut-col { flex: 1; height: 100%; display: flex; align-items: flex-end; }
+  .usage-trend .ut-bar { width: 100%; background: #3a6ea5; border-radius: 3px 3px 0 0; min-height: 2px; }
+  .usage-trend .ut-bar.zero { background: #262626; }
 
   /* --- Pool tab: records per listening service, per day ---------------------
      Reuses .meter-row/.meter-head/.meter-track from the cost panel, but the
@@ -307,6 +340,7 @@
       <button data-tab="pool">Pool<span class="tabdot" data-dotfor="pool"></span></button>
       <button data-tab="crawler">Door crawler<span class="tabdot" data-dotfor="crawler"></span></button>
       <button data-tab="cost">Cost<span class="tabdot" data-dotfor="cost"></span></button>
+      <button data-tab="usage">Usage<span class="tabdot" data-dotfor="usage"></span></button>
     </nav>
 
     <!-- SUMMARY (home / attention, H4): a status tile per working area — each one a
@@ -367,7 +401,8 @@
         </label>
         <span id="counts" class="muted"></span>
         <span class="spacer"></span>
-        <button id="reset" title="Clear keep/skip/notes saved in this browser">Reset triage</button>
+        <button id="clearDone" title="Forget the items marked Done — for good — without touching your keep/skip marks">Clear done</button>
+        <button id="reset" title="Clear keep/skip/done marks + notes saved in this browser">Reset triage</button>
         <button id="export" class="primary">Export kept → brief + screenshots (.zip)</button>
       </div>
       <div id="list"></div>
@@ -404,6 +439,7 @@
     <section class="panel" data-panel="pool" hidden>
       <h2>Records per listening service</h2>
       <p class="pool-note">What a person gets when they pick their services. <strong>Read tomorrow, not today</strong> — today is warmed by jobs and inflated by whatever's been browsed; tomorrow is the leading indicator, so a thin number there means a job didn't run and you have a day to fix it.</p>
+      <p class="pool-note"><strong>These days are Eastern time</strong>, matching what the app serves and what the Mac's jobs warm. Until 2026-07-16 the server dated the day in <strong>UTC</strong>, so from 8pm ET it served <em>tomorrow</em> — a day the prewarm had only half-reached. If you ever see the evening go thin again (Spotify especially), check that first: it means <code>config.today_local()</code> fell back to the process clock. Spotify and Apple are always thinnest on a fresh day — they're the keyed resolvers, warmed a capped sip at a time; the keyless ones (Deezer, YouTube, Tidal, Pandora) land near-complete straight away.</p>
       <div class="row-controls"><span class="spacer"></span>
         <button id="poolRefresh" title="Reload the per-service counts">↻ Refresh</button>
       </div>
@@ -431,6 +467,21 @@
       <div id="costKpis" class="cost-kpis"></div>
       <div id="costMeters"></div>
       <p id="costStatus" class="muted"></p>
+    </section>
+
+    <!-- USAGE: anonymized, aggregate operational signals only. Account activity comes
+         from Supabase auth metadata (counts + sign-in recency, never content); feature
+         counts are opsdb request-path counters; notebook shows row COUNTS by kind. No
+         user identity, no notebook content — the notebook is E2EE and unreadable here. -->
+    <section class="panel" data-panel="usage" hidden>
+      <div class="row-controls">
+        <span class="usage-badge">anonymized · counts only · no notebook content</span>
+        <span class="spacer"></span>
+        <button id="usageRefresh" title="Reload usage">↻ Refresh</button>
+      </div>
+      <div id="usageKpis" class="cost-kpis"></div>
+      <div id="usageBody"></div>
+      <p id="usageStatus" class="muted"></p>
     </section>
   </div>
 

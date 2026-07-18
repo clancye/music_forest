@@ -39,6 +39,16 @@ _SCHEMA = (
     "filled INT NOT NULL DEFAULT 0, miss INT NOT NULL DEFAULT 0, "
     "err INT NOT NULL DEFAULT 0, last_at TEXT)")
 
+# Anonymized daily feature counters (the /admin Usage panel). One row per (day, key);
+# `key` is a feature name like "today_served" / "explore_search" / "door_open". Counts
+# only — NO user id, NO content — so it's an aggregate of what the SERVER already sees on
+# the request path, never a per-person or per-notebook record. Same "never fails a
+# request" discipline as spotify_burn: a counter must not be able to break a page load.
+_USAGE_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS usage_counter ("
+    "day TEXT NOT NULL, key TEXT NOT NULL, n INT NOT NULL DEFAULT 0, "
+    "PRIMARY KEY (day, key))")
+
 # The outcomes a Search can have, and the only strings interpolated into SQL below —
 # an unknown one is folded into `miss` rather than trusted.
 _OUTCOMES = ("filled", "miss", "err")
@@ -94,6 +104,38 @@ def spotify_burn_today(*, now=None):
         return {"day": day, "searches": 0, "filled": 0, "miss": 0, "err": 0,
                 "last_at": None}
     return dict(row)
+
+
+def bump(key, *, now=None, delta=1):
+    """Count ONE anonymized feature event (e.g. a Today load, an Explore search, a door
+    open) into today's (UTC) bucket. Counts only — no user, no content. Swallows every
+    error: a counter must never break the request it's counting."""
+    try:
+        with _conn() as c:
+            c.execute(_USAGE_SCHEMA)
+            c.execute(
+                "INSERT INTO usage_counter (day, key, n) VALUES (?, ?, ?) "
+                "ON CONFLICT(day, key) DO UPDATE SET n = n + excluded.n",
+                (_today(now), str(key), int(delta)))
+    except Exception:  # noqa: BLE001 — a counter never breaks a request
+        pass
+
+
+def usage_recent(days=30, *, now=None):
+    """Every (day, key, n) within the last `days` days, newest day first — so the panel
+    can sum per feature over a window and draw a per-day trend. [] when unreadable."""
+    try:
+        from datetime import timedelta
+        start = ((now or datetime.now(timezone.utc)) - timedelta(days=int(days) - 1)
+                 ).strftime("%Y-%m-%d")
+        with _conn() as c:
+            c.execute(_USAGE_SCHEMA)
+            rows = c.execute(
+                "SELECT day, key, n FROM usage_counter WHERE day >= ? "
+                "ORDER BY day DESC", (start,)).fetchall()
+    except Exception:  # noqa: BLE001
+        return []
+    return [dict(r) for r in rows]
 
 
 def spotify_burn_recent(limit=14):

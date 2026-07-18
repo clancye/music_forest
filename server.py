@@ -485,7 +485,7 @@ def api_config():
 @bp.route("/api/today")
 @_LIMIT_CATALOG
 def api_today():
-    t = date.today()
+    t = config.today_local()          # the READER's day (ET), not the box's UTC one
     return jsonify({
         "date": t.isoformat(),
         "month": t.month, "day": t.day,
@@ -533,6 +533,11 @@ def api_pool_day():
         return jsonify({"error": "pool serving disabled"}), 404
     month, day = _md_or_today()
     dig = request.args.get("dig") == "1"
+    if not dig:
+        opsdb.bump("today_served")     # anonymized Usage counter (count only, no user)
+        _mode = request.headers.get("X-MF-Mode")   # coarse tier flag, not an identity
+        if _mode in ("guest", "account"):
+            opsdb.bump("today_" + _mode)
     platforms = _platforms_param(dig)
     albums = pooldb.pool_day(month, day, available_only=not dig,
                              platforms=platforms)
@@ -575,6 +580,7 @@ def api_pool_door():
     uid = (request.args.get("uid") or "").strip()
     if not uid:
         return jsonify({"error": "uid required"}), 400
+    opsdb.bump("door_open")            # anonymized Usage counter (count only, no user)
     return jsonify(pooldb.door_links(uid))
 
 
@@ -592,6 +598,7 @@ def api_search():
     q = (request.args.get("q") or "").strip()
     if not q:
         return jsonify({"q": q, "albums": [], "count": 0})
+    opsdb.bump("explore_search")       # anonymized Usage counter (count only, no query)
     month = day = None
     if request.args.get("date"):
         month, day = _parse_md(request.args.get("date"))
@@ -1166,7 +1173,9 @@ def api_journal_export():
     """Download the whole journal as a portable JSON file (D2)."""
     payload = journal.export_data()
     resp = jsonify(payload)
-    stamp = date.today().isoformat()
+    # The reader's day: a 9pm-ET export shouldn't land in their downloads stamped
+    # tomorrow. Cosmetic, but it's their file with their date on it.
+    stamp = config.today_local().isoformat()
     resp.headers["Content-Disposition"] = (
         f'attachment; filename="aotd-journal-{stamp}.json"')
     return resp
@@ -1823,7 +1832,7 @@ def api_admin_platform_day():
     if not config.POOL_ENABLED:
         out["error"] = "pool serving disabled"
         return jsonify(out)
-    today = date.today()
+    today = config.today_local()   # same day the pool serves, so the panel agrees
     for offset, when in ((0, "today"), (1, "tomorrow")):
         d = today + timedelta(days=offset)
         md = f"{d.month:02d}-{d.day:02d}"
@@ -1833,6 +1842,29 @@ def api_admin_platform_day():
         except Exception as e:  # noqa: BLE001 - a panel read never takes the app down
             out["days"].append({"day": md, "when": when, "error": str(e)})
     return jsonify(out)
+
+
+def _container_mem_limit_bytes():
+    """Best-effort read of THIS container's RAM ceiling from cgroup, so the /admin
+    memory meter tracks the real Render plan (Starter 512 MB, Standard 2 GB, …)
+    without a hardcoded number to drift — the same "measure, never remember" rule
+    the disk meter already follows via statvfs. cgroup v2 first, then v1; returns
+    bytes, or None when there's no finite limit (unlimited, or not on a cgroup host
+    like the owner's Mac, where the config fallback stands in)."""
+    sane_max = 1 << 40  # 1 TiB — anything larger is the "unlimited" sentinel, not a plan
+    for path in ("/sys/fs/cgroup/memory.max",                     # cgroup v2
+                 "/sys/fs/cgroup/memory/memory.limit_in_bytes"):  # cgroup v1
+        try:
+            with open(path) as fh:
+                raw = fh.read().strip()
+            if raw == "max":
+                continue
+            val = int(raw)
+            if 0 < val < sane_max:
+                return val
+        except (OSError, ValueError):
+            continue
+    return None
 
 
 @bp.route("/api/admin/cost")
@@ -1887,6 +1919,12 @@ def api_admin_cost():
             rss * 1024 if sys.platform.startswith("linux") else rss)
     except Exception:  # noqa: BLE001 - a memory read is never worth a failure
         pass
+    # The plan's RAM ceiling, MEASURED from cgroup so the meter's denominator self-
+    # corrects on any Render plan (config.COST_RENDER_RAM_MB is only the fallback for
+    # non-cgroup hosts). Without this the meter read "/ 512 MB" on a 2 GB Standard box.
+    _ram_limit = _container_mem_limit_bytes()
+    if _ram_limit:
+        usage["render_ram_limit_bytes"] = _ram_limit
     # Live request-concurrency for THIS worker (the box's real ceiling is threads,
     # not a billing meter — INVITE_ROLLOUT_PLAN §2). Cheap read under the gauge
     # lock; `now` includes this in-flight request, so it's always >= 1.
@@ -1923,6 +1961,59 @@ def api_admin_cost():
     accounts = usage.get("accounts")
     out["cost_per_account"] = (round(out["fixed_monthly"] / accounts, 2)
                                if accounts else None)
+    return jsonify(out)
+
+
+@bp.route("/api/admin/usage")
+def api_admin_usage():
+    """Operator-only Usage panel — ANONYMIZED, AGGREGATE signals only. Three sources,
+    all metadata: (1) account activity from Supabase auth.users (counts + sign-in
+    recency, created_at only — hosted only; SQLite reports available:False), (2) live
+    notebook row COUNTS by kind (keeps/notes — the ciphertext is never read), and (3)
+    per-day feature counters from opsdb (this host's request path — Today loads, Explore
+    searches, door opens). NO user identity and NO notebook content ever appears here:
+    the notebook is end-to-end encrypted and the server cannot read it, by design. Every
+    source is guarded so one failure never 500s the panel. Skips are deliberately absent
+    — they never reach the server (local/ephemeral by design)."""
+    _require_operator()
+    out = {
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "features": {}, "content": {}, "accounts": {},
+    }
+    # (3) Feature counters — sum per key over 7d and 30d windows, plus a per-day series.
+    try:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        cutoff_7d = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
+        rows = opsdb.usage_recent(30)
+        t7, t30, by_day = {}, {}, {}
+        for r in rows:
+            k, n, d = r["key"], r["n"], r["day"]
+            t30[k] = t30.get(k, 0) + n
+            if d >= cutoff_7d:
+                t7[k] = t7.get(k, 0) + n
+            by_day.setdefault(d, {})[k] = n
+        out["features"] = {"totals_7d": t7, "totals_30d": t30, "by_day": by_day,
+                           "today": today}
+    except Exception as e:  # noqa: BLE001 - report, never sink the panel
+        out["features_error"] = str(e)
+    # (2) Notebook metadata — live keep/note counts (never content).
+    try:
+        out["content"] = store.get_store().content_stats()
+    except Exception as e:  # noqa: BLE001
+        out["content_error"] = str(e)
+    # (1) Account activity — hosted (Supabase auth) only; SQLite → available:False.
+    try:
+        out["accounts"] = store.get_store().account_activity()
+    except Exception as e:  # noqa: BLE001
+        out["accounts_error"] = str(e)
+    # Live load — requests in flight on THIS worker right now (+ this process's peak). The
+    # closest honest "is anyone here now" signal: Music Forest does not track concurrent
+    # PEOPLE (that needs session surveillance), so this is request load, not a headcount.
+    try:
+        with _concurrency_lock:
+            out["live"] = {"in_flight": _concurrency["now"], "peak": _concurrency["peak"]}
+    except Exception:  # noqa: BLE001 - a gauge read is never worth a failure
+        pass
     return jsonify(out)
 
 
@@ -2317,7 +2408,8 @@ def _warm_pool_slice():
         time.sleep(2)   # let the worker start serving before we take disk/CPU
         t0 = time.time()
         rows = 0
-        for d in (date.today(), date.today() + timedelta(days=1)):
+        base = config.today_local()    # warm the days we actually serve (ET)
+        for d in (base, base + timedelta(days=1)):
             try:
                 rows += len(pooldb.pool_day(d.month, d.day, available_only=True, limit=None))
             except Exception:   # noqa: BLE001 - one bad day mustn't abort the warm

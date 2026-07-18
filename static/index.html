@@ -122,6 +122,10 @@
             aria-label="Add a genre or style filter, then press Enter">
           <button type="button" id="genreAdd" class="genre-add">Add</button>
         </div>
+        <!-- Type-ahead: genres/styles actually present in today's records, live as you
+             type. Click or arrow+Enter to add one as a filter chip. -->
+        <div id="genreSuggest" class="genre-suggest" role="listbox"
+             aria-label="Matching genres and styles" hidden></div>
         <p class="genre-pref-note" id="genrePrefNote" aria-live="polite"></p>
       </div>
     </details>
@@ -136,7 +140,7 @@
      landmark, so a screen-reader user can skip the header + nav straight to it.
      Wraps every view (Choose / Explore / Browse / your journal). -->
 <main id="main">
-<!-- TODAY: the day's records, one at a time — keep or set aside -->
+<!-- TODAY: the day's records, one at a time — keep or skip -->
 <section id="decide" class="view">
   <!-- ACC1 C [1.3.1]: an invisible per-view <h2> gives the outline a rung between
        the site <h1> and each section's <h3>s, so headings can be skimmed by voice. -->
@@ -196,18 +200,18 @@
        the reopenable pile. Both live INSIDE #decide so they hide with the view on a
        tab switch; the pile is local, per-day and ephemeral (never synced). -->
   <div id="setAsideBar" class="set-aside-bar hidden" role="button" tabindex="0"
-       aria-label="Open the records you shelved">
-    <span class="sab-label">Shelved</span>
+       aria-label="Open the records you skipped">
+    <span class="sab-label">Skipped</span>
     <span class="sab-count" id="setAsideCount">0</span>
   </div>
 </section>
 
 <!-- The pull-up pile itself — a door over Today (VISION: pull-only, returnable). -->
 <div id="setAsideSheet" class="set-aside-sheet hidden" role="dialog" aria-modal="true"
-     aria-label="Records you shelved today">
+     aria-label="Records you skipped today">
   <div class="sas-panel">
     <div class="sas-head">
-      <h3>Shelved today</h3>
+      <h3>Skipped today</h3>
       <button id="setAsideClose" type="button" class="modal-close" title="Close">✕</button>
     </div>
     <p class="sas-hint muted">Records you skipped today — bring any back to look
@@ -473,7 +477,7 @@
   <div class="modal-box">
     <button id="storyClose" class="modal-close" title="Close">✕</button>
     <div id="storyHead"></div>
-    <!-- Request 1: Keep / Set aside for the CURRENT Today record, shown only when
+    <!-- Request 1: Keep / Skip for the CURRENT Today record, shown only when
          Album details is opened from the deck (renderStoryDeckActions). -->
     <div id="storyDeckActions" class="story-deck-actions hidden"></div>
     <!-- FB#40: a plain button to take a note on this record, on every album view

@@ -5,7 +5,7 @@
 // service-worker cache name — because the worker can swap its cache to a new build
 // in the background while a resumed PWA keeps running old code, which made a stale
 // page wrongly report "up to date". BUMP THIS WITH sw.js VERSION on any shell change.
-window.__MF_BUILD = "v212";
+window.__MF_BUILD = "v218";
 
 // --- tiny helpers -----------------------------------------------------------
 const $ = (sel) => document.querySelector(sel);
@@ -100,13 +100,22 @@ function mdDisplay(md) {
   return `${names[m - 1]} ${d}`;
 }
 
+// A coarse, NON-identifying tier flag sent on catalog reads, so the operator's Usage
+// panel can tell guest activity from account activity. It is NOT a user id and carries
+// nothing about who you are — just which tier this session is in (local single-user,
+// hosted guest, or hosted account). The server only ever counts it.
+function clientMode() {
+  if (!window.AOTD_HOSTED) return "local";
+  return window.AOTD_GUEST ? "guest" : "account";
+}
 function api(path) {
   const md = mdParam();
-  if (!md) return fetch(path).then((r) => r.json());
+  const opts = { headers: { "X-MF-Mode": clientMode() } };
+  if (!md) return fetch(path, opts).then((r) => r.json());
   // Append the date param without clobbering any query string the caller already
   // put on the path (e.g. the pool seam's "/api/pool/pick?n=2").
   const sep = path.includes("?") ? "&" : "?";
-  return fetch(path + sep + "date=" + md).then((r) => r.json());
+  return fetch(path + sep + "date=" + md, opts).then((r) => r.json());
 }
 
 // --- client feature flags (P3 data-access seam) -----------------------------
@@ -566,6 +575,11 @@ const genreFilter = new Set();
 // first-class filters and OR with them (like the buckets OR with each other), so a
 // record shows if it matches ANY selected filter. Dig still ignores everything.
 const genreTerms = new Set();
+// Buckets the reader has dismissed from the pill row this session (the ✕ on a bucket
+// chip). Session-scoped and reversible ("show all genres"); it declutters the generic
+// pills for someone who'd rather type. Dismissing a bucket that's actively filtering
+// also drops it from the filter, so a hidden pill never keeps filtering invisibly.
+const dismissedBuckets = new Set();
 // The canonical chip order (matches pooldb._GENRE_BUCKETS); the chooser then shows
 // only the buckets actually present today, most-common first.
 const GENRE_BUCKET_ORDER = ["electronic", "rock", "hip hop", "pop", "jazz", "folk",
@@ -607,6 +621,73 @@ function termMatchCount(term) {
     if (((r.genres || "") + " " + (r.styles || "")).toLowerCase().includes(t)) n++;
   }
   return n;
+}
+
+// FB (2026-07-17): the type-ahead vocabulary — the DISTINCT genre + style tags that
+// actually appear in today's records, each with the count the filter would yield if you
+// added it (same includes() match termMatchCount uses, so the number shown is the number
+// you get). Sourced from today only, so it never suggests a tag that matches nothing —
+// the honesty rule, applied to autocomplete. Cached on the deck; a re-derive rebuilds it.
+function genreVocab() {
+  if (!deckState || !deckState.all) return [];
+  if (deckState._vocab) return deckState._vocab;
+  const labels = new Map();                        // key(lower) -> first-seen label
+  for (const r of deckState.all) {
+    for (const part of [r.genres || "", r.styles || ""]) {
+      for (const raw of part.split(",")) {
+        const label = raw.trim();
+        if (label && !labels.has(label.toLowerCase())) labels.set(label.toLowerCase(), label);
+      }
+    }
+  }
+  const vocab = [...labels.entries()]
+    .map(([key, label]) => ({ key, label, n: termMatchCount(key) }))
+    .filter((e) => e.n > 0)
+    .sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
+  deckState._vocab = vocab;
+  return vocab;
+}
+
+// The up-to-8 suggestions for a typed query: tags containing it, prefix-matches first,
+// then by count. Excludes tags already added as a term (no point re-suggesting them).
+function genreSuggestions(q) {
+  const s = (q || "").trim().toLowerCase();
+  if (!s) return [];
+  return genreVocab()
+    .filter((e) => e.key.includes(s) && !genreTerms.has(e.key))
+    .sort((a, b) => (a.key.startsWith(s) ? 0 : 1) - (b.key.startsWith(s) ? 0 : 1)
+      || b.n - a.n || a.label.localeCompare(b.label))
+    .slice(0, 8);
+}
+
+let suggestActive = -1;                             // highlighted suggestion (keyboard)
+function renderGenreSuggest() {
+  const box = document.getElementById("genreSuggest");
+  const inp = document.getElementById("genreText");
+  if (!box || !inp) return;
+  const items = genreSuggestions(inp.value);
+  suggestActive = -1;
+  if (!items.length) { box.hidden = true; box.innerHTML = ""; return; }
+  box.innerHTML = items.map((e) =>
+    `<button type="button" class="genre-sugg" role="option" data-add="${esc(e.label)}"
+       tabindex="-1"><span class="gs-label">${esc(e.label)}</span><span
+       class="gs-n">${e.n.toLocaleString()}</span></button>`).join("");
+  box.hidden = false;
+}
+function hideGenreSuggest() {
+  const box = document.getElementById("genreSuggest");
+  if (box) { box.hidden = true; box.innerHTML = ""; }
+  suggestActive = -1;
+}
+// Move the keyboard highlight through the open suggestion list (wraps at the ends).
+function moveGenreSuggest(delta) {
+  const box = document.getElementById("genreSuggest");
+  if (!box || box.hidden) return;
+  const opts = [...box.querySelectorAll(".genre-sugg")];
+  if (!opts.length) return;
+  suggestActive = (suggestActive + delta + opts.length) % opts.length;
+  opts.forEach((o, i) => o.classList.toggle("active", i === suggestActive));
+  opts[suggestActive].scrollIntoView({ block: "nearest" });
 }
 
 function updateGenreTally() {
@@ -656,12 +737,15 @@ function renderGenrePref() {
   if (!box) return;
   const counts = dayBucketCounts();
   const present = GENRE_BUCKET_ORDER
-    .filter((b) => counts.get(b))
+    .filter((b) => counts.get(b) && !dismissedBuckets.has(b))
     .sort((a, b) => counts.get(b) - counts.get(a));
   const bucketChips = present.map((b) => {
     const on = genreFilter.has(b);
+    const label = titleCaseGenre(b);
     return `<button type="button" class="genre-chip${on ? " on" : ""}" data-genre="${esc(b)}"
-       aria-pressed="${on}"><span class="gc-dot" aria-hidden="true"></span>${esc(titleCaseGenre(b))}<span class="gc-n">${counts.get(b).toLocaleString()}</span></button>`;
+       aria-pressed="${on}"><span class="gc-dot" aria-hidden="true"></span>${esc(label)}<span class="gc-n">${counts.get(b).toLocaleString()}</span><span
+       class="gc-x gc-dismiss" data-dismiss="${esc(b)}" role="button" tabindex="-1"
+       title="Hide ${esc(label)}" aria-label="Hide the ${esc(label)} genre pill">✕</span></button>`;
   }).join("");
   // FB#57b: the typed terms as their own removable chips — the term, its count of
   // today's records (like the buckets), then a ✕. Tapping the chip removes it.
@@ -671,9 +755,28 @@ function renderGenrePref() {
        aria-label="Remove the ${esc(t)} filter (${n} records)">${esc(t)}<span
        class="gc-n">${n.toLocaleString()}</span><span class="gc-x" aria-hidden="true">✕</span></button>`;
   }).join("");
-  box.innerHTML = bucketChips + termChips;
+  // When some generic pills are hidden, a quiet chip brings them all back — dismissing
+  // is session-scoped and reversible, never a one-way trap.
+  const restoreChip = dismissedBuckets.size
+    ? `<button type="button" class="genre-chip genre-restore" data-restore
+         aria-label="Show all genre pills again">+ show all genres</button>`
+    : "";
+  box.innerHTML = bucketChips + termChips + restoreChip;
   setGenrePrefNote();
   updateGenreTally();
+}
+
+// Hide a generic bucket pill for the session; if it was actively filtering, drop it from
+// the filter (and re-derive) so a hidden pill never keeps narrowing invisibly.
+function dismissBucket(b) {
+  dismissedBuckets.add(b);
+  if (genreFilter.delete(b)) refilterDeck();
+  else renderGenrePref();
+}
+function restoreBuckets() {
+  if (!dismissedBuckets.size) return;
+  dismissedBuckets.clear();
+  renderGenrePref();
 }
 
 // A genre toggle re-derives the visible deck from the full day we already hold — no
@@ -731,6 +834,7 @@ function clearGenreFilter() {
   genreTerms.clear();
   const inp = document.getElementById("genreText");
   if (inp) inp.value = "";
+  hideGenreSuggest();
   refilterDeck();
 }
 
@@ -742,37 +846,68 @@ function wireGenrePref() {
     // Like the platform list: a toggle re-renders the chips, detaching the clicked
     // node, so an ancestor click-away closer would read it as "outside". Stop here.
     e.stopPropagation();
+    const dismiss = e.target.closest("[data-dismiss]");           // the ✕ hides the pill
+    if (dismiss) { dismissBucket(dismiss.dataset.dismiss); return; }
+    if (e.target.closest("[data-restore]")) { restoreBuckets(); return; }
     const custom = e.target.closest(".genre-chip.custom[data-term]");
     if (custom) { removeGenreTerm(custom.dataset.term); return; }   // FB#57b: tap to drop
     const chip = e.target.closest("[data-genre]");
     if (chip) toggleGenre(chip.dataset.genre);
   });
-  // FB#57b: type a finer term + Enter (or the Add button) to add it as a chip; it
-  // then filters like a bucket. No live-as-you-type — an explicit add, easy to remove.
+  // FB#57b: type a finer term + Enter (or the Add button) to add it as a chip; it then
+  // filters like a bucket. FB (2026-07-17): as you type, a dropdown suggests the genres
+  // and styles actually present today — pick one instead of guessing the spelling.
   const text = document.getElementById("genreText");
   const addBtn = document.getElementById("genreAdd");
-  const addFromInput = () => {
+  const suggest = document.getElementById("genreSuggest");
+  const addTerm = (val) => {
     if (!text) return;
-    addGenreTerm(text.value);
+    addGenreTerm(val);
     text.value = "";
+    hideGenreSuggest();
     text.focus();
+  };
+  const activeSuggLabel = () => {
+    if (!suggest || suggest.hidden || suggestActive < 0) return null;
+    const opt = suggest.querySelectorAll(".genre-sugg")[suggestActive];
+    return opt ? opt.dataset.add : null;
   };
   if (text) {
     let timer = null;
     text.addEventListener("click", (e) => e.stopPropagation());
     text.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); addFromInput(); }
+      if (e.key === "ArrowDown") { e.preventDefault(); moveGenreSuggest(1); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); moveGenreSuggest(-1); return; }
+      if (e.key === "Escape" && suggest && !suggest.hidden) {
+        e.preventDefault(); e.stopPropagation(); hideGenreSuggest(); return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const sel = activeSuggLabel();
+        addTerm(sel != null ? sel : text.value);
+      }
     });
-    // FB#57b: preview the count as you type — decide before adding. Debounced; an
-    // empty box restores the active-filter note.
+    // The dropdown is cheap (cached vocab) so it updates live; the count-note stays
+    // debounced. An empty box hides the dropdown and restores the active-filter note.
     text.addEventListener("input", () => {
+      renderGenreSuggest();
       clearTimeout(timer);
       timer = setTimeout(updateGenreTypePreview, 150);
     });
+    text.addEventListener("blur", () => setTimeout(hideGenreSuggest, 120));  // let a click land
   }
-  if (addBtn) addBtn.addEventListener("click", (e) => { e.stopPropagation(); addFromInput(); });
+  if (suggest) {
+    suggest.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const opt = e.target.closest(".genre-sugg[data-add]");
+      if (opt) addTerm(opt.dataset.add);
+    });
+    // A mousedown inside the list must not blur-hide it before the click resolves.
+    suggest.addEventListener("mousedown", (e) => e.preventDefault());
+  }
+  if (addBtn) addBtn.addEventListener("click", (e) => { e.stopPropagation(); addTerm(text ? text.value : ""); });
   // Populate the chips whenever the chooser is opened (the day may have changed).
-  box.addEventListener("toggle", () => { if (box.open) renderGenrePref(); });
+  box.addEventListener("toggle", () => { if (box.open) renderGenrePref(); else hideGenreSuggest(); });
   // Tap outside the open popover to dismiss it (mirrors the platform chooser) —
   // but NOT a tap on the feedback launcher/modal: opening feedback shouldn't
   // collapse the genre filter (FB#57), the same exemption the account menu makes.
@@ -1106,6 +1241,41 @@ function balancedOrder(list) {
   return out;
 }
 
+// --- "Already met today" set (D6) --------------------------------------------
+// A record you kept or shelved today should not be served to you again the same
+// day — not even after a reload, which drops the in-memory deck and would otherwise
+// re-shuffle the whole day from the top. We remember the keys you've acted on in a
+// single localStorage entry scoped to today's date; a new day resets it. This is
+// local, per-day, and never synced or sent anywhere (VISION: pull, not push — it's
+// your own state on your own machine, not a profile).
+const MET_KEY = "mf-today-met/v1";
+function todayFull() {
+  const n = new Date();
+  return `${n.getFullYear()}-${todayMD()}`;
+}
+function loadMet() {
+  try {
+    const o = JSON.parse(localStorage.getItem(MET_KEY));
+    if (o && o.date === todayFull() && Array.isArray(o.keys)) return new Set(o.keys);
+  } catch (e) { /* corrupt or absent → empty */ }
+  return new Set();
+}
+function saveMet(set) {
+  try {
+    localStorage.setItem(MET_KEY,
+      JSON.stringify({ date: todayFull(), keys: [...set] }));
+  } catch (e) { /* private mode / quota — a repeat is better than a thrown deck */ }
+}
+function markMet(key) {
+  if (!key) return;
+  const s = loadMet(); s.add(key); saveMet(s);
+}
+function unmarkMet(key) {           // undoing a keep makes the record servable again
+  if (!key) return;
+  const s = loadMet();
+  if (s.delete(key)) saveMet(s);
+}
+
 function deckLoadingHtml() {
   return `<div class="deck-card skeleton" aria-hidden="true">
     <div class="skel-cover skel"></div>
@@ -1140,7 +1310,28 @@ async function loadDeck(force = false) {
       `<div class="empty">Couldn't load today's records — try again.</div>`;
     return;
   }
-  const records = data.albums || [];
+  // Dedup defensively by album key (the server already collapses clustered dups, but
+  // never show the same record twice within one response), then drop records you've
+  // already met today so a reload doesn't re-serve what you kept or shelved (D6).
+  const met = loadMet();
+  const seen = new Set();
+  const raw = (data.albums || []).filter((r) => {
+    const k = albumKey(r);
+    if (k && seen.has(k)) return false;
+    if (k) seen.add(k);
+    return true;
+  });
+  const rawCount = raw.length;
+  const records = raw.filter((r) => !met.has(albumKey(r)));
+  // Everything today was already met (not a thin date): show the calm end-of-day
+  // state, not the "no records with a known date" empty. deckState.all is empty, so
+  // renderDeck falls straight through to deckEndHtml.
+  if (rawCount && !records.length) {
+    deckState = { key, all: [], records: [], idx: 0, kept: new Map(), aside: [] };
+    renderGenrePref();
+    renderDeck();
+    return;
+  }
   if (!records.length) {
     deckState = null;
     updateSetAsideBar();
@@ -1227,7 +1418,7 @@ function renderDeck() {
         ${isKept
           ? `<button type="button" id="undoKeepBtn" class="set-aside-btn">Undo keep</button>
              <button type="button" id="deckNextBtn" class="keep-btn">Next →</button>`
-          : `<button type="button" id="setAsideBtn" class="set-aside-btn">Shelve</button>
+          : `<button type="button" id="setAsideBtn" class="set-aside-btn">Skip</button>
              <button type="button" id="keepBtn" class="keep-btn">Keep</button>`}
       </div>
     </article>`;
@@ -1262,7 +1453,7 @@ function deckEndHtml() {
     ? `<p>You kept ${kept} — <button class="linkish" data-goto-notebook>see them in your Notebook →</button></p>`
     : `<p>You didn't keep any today — that's fine. Nothing has to be kept.</p>`;
   const asideLine = aside
-    ? `<p><button class="linkish" data-open-aside>Look again at the ${aside} you shelved →</button></p>`
+    ? `<p><button class="linkish" data-open-aside>Look again at the ${aside} you skipped →</button></p>`
     : "";
   // A thin platform-filtered day is the #1 way Today dead-ends fast: you filter to
   // a service (Spotify/Apple confirm few records), set the one or two aside, and
@@ -1300,6 +1491,7 @@ function advanceDeck() {
 // Keep and Album details' Keep.
 async function recordKeep(a, key) {
   key = key || albumKey(a);
+  markMet(key);                                               // don't re-serve today
   deckState.kept.set(key, deckState.kept.get(key) || null);   // kept now (count)
   recordChoice(a, null);                 // sets currentChoiceId + recordChoicePromise
   const p = recordChoicePromise;         // this write's promise
@@ -1357,6 +1549,7 @@ async function unkeepRecord(key) {
   if (!deckState) return;
   const id = deckState.kept.get(key);
   deckState.kept.delete(key);
+  unmarkMet(key);                        // an undone keep can be met again today
   renderDeck();
   if (id != null) {
     try { await fetch(`/api/choices/${id}`, { method: "DELETE" }); }
@@ -1370,6 +1563,7 @@ function setAsideCurrent() {
   if (!deckState || deckState.idx >= deckState.records.length) return;
   const a = deckState.records[deckState.idx];
   const key = albumKey(a);
+  markMet(key);                          // shelved counts as met — no re-serve on reload
   if (!deckState.aside.some((x) => albumKey(x) === key)) deckState.aside.push(a);
   advanceDeck();
 }
@@ -1635,7 +1829,7 @@ function renderAsideList() {
   const list = $("#setAsideList");
   if (!list || !deckState) return;
   if (!deckState.aside.length) {
-    list.innerHTML = `<p class="empty">Nothing shelved.</p>`;
+    list.innerHTML = `<p class="empty">Nothing skipped.</p>`;
     return;
   }
   list.innerHTML = deckState.aside.map((a) => {
@@ -3490,6 +3684,40 @@ async function openAlbumByUid(uid) {
   openStoryModal(uid);
 }
 
+// Share a record so someone else can find it on Music Forest (owner ask, 2026-07-17).
+// A user-initiated, outward door (VISION P2): you reach for it; the link opens the
+// recipient onto this exact album (openAlbumDeepLink reads ?album=<uid> on boot). Native
+// share sheet where the platform offers one, else copy the link. No tracking, no
+// attribution tag — just a plain link (the "found from ___" playlist idea was declined).
+async function shareAlbum(a) {
+  if (!a) return;
+  const key = albumKey(a);
+  if (!key) return;
+  const url = location.origin + "/?album=" + encodeURIComponent(key);
+  const title = `${a.artist} — ${a.title}`;
+  if (navigator.share) {
+    try { await navigator.share({ title, text: title + " — on Music Forest", url }); return; }
+    catch (e) { if (e && e.name === "AbortError") return; }   // cancelled; don't also copy
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast("Link copied — send it so a friend can find this record");
+  } catch (e) {
+    showToast("Couldn't copy the link automatically — it's " + url);
+  }
+}
+
+// A shared link lands as origin/?album=<uid>; on boot, open that record's details over
+// the default view (a door — closing returns you to Today/Explore). The URL is cleaned
+// first so a refresh doesn't reopen it and the address bar stays tidy.
+async function openAlbumDeepLink() {
+  let uid;
+  try { uid = new URLSearchParams(location.search).get("album"); } catch (e) { return; }
+  if (!uid) return;
+  try { history.replaceState(history.state, "", location.origin + "/"); } catch (e) { /* ok */ }
+  try { await openAlbumByUid(uid); } catch (e) { /* a stale/unknown uid just no-ops */ }
+}
+
 // When we have no bio to show, the door shouldn't dead-end (owner, 2026-07-03):
 // hand over the artist's name as a one-tap copy so you can paste it into a
 // search engine and keep pulling the thread yourself. Reuses the .copy-search
@@ -3552,6 +3780,9 @@ function renderStoryHead(a) {
          <h3>${esc(a.artist)} — ${esc(a.title)}</h3>
          <p class="muted">${esc([a.released, a.country].filter(Boolean).join(" · "))}</p>
          ${listenBlockHtml(a)}
+         <button type="button" class="story-share" data-share-album
+           aria-label="Share this record so someone can find it on Music Forest"><span
+           class="ss-i" aria-hidden="true">↗</span> Share</button>
          ${prov ? `<p class="story-source"><span class="src-label">Album details from</span>${prov}</p>` : ""}
        </div>
      </div>`;
@@ -3645,7 +3876,7 @@ function renderStoryDeckActions(rid) {
     ? `<p class="deck-kept-ack">Kept ✓ — in your Notebook
          <button type="button" class="linkish" data-story-unkeep>undo</button></p>`
     : `<div class="deck-buttons">
-         <button type="button" class="set-aside-btn" data-story-setaside>Shelve</button>
+         <button type="button" class="set-aside-btn" data-story-setaside>Skip</button>
          <button type="button" class="keep-btn" data-story-keep>Keep</button>
        </div>`;
 }
@@ -5379,6 +5610,7 @@ function init() {
     if (e.target.closest("[data-open-aside]")) { openAsidePile(); return; }
     if (e.target.closest("[data-goto-notebook]")) { setMode("journal"); return; }
     if (e.target.closest("[data-goto-explore]")) { setMode("forest"); return; }
+    if (e.target.closest("[data-share-album]")) { shareAlbum(albumData[storyRid]); return; }
     if (e.target.closest("[data-clear-genres]")) { clearGenreFilter(); return; }
     // Deck-end thin-filter hint: clear the platform filter → the full day redraws.
     if (e.target.closest("[data-clear-platforms]")) { commitListenPrefs([], true); return; }
@@ -5984,4 +6216,5 @@ document.addEventListener("DOMContentLoaded", async () => {
   // even if the fetch fails (clientConfig keeps its legacy defaults).
   await loadClientConfig();
   init();
+  openAlbumDeepLink();          // a shared ?album=<uid> link opens that record's door
 });

@@ -376,8 +376,8 @@ body.guest .guest-notebook-note { display: block; }
   content: "\25B6"; font-size: 10px; margin-right: 9px; opacity: .9;
 }
 
-/* Keep + Shelve: equal 50/50 halves, a matched pair of quiet outlined pills — Keep
-   the affirmative (sage hairline + bright text), Shelve the quieter (neutral hairline,
+/* Keep + Skip: equal 50/50 halves, a matched pair of quiet outlined pills — Keep
+   the affirmative (sage hairline + bright text), Skip the quieter (neutral hairline,
    muted text). The sage FILL is reserved for the Listen action (and its copy-to-search
    fallback), so a green button always reads "play / listen," never "decide."
    (2026-07-15; was a green-fill Keep that clashed with the green Listen button.) */
@@ -510,9 +510,9 @@ body.guest .guest-notebook-note { display: block; }
   font-size: 14px;
 }
 .set-aside-bar.hidden { display: none; }
-/* When the shelf pill is showing it floats center-bottom (fixed), right over the
-   footer credits at desktop widths. Reserve footer bottom space for it — but only
-   while it's actually visible, so an empty shelf adds no extra whitespace. */
+/* When the skipped-pile pill is showing it floats center-bottom (fixed), right over
+   the footer credits at desktop widths. Reserve footer bottom space for it — but only
+   while it's actually visible, so an empty pile adds no extra whitespace. */
 body:has(.set-aside-bar:not(.hidden)) footer {
   padding-bottom: calc(72px + var(--safe-bottom));
 }
@@ -831,6 +831,41 @@ body.is-decide .genre-pref { display: block; }
 .genre-chip.custom .gc-x { font-size: 11px; color: var(--accent-2); opacity: .85; }
 .genre-chip.custom:hover { border-color: var(--danger); }
 .genre-chip.custom:hover .gc-x { color: var(--danger); opacity: 1; }
+/* Bucket ✕: the quiet dismiss on a generic pill. Faint until the chip is hovered, then
+   it reads as danger so a tap on it is clearly "remove this pill," not "toggle." */
+.genre-chip .gc-dismiss {
+  font-size: 10.5px; margin-left: 1px; color: var(--muted); opacity: .55;
+  border-radius: 50%; padding: 0 2px; line-height: 1;
+  transition: color .12s ease, opacity .12s ease;
+}
+.genre-chip:hover .gc-dismiss { opacity: .9; }
+.genre-chip .gc-dismiss:hover { color: var(--danger); opacity: 1; }
+/* The reversible "bring the hidden pills back" chip — dashed + muted so it reads as a
+   utility, not a genre. */
+.genre-chip.genre-restore {
+  border-style: dashed; color: var(--muted); font-size: 12.5px;
+}
+.genre-chip.genre-restore:hover { color: var(--text); border-color: var(--accent-2); }
+/* Type-ahead dropdown of today's genres/styles. In-flow (pushes the note down) so it
+   never clips inside the popover; scrolls if the list is long. */
+.genre-suggest {
+  display: flex; flex-direction: column; margin-top: var(--sp-8);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  overflow: hidden auto; max-height: 216px;
+}
+.genre-suggest[hidden] { display: none; }
+.genre-sugg {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font: inherit; font-size: 13px; text-align: left; color: var(--text); cursor: pointer;
+  background: none; border: 0; border-bottom: 1px solid var(--line);
+  padding: 8px 11px;
+}
+.genre-sugg:last-child { border-bottom: 0; }
+.genre-sugg:hover, .genre-sugg.active { background: var(--living-soft); }
+.genre-sugg .gs-n {
+  font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; flex: 0 0 auto;
+}
+.genre-sugg:hover .gs-n, .genre-sugg.active .gs-n { color: var(--accent-2); }
 /* The note carries the live match count; lift it out of muted when a filter is on so
    the confirmation ("786 records match …") actually reads as confirmation. */
 .genre-pref-note.on { color: var(--accent-2); font-weight: 600; }
@@ -2148,12 +2183,20 @@ body.modal-open { overflow: hidden; }
   font-family: var(--font-serif); font-size: 15px;
   color: var(--accent-2); letter-spacing: .3px;
 }
-.story-head-row { display: flex; gap: var(--sp-14); align-items: flex-start; }
+/* The cover floats: the title + date wrap beside it, then the action buttons clear to
+   full width below it — on every screen, not just narrow ones (FB 2026-07-18: on desktop
+   the old flex row left a dead rectangle under the small cover and stepped the left edge
+   in from everything below it). */
+.story-head-row { display: block; }
+.story-head-row::after { content: ""; display: block; clear: both; }
 .story-head-row .cover {
-  width: 88px; min-width: 88px; height: 88px; aspect-ratio: auto;
-  border-radius: 10px; flex: 0 0 auto; font-size: 10px; padding: var(--sp-6);
+  width: 96px; min-width: 96px; height: 96px; aspect-ratio: auto;
+  border-radius: 10px; float: left; margin: 0 var(--sp-14) var(--sp-10) 0;
+  font-size: 10px; padding: var(--sp-6);
 }
 .story-head-text { min-width: 0; }
+.story-head-text .choice-listen,
+.story-head-text .story-share { clear: left; }
 .story-head-text h3 { margin: 0 0 var(--sp-4); }
 .story-head-text p { margin: 0; }
 /* F#10: the shared listen block leads the Go deeper head too; keep its margins
@@ -2167,14 +2210,25 @@ body.modal-open { overflow: hidden; }
   display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap;
 }
 .story-source .src-label { color: var(--muted); }
-/* FB#42: on a narrow screen the flex row trapped the tall listen block in the
-   column beside the 88px cover, leaving a big blank UNDER the cover. Float the cover
-   instead: the title wraps beside it, and the listen block (+ everything after)
-   clears to full width below it — no dead space. */
-@media (max-width: 640px) {
-  .story-head-row { display: block; }
-  .story-head-row .cover { float: left; margin: 0 var(--sp-14) var(--sp-8) 0; }
-  .story-head-text .choice-listen { clear: left; }
+/* Share door: a secondary button matching the record's other outlined actions (Copy,
+   platform pills) — the same weight and shape, so it reads as one of the family rather
+   than an orphaned pill. Still not the sage FILL (that's Listen) — this is a pull, not a
+   push (VISION), just no longer under-styled. Sits right under the listen block, beside
+   Copy. */
+.story-share {
+  margin-top: var(--sp-10); display: inline-flex; align-items: center; gap: 8px;
+  font: inherit; font-size: 13px; font-weight: 600; color: var(--text); cursor: pointer;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: var(--sp-10) var(--sp-12);
+  transition: border-color .13s ease, background .13s ease;
+}
+.story-share .ss-i { font-size: 14px; }
+.story-share:hover {
+  border-color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-2));
+}
+.story-share:focus-visible {
+  outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 /* Story door (U3): sections inside the modal. Chips reuse .nc-row/.nc-chip and

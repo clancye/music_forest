@@ -44,6 +44,19 @@
   const tKey = (row) => String(row.id);
   const tOf = (row) => triage[tKey(row)] || {};
 
+  // "Cleared" done items: a SEPARATE store from `triage`, deliberately — it survives
+  // "Reset triage" (which only clears keep/skip/notes/done), so the owner can forget a
+  // handled pile for good without the reset resurrecting it. Keyed by row id → 1.
+  const DISMISS_KEY = "mf-feedback-dismissed/v1";
+  let dismissed = loadDismissed();
+  function loadDismissed() {
+    try { return JSON.parse(localStorage.getItem(DISMISS_KEY)) || {}; }
+    catch (e) { return {}; }
+  }
+  function saveDismissed() {
+    try { localStorage.setItem(DISMISS_KEY, JSON.stringify(dismissed)); } catch (e) {}
+  }
+
   // --- Curated codebase pointers (mirrors tools/feedback_review.py). First
   // keyword found wins, so more specific terms go first. Best-effort: gives the
   // next session a starting file, not an authoritative answer. ---
@@ -105,7 +118,7 @@
   //   and its chips/watch-list render in the Summary body. Heading to a tab expands
   //   nothing; the active tab lives in the URL hash so refresh/back return you.
   const healthState = {};
-  const TABS = ["summary", "feedback", "requests", "backlog", "pool", "crawler", "cost"];
+  const TABS = ["summary", "feedback", "requests", "backlog", "pool", "crawler", "cost", "usage"];
   // Working areas that get a Summary tile, in reading order. `pool` earns one: its
   // whole reason for existing is that a service quietly reading 12/day went unseen
   // for weeks, so it has to be visible without opening a tab.
@@ -243,6 +256,7 @@
     // (live /admin sat wholly on "Loading…" behind it, 2026-07-03).
     loadAttention();
     loadCost();
+    loadUsage();      // anonymized usage panel (independent; never dams the console)
     // Not awaited, same reasoning as loadAttention: it's two pool reads (~230ms
     // locally, slower on the host) and must never dam the console behind it.
     loadPool();
@@ -293,6 +307,7 @@
   function visibleRows() {
     const f = $("#filter").value;
     return currentRows.filter((r) => {
+      if (dismissed[tKey(r)]) return false;   // cleared for good — never in any view
       const t = tOf(r);
       if (f === "done") return !!t.done;
       if (t.done) return false;
@@ -312,6 +327,7 @@
   function updateCounts() {
     let keep = 0, skip = 0, done = 0, active = 0;
     for (const r of currentRows) {
+      if (dismissed[tKey(r)]) continue;   // cleared for good — out of every tally
       const t = tOf(r);
       if (t.done) { done++; continue; }   // archived: out of the working tally
       active++;
@@ -393,13 +409,42 @@
 
       card.appendChild(detailsBlock("app_state", row.app_state));
       card.appendChild(detailsBlock("env", row.env));
-      card.appendChild(triageControls(row));
+      card.appendChild(triageControls(row, card));
 
       list.appendChild(card);
     }
   }
 
-  function triageControls(row) {
+  // Show the "nothing here" line if a surgical card removal emptied the list, so the
+  // owner isn't left staring at a blank panel after triaging the last item.
+  function ensureEmptyState() {
+    const list = $("#list");
+    if (list.querySelector(".card")) return;
+    list.innerHTML = "";
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = "Nothing matches this filter.";
+    list.appendChild(p);
+  }
+
+  // A slim, self-dismissing toast with one Undo — shown when a Keep/Skip slips a card
+  // out of the working list, so a mis-click is one click to take back.
+  let fbToastTimer = null;
+  function fbToast(msg, undoFn) {
+    let el = document.getElementById("fbToast");
+    if (!el) { el = document.createElement("div"); el.id = "fbToast"; document.body.appendChild(el); }
+    el.replaceChildren();
+    const t = document.createElement("span"); t.textContent = msg;
+    const b = document.createElement("button"); b.className = "fb-undo"; b.textContent = "Undo";
+    el.append(t, b);
+    el.classList.add("show");
+    clearTimeout(fbToastTimer);
+    const hide = () => el.classList.remove("show");
+    fbToastTimer = setTimeout(hide, 6000);
+    b.addEventListener("click", () => { clearTimeout(fbToastTimer); hide(); undoFn(); });
+  }
+
+  function triageControls(row, card) {
     const wrap = document.createElement("div");
     wrap.className = "triage";
     const st = tOf(row).status || "none";
@@ -412,8 +457,8 @@
     const skipBtn = document.createElement("button");
     skipBtn.textContent = "Skip";
     if (st === "skip") skipBtn.className = "on-skip";
-    keepBtn.addEventListener("click", () => toggleStatus(row, "keep"));
-    skipBtn.addEventListener("click", () => toggleStatus(row, "skip"));
+    keepBtn.addEventListener("click", () => toggleStatus(row, "keep", card));
+    skipBtn.addEventListener("click", () => toggleStatus(row, "skip", card));
     seg.appendChild(keepBtn);
     seg.appendChild(skipBtn);
     wrap.appendChild(seg);
@@ -444,14 +489,33 @@
     return wrap;
   }
 
-  function toggleStatus(row, act) {
+  function toggleStatus(row, act, card) {
     const key = tKey(row);
     const cur = (triage[key] || {}).status || "none";
-    triage[key] = Object.assign({}, triage[key], { status: cur === act ? "none" : act });
+    const next = cur === act ? "none" : act;
+    triage[key] = Object.assign({}, triage[key], { status: next });
     if (triage[key].status === "none" && !triage[key].note) delete triage[key];
     saveTriage();
-    // Cheap to redraw — blobs are cached — and a redraw keeps the filter honest.
-    applyAndDraw();
+    // In the working views (All / Untriaged) a freshly-triaged card no longer belongs,
+    // so slip it out instead of leaving it to scroll past — the list shrinks as you go.
+    // Undo (toast) takes it back. Bucket views (Kept/Skipped/Done) keep the card so the
+    // segmented toggle still reflects the change in place.
+    const f = $("#filter").value;
+    const leavesView = next !== "none" && (f === "all" || f === "untriaged");
+    if (leavesView && card && card.isConnected) {
+      card.remove();
+      ensureEmptyState();
+      updateCounts();
+      fbToast((next === "keep" ? "Kept" : "Skipped") + " · #" + row.id, () => {
+        triage[key] = Object.assign({}, triage[key], { status: cur });
+        if (triage[key].status === "none" && !triage[key].note) delete triage[key];
+        saveTriage();
+        applyAndDraw();
+      });
+    } else {
+      // Cheap to redraw — blobs are cached — and a redraw keeps the filter honest.
+      applyAndDraw();
+    }
   }
 
   function toggleDone(row) {
@@ -992,6 +1056,11 @@
     capacityData.cost = data;
     renderCapacity();
     const u = data.usage || {}, c = data.costs || {}, cap = data.ceilings || {};
+    // RAM ceiling: prefer the MEASURED cgroup limit (self-corrects on any plan) and
+    // fall back to the configured plan number only when the box couldn't report one.
+    const ramBytes = u.render_ram_limit_bytes
+      || (cap.render_ram_mb ? cap.render_ram_mb * COST_MB : 0);
+    const ramMb = ramBytes ? Math.round(ramBytes / COST_MB) : 0;
 
     const hero = $("#costHero");
     const big = document.createElement("span"); big.className = "big";
@@ -1049,10 +1118,10 @@
         u.concurrency_now, cap.render_threads,
         u.concurrency_now + " / " + cap.render_threads + " threads"));
     }
-    if (u.worker_rss_bytes != null && cap.render_ram_mb) {
+    if (u.worker_rss_bytes != null && ramBytes) {
       parts.push(costMeter("Render memory (peak worker RSS)",
-        u.worker_rss_bytes, cap.render_ram_mb * COST_MB,
-        Math.round(u.worker_rss_bytes / COST_MB) + " / " + cap.render_ram_mb + " MB"));
+        u.worker_rss_bytes, ramBytes,
+        Math.round(u.worker_rss_bytes / COST_MB) + " / " + ramMb + " MB"));
     }
     if (u.disk_used_bytes != null && u.disk_total_bytes) {
       parts.push(costMeter("Render disk (catalog volume)",
@@ -1085,8 +1154,8 @@
 
     // Health pill: the tightest resource meter is what will force the next bill.
     let ratio = 0;
-    if (u.worker_rss_bytes != null && cap.render_ram_mb) {
-      ratio = Math.max(ratio, u.worker_rss_bytes / (cap.render_ram_mb * COST_MB));
+    if (u.worker_rss_bytes != null && ramBytes) {
+      ratio = Math.max(ratio, u.worker_rss_bytes / ramBytes);
     }
     if (u.disk_used_bytes != null && u.disk_total_bytes) {
       ratio = Math.max(ratio, u.disk_used_bytes / u.disk_total_bytes);
@@ -1098,6 +1167,196 @@
       label: "Cost", value: fmtUSD(data.fixed_monthly) + "/mo",
       state: ratio >= 0.85 ? "bad" : ratio >= 0.7 ? "warn" : "ok",
     });
+  }
+
+  // --- Usage panel: anonymized, aggregate signals only (no notebook content) ---
+  // [counter key, label, one-line plain-English description of what it counts].
+  const USAGE_FEATURES = [
+    ["today_served", "Today opened",
+      "The Today page loaded a day's records (a visit, or a genre re-filter)."],
+    ["explore_search", "Explore searches",
+      "A search run in the Explore tab."],
+    ["door_open", "Records opened to listen",
+      "A record's Listen links were fetched — roughly, a record opened for listening."],
+  ];
+  async function loadUsage() {
+    const status = $("#usageStatus");
+    let data;
+    try {
+      const r = await adminFetch("/api/admin/usage");
+      if (!r.ok) {
+        status.textContent = r.status === 403
+          ? "This account isn't on the operator allow-list (AOTD_OPERATOR_IDS)."
+          : "Couldn't load usage (" + r.status + ").";
+        return;
+      }
+      data = await r.json();
+    } catch (e) {
+      status.textContent = "Couldn't reach the usage endpoint.";
+      return;
+    }
+    const acc = data.accounts || {}, feat = data.features || {}, con = data.content || {};
+    const hosted = acc.available === true;
+
+    // KPI row. Account tiles read "—" off the hosted deploy (SQLite has no auth.users);
+    // notebook counts are available everywhere.
+    $("#usageKpis").replaceChildren(
+      costKpi("Accounts", hosted ? String(acc.total) : "—"),
+      costKpi("Signed in · 7d", hosted ? String(acc.active_7d) : "—"),
+      costKpi("New · 7d", hosted ? String(acc.new_7d) : "—"),
+      costKpi("Keeps", con.keeps == null ? "—" : String(con.keeps)));
+
+    const body = $("#usageBody");
+    const t7 = feat.totals_7d || {};
+    const parts = [];
+
+    // Activity over time — the per-day log the counters keep in ops.sqlite (persisted
+    // across deploys, never rsync'd over). A trend is legible where an instantaneous
+    // number isn't; gaps fill with zero so the timeline is honest. Fills in as the beta
+    // runs. This is the "graph over time" — the live gauge below is only a spot check.
+    parts.push(sectionLabel("Today opened · per day (last 14 days, UTC)"));
+    parts.push(usageTrend(feat.by_day || {}, "today_served", 14));
+    parts.push(usageHint("Each bar is one day; hover for its date and count. For live "
+      + "traffic OVER TIME — request rate, CPU, memory, properly windowed and graphed — "
+      + "Render's own metrics dashboard is the right tool, and better than any number here."));
+
+    // Right now — a spot check of the load this instant. It is INSTANTANEOUS with no
+    // window (peak is since this worker restarted), so it flickers; the trend above is the
+    // real "over time" view. Music Forest never counts concurrent PEOPLE (session tracking).
+    if (data.live) {
+      const n = data.live.in_flight;
+      const live = document.createElement("p"); live.className = "muted usage-sub";
+      live.textContent = "Right now: " + n + (n === 1 ? " request" : " requests")
+        + " in flight (spot check, no window) · peak " + data.live.peak + " since restart";
+      parts.push(live);
+    }
+
+    // Account activity — hosted only. Say so plainly rather than show fake zeros.
+    if (hosted) {
+      parts.push(sectionLabel("Active accounts"));
+      parts.push(usageHint("“Active” = signed in within the window: daily = last "
+        + "24h, weekly = 7 days, monthly = 30 days. A signed-in PWA can stay logged in for "
+        + "weeks, so this leans low — the truer “using it” number is below."));
+      const active = document.createElement("div"); active.className = "cost-kpis";
+      active.append(
+        costKpi("Signed in · 24h", String(acc.active_1d)),
+        costKpi("Signed in · 7d", String(acc.active_7d)),
+        costKpi("Signed in · 30d", String(acc.active_30d)));
+      parts.push(active);
+      if (acc.active_savers_7d != null) {
+        const savers = document.createElement("p"); savers.className = "usage-nb";
+        savers.textContent = acc.active_savers_7d + " kept or wrote something in the last "
+          + "7 days · " + acc.active_savers_30d + " in 30 days";
+        parts.push(savers);
+        parts.push(usageHint("Distinct accounts that actually touched their notebook — the "
+          + "most honest “actively using it” signal (metadata only, never content)."));
+      }
+      const seen = document.createElement("p"); seen.className = "muted usage-sub";
+      seen.textContent = "dormant (no sign-in in 30 days): " + acc.dormant + " of " + acc.total;
+      parts.push(seen);
+      const hist = acc.signups_by_day || [];
+      if (hist.length) {
+        parts.push(sectionLabel("Accounts created · last 30 days"));
+        parts.push(usageBars(hist.map((h) => [h.day, h.n])));
+      }
+    } else {
+      parts.push(sectionLabel("Accounts"));
+      parts.push(usageHint(acc.error
+        ? "Account activity unavailable: " + acc.error
+        : "Account activity (accounts, sign-ins, signups) reads Supabase auth, so it "
+          + "populates on the live site — this local build has no auth to read."));
+    }
+
+    // Feature usage — the per-day request counters this host has recorded (last 7 days),
+    // each with a plain description so the number is legible.
+    parts.push(sectionLabel("Feature usage · last 7 days"));
+    const fmax = Math.max(1, ...USAGE_FEATURES.map(([k]) => t7[k] || 0));
+    for (const [key, label, desc] of USAGE_FEATURES) {
+      const n = t7[key] || 0;
+      parts.push(costMeter(label, n, fmax, n.toLocaleString()));
+      // Guest/account split rides under Today, the one counter the client tags by tier.
+      let d = desc;
+      if (key === "today_served" && (t7.today_guest != null || t7.today_account != null)) {
+        d += "  ·  " + (t7.today_guest || 0) + " by guests, "
+          + (t7.today_account || 0) + " by accounts.";
+      }
+      parts.push(usageHint(d));
+    }
+    parts.push(usageHint("Guests are people using Music Forest without an account. We count "
+      + "their activity (loads above), but not how many unique guests there are — that would "
+      + "need a device fingerprint, which we don't set. A guest becomes an account only when "
+      + "they make one."));
+
+    // Notebook (all-time, metadata only). Kept separate from the 7-day counters above
+    // so a cumulative total is never mistaken for recent activity.
+    parts.push(sectionLabel("In the notebook · all time"));
+    const nb = document.createElement("p"); nb.className = "usage-nb";
+    nb.textContent = (con.keeps == null ? "—" : con.keeps.toLocaleString()) + " keeps · "
+      + (con.notes == null ? "—" : con.notes.toLocaleString()) + " notes written";
+    parts.push(nb);
+
+    const foot = document.createElement("p"); foot.className = "muted usage-foot";
+    foot.textContent = "Counts only — no identity attached. The notebook is "
+      + "end-to-end encrypted, so its contents never appear here. Skips aren't counted: "
+      + "they stay on the device and are never sent.";
+    parts.push(foot);
+
+    body.replaceChildren(...parts);
+    status.textContent = "measured as of " + (data.generated_at || "now");
+    const un = feat.features_error || data.features_error;
+    if (un) status.textContent = "features unavailable: " + un;
+  }
+  function sectionLabel(text) {
+    const d = document.createElement("div"); d.className = "usage-seclabel";
+    d.textContent = text; return d;
+  }
+  function usageHint(text) {
+    const d = document.createElement("p"); d.className = "usage-hint";
+    d.textContent = text; return d;
+  }
+  // A compact vertical bar trend of one counter over the last `days` days (UTC, matching
+  // opsdb's day buckets). Generates the full timeline and fills missing days with zero so
+  // a quiet day reads as a short bar, not a gap.
+  function usageTrend(byDay, key, days) {
+    const wrap = document.createElement("div"); wrap.className = "usage-trend";
+    const now = new Date();
+    const cells = [];
+    let max = 1;
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(),
+        now.getUTCDate() - i));
+      const day = d.toISOString().slice(0, 10);
+      const n = (byDay[day] && byDay[day][key]) || 0;
+      max = Math.max(max, n);
+      cells.push([day, n]);
+    }
+    for (const [day, n] of cells) {
+      const col = document.createElement("div"); col.className = "ut-col";
+      col.title = day + ": " + n.toLocaleString();
+      const bar = document.createElement("div");
+      bar.className = "ut-bar" + (n === 0 ? " zero" : "");
+      bar.style.height = (n === 0 ? 2 : Math.max(6, Math.round((n / max) * 100))) + "%";
+      col.append(bar);
+      wrap.append(col);
+    }
+    return wrap;
+  }
+  // A compact bar row for a small [label, value] series (the signups histogram),
+  // scaled to the series max. Reuses the meter track/fill look.
+  function usageBars(pairs) {
+    const wrap = document.createElement("div"); wrap.className = "usage-hist";
+    const max = Math.max(1, ...pairs.map((p) => p[1]));
+    for (const [label, n] of pairs) {
+      const row = document.createElement("div"); row.className = "usage-hrow";
+      const l = document.createElement("span"); l.className = "uh-lab"; l.textContent = label;
+      const track = document.createElement("div"); track.className = "meter-track";
+      const fill = document.createElement("div"); fill.className = "meter-fill";
+      fill.style.width = Math.max(2, Math.round((n / max) * 100)) + "%";
+      track.append(fill);
+      const v = document.createElement("span"); v.className = "uh-n"; v.textContent = n;
+      row.append(l, track, v); wrap.append(row);
+    }
+    return wrap;
   }
 
   // --- Beta capacity band (Summary) ------------------------------------------
@@ -1139,10 +1398,12 @@
         (u.concurrency_now == null ? "—" : u.concurrency_now) + " / "
           + (cap.render_threads || "—") + " · peak "
           + (u.concurrency_peak == null ? "—" : u.concurrency_peak));
-      if (u.worker_rss_bytes != null && cap.render_ram_mb) {
-        meter("Render memory", u.worker_rss_bytes,
-          cap.render_ram_mb * COST_MB,
-          Math.round(u.worker_rss_bytes / COST_MB) + " / " + cap.render_ram_mb + " MB");
+      const ramBytes = u.render_ram_limit_bytes
+        || (cap.render_ram_mb ? cap.render_ram_mb * COST_MB : 0);
+      if (u.worker_rss_bytes != null && ramBytes) {
+        meter("Render memory", u.worker_rss_bytes, ramBytes,
+          Math.round(u.worker_rss_bytes / COST_MB) + " / "
+            + Math.round(ramBytes / COST_MB) + " MB");
       }
       if (u.disk_used_bytes != null && u.disk_total_bytes) {
         meter("Render disk", u.disk_used_bytes, u.disk_total_bytes,
@@ -1665,12 +1926,27 @@
     $("#poolRefresh").addEventListener("click", () => loadPool());
     $("#backlogRefresh").addEventListener("click", () => loadAttention());
     $("#costRefresh").addEventListener("click", () => loadCost());
+    $("#usageRefresh").addEventListener("click", () => loadUsage());
   }
 
   function wireToolbar() {
     $("#filter").addEventListener("change", () => applyAndDraw());
+    // Clear done: forget the items already marked Done, for good — the targeted
+    // alternative to "Reset triage" that leaves your keep/skip marks untouched. It
+    // moves them to the `dismissed` store so they never resurface as untriaged.
+    $("#clearDone").addEventListener("click", () => {
+      const keys = currentRows.filter((r) => tOf(r).done && !dismissed[tKey(r)]).map(tKey);
+      if (!keys.length) { setStatus("No done items to clear."); return; }
+      if (!confirm("Permanently forget " + keys.length + " done item"
+          + (keys.length === 1 ? "" : "s") + " in this browser? They won't come back, "
+          + "and your keep/skip marks on everything else stay.")) return;
+      for (const k of keys) { dismissed[k] = 1; delete triage[k]; }
+      saveDismissed(); saveTriage(); applyAndDraw();
+      setStatus("Cleared " + keys.length + " done item" + (keys.length === 1 ? "" : "s") + ".");
+    });
     $("#reset").addEventListener("click", () => {
-      if (confirm("Clear all keep/skip marks and notes saved in this browser?")) {
+      if (confirm("Clear all keep/skip/done marks and notes saved in this browser? "
+          + "(Items you already 'cleared' stay cleared.)")) {
         triage = {}; saveTriage(); applyAndDraw();
       }
     });

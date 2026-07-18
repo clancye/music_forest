@@ -330,6 +330,24 @@ class SQLiteStore:
             out["db_bytes"] = None
         return out
 
+    def content_stats(self):
+        """Anonymized notebook METADATA for the /admin Usage panel: how many live
+        keeps and notes are stored, by row kind. Counts only — the ciphertext is
+        never read, so this can never reveal what anyone kept or wrote (E2EE)."""
+        with self._conn() as c:
+            keeps = c.execute(
+                "SELECT COUNT(*) FROM journal_rows "
+                "WHERE kind IN ('choice','pick') AND deleted_at IS NULL").fetchone()[0]
+            notes = c.execute(
+                "SELECT COUNT(*) FROM journal_rows "
+                "WHERE kind='note' AND deleted_at IS NULL").fetchone()[0]
+        return {"keeps": keeps, "notes": notes}
+
+    def account_activity(self, days=30):
+        """SQLite/dev has no Supabase auth.users, so account activity (sign-ins,
+        signups) is a hosted-only metric. Say so plainly rather than fake zeros."""
+        return {"available": False}
+
 
 # ---------------------------------------------------------------------------
 # Postgres backend (Supabase, hosted)
@@ -600,6 +618,62 @@ class PostgresStore:
             except Exception:  # noqa: BLE001 - pre-0003 store: table may be absent
                 out["access_requests"] = None
         return out
+
+    def content_stats(self):
+        """Anonymized notebook METADATA (Usage panel): live keep/note COUNTS by kind.
+        The ciphertext is never read — counts only, so E2EE content is untouched."""
+        out = {}
+        with self._cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM journal_rows "
+                        "WHERE kind IN ('choice','pick') AND deleted_at IS NULL")
+            out["keeps"] = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM journal_rows "
+                        "WHERE kind='note' AND deleted_at IS NULL")
+            out["notes"] = cur.fetchone()[0]
+        return out
+
+    def account_activity(self, days=30):
+        """Account metadata for the Usage panel, from Supabase auth.users —
+        created_at + last_sign_in_at ONLY, never anything a person wrote. Totals,
+        new signups (7/30d), active accounts (DAU/WAU/MAU via last sign-in), a
+        dormant count, and a per-day signup histogram for the window. autocommit
+        means each statement stands alone, so a missing column degrades to
+        available:False rather than poisoning the session."""
+        try:
+            with self._cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) AS total, "
+                    "COUNT(*) FILTER (WHERE created_at >= now() - interval '7 days') AS new_7d, "
+                    "COUNT(*) FILTER (WHERE created_at >= now() - interval '30 days') AS new_30d, "
+                    "COUNT(*) FILTER (WHERE last_sign_in_at >= now() - interval '1 day') AS active_1d, "
+                    "COUNT(*) FILTER (WHERE last_sign_in_at >= now() - interval '7 days') AS active_7d, "
+                    "COUNT(*) FILTER (WHERE last_sign_in_at >= now() - interval '30 days') AS active_30d, "
+                    "COUNT(*) FILTER (WHERE last_sign_in_at IS NULL "
+                    "  OR last_sign_in_at < now() - interval '30 days') AS dormant "
+                    "FROM auth.users")
+                keys = ["total", "new_7d", "new_30d", "active_1d", "active_7d",
+                        "active_30d", "dormant"]
+                out = {"available": True}
+                out.update(dict(zip(keys, cur.fetchone())))
+                cur.execute(
+                    "SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS d, "
+                    "COUNT(*) AS n FROM auth.users "
+                    "WHERE created_at >= now() - (%s || ' days')::interval "
+                    "GROUP BY 1 ORDER BY 1", (int(days),))
+                out["signups_by_day"] = [{"day": d, "n": n} for d, n in cur.fetchall()]
+                # A truer "actively using it" signal than last-sign-in (which a persistent
+                # PWA session leaves stale): accounts that TOUCHED their notebook — kept or
+                # wrote something — in the window. Metadata only (user_id + updated_at), the
+                # ciphertext is never read. Distinct users, not rows.
+                cur.execute("SELECT COUNT(DISTINCT user_id) FROM journal_rows "
+                            "WHERE updated_at >= now() - interval '7 days'")
+                out["active_savers_7d"] = cur.fetchone()[0]
+                cur.execute("SELECT COUNT(DISTINCT user_id) FROM journal_rows "
+                            "WHERE updated_at >= now() - interval '30 days'")
+                out["active_savers_30d"] = cur.fetchone()[0]
+            return out
+        except Exception as e:  # noqa: BLE001 - report, never 500 the panel
+            return {"available": False, "error": str(e)}
 
 
 # ---------------------------------------------------------------------------

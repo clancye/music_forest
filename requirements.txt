@@ -1,6 +1,13 @@
 flask>=3.0
 requests>=2.31
 lxml>=5.0
+# zoneinfo's data. "Today" is resolved in config.APP_TZ (America/New_York) so a reader
+# sees THEIR day, not the server's UTC one — but stdlib zoneinfo reads the SYSTEM tz
+# database, which a slim Linux image may not ship. Without it ZoneInfo raises and
+# config.today_local() falls back to the process date — silently restoring the exact
+# bug (an East-Coast evening showing tomorrow's records). Pinning this makes the zone
+# resolvable on any host. Pure-python, tiny, no-op where system tzdata already exists.
+tzdata>=2024.1
 # Optional but recommended: validates downloaded cover art (dimensions /
 # decompression-bomb guard, S5). The code degrades gracefully if it's absent —
 # the magic-byte + size checks still run — but with Pillow installed an oversized
