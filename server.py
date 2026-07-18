@@ -605,15 +605,61 @@ def api_search():
     field = (request.args.get("field") or "").strip() or None
     if field not in (None, "artist", "title", "genres", "styles", "label"):
         field = None
-    albums = db.search_albums(q, limit=500, month=month, day=day, field=field)
+    albums = db.search_albums(q, limit=_SEARCH_LIMIT, month=month, day=day,
+                              field=field)
     # DQ3: anchor Discogs cards to the pool's on-this-day date (as pooldb._enrich
     # does for pool-served cards), so a card can't show a test-pressing/promo
     # pressing date the pool contradicts. Skip when day-scoped — that search filters
     # on albums.db's own month/day, so its dates must stay consistent with the scope.
     if month is None and day is None:
         albums = _overlay_pool_dates(albums)
+    # B24: fold in the pool's MB-only arm, which albums_fts can't see (see
+    # _merge_search_arms). MB rows already carry the pool's date, so they join
+    # AFTER the overlay above.
+    albums = _merge_search_arms(albums, q, month, day, field)
     return jsonify({"q": q, "month": month, "day": day,
                     "count": len(albums), "albums": albums})
+
+
+# What one search returns, both arms together. Matches the client's own CAP in
+# applyBrowseFilters, whose "first 500 matches — refine your terms" copy is only
+# honest if the server doesn't quietly send a different number.
+_SEARCH_LIMIT = 500
+
+
+def _merge_search_arms(discogs, q, month, day, field):
+    """B24 — union the Discogs arm (albums_fts, over albums.db) with the pool's
+    MB-only arm (pool_fts), which nothing in search.db can index.
+
+    Nearly half the pool a reader meets on Today is MB-only (46.3%, ~915 k rows),
+    and searching one returned "No albums or songs match" for a record just served.
+    Two indexes can't be ranked against each other — bm25 scores aren't comparable
+    across files — so this INTERLEAVES them round-robin. That's not a ranking claim;
+    it's the one merge the 500-cap can't use to hide an arm, which is the actual bug.
+    (Display order is the client's anyway: applyBrowseFilters re-sorts by year.)
+
+    Pool-gated and best-effort: no pool, no index, or any error leaves the Discogs
+    results exactly as they are — search degrades to today's behaviour, never a 500."""
+    if not config.POOL_ENABLED:
+        return discogs
+    try:
+        mb = pooldb.search_albums(q, limit=_SEARCH_LIMIT, month=month, day=day,
+                                  field=field)
+    except Exception:  # noqa: BLE001 - the MB arm is additive; never fail the search
+        return discogs
+    if not mb:
+        return discogs
+    merged = []
+    for i in range(max(len(discogs), len(mb))):
+        if i < len(discogs):
+            merged.append(discogs[i])
+        if i < len(mb):
+            merged.append(mb[i])
+    try:
+        merged = pooldb.dedup_search_arms(merged)
+    except Exception:  # noqa: BLE001 - de-dup is polish; a duplicate beats a 500
+        pass
+    return merged[:_SEARCH_LIMIT]
 
 
 def _overlay_pool_dates(albums):

@@ -484,6 +484,42 @@ def _dedup_clusters(rows):
     return out
 
 
+def dedup_search_arms(albums):
+    """B24 — collapse the merged Discogs+MB search result to ONE card per clustered
+    album, keeping the FIRST occurrence. Same cluster data as _dedup_clusters, a
+    deliberately different keep-rule: the day draw picks a representative
+    (_cluster_rep_better: listenable, then Discogs), but in a ranked/merged list
+    POSITION is the answer, and the Discogs search rows don't carry `listenable` at
+    all (they come from albums.db, not the pool), so that rule would swap a
+    top-ranked Discogs card for a lean MB twin. First-seen keeps the merge order's
+    intent instead.
+
+    Takes album dicts from EITHER arm: an MB row has `uid`; a Discogs search row is
+    keyed by its release_id, whose pool uid is 'd:<release_id>' by construction.
+    No-op unless CLUSTER_DEDUP_ENABLED and the catalog resolves clusters — any error
+    leaves the rows un-deduped, exactly like the draw's path."""
+    if not getattr(config, "CLUSTER_DEDUP_ENABLED", False) or len(albums) < 2:
+        return albums
+    keys = [a.get("uid") or (f"d:{a['release_id']}" if a.get("release_id") is not None
+                             else None) for a in albums]
+    try:
+        import catalogdb
+        cl = catalogdb.clusters_for_uids([k for k in keys if k])
+    except Exception:  # noqa: BLE001 - never let a catalog read break search
+        return albums
+    if not cl:
+        return albums
+    out, seen = [], set()
+    for a, k in zip(albums, keys):
+        cid = cl.get(k) if k else None
+        if cid is None:                   # unclustered -> its own album, keep
+            out.append(a)
+        elif cid not in seen:
+            seen.add(cid)
+            out.append(a)
+    return out
+
+
 def pool_day(month, day, *, available_only=True, limit=None, platforms=None):
     """Albums for a calendar day from the unified pool. available_only=True is the
     daily-pick AVAILABLE pool (Deezer-listenable); False is dig mode (full union,
@@ -609,6 +645,74 @@ def albums_by_artist(name, limit=500):
     with _conn() as c:
         rows = c.execute(_SELECT_ARTIST_MB, (name, int(limit))).fetchall()
     return _enrich(list(rows)) if rows else []
+
+
+# --- B24: the MB arm of Explore search ----------------------------------------
+# Explore searched only albums_fts (search.db, built from albums.db), so the pool's
+# MB-only half — 46.3% of it, ~915 k rows — was un-findable: an MB-only artist read
+# "No albums or songs match" for a record Today had just served. pool_fts
+# (tools/build_pool_search.py) is that missing index; server.api_search merges this
+# arm with db.search_albums.
+
+def _pool_search_conn():
+    """Read-only handle on the MB pool index. Its own file (POOL_SEARCH_DB_PATH)
+    because it takes the POOL's vintage, not albums.db's — see the tool's docstring."""
+    c = sqlite3.connect(f"file:{config.POOL_SEARCH_DB_PATH}?mode=ro", uri=True,
+                        timeout=30)
+    c.row_factory = sqlite3.Row
+    c.execute("PRAGMA busy_timeout=30000")
+    return c
+
+
+# pool_fts has artist/title/genres only. `styles` and `label` are Discogs-shaped
+# facets with no MB-arm column, so scoping to one returns nothing from this arm —
+# honest ("nothing on file for that scope"), where silently widening to an
+# unscoped search would answer a question the reader didn't ask.
+_POOL_FTS_FIELDS = {"artist", "title", "genres"}
+
+# Same guard, same reason as db._TRACK_RANK_CAP (#70, commit 9c13800): past this many
+# matches, ORDER BY rank has to bm25-score a huge doclist to find the top few. Measured
+# here 2026-07-18 on 915 k rows: a stopword prefix ("the*") costs 0.45 s ranked vs
+# 0.02 s unranked, and the bounded probe that decides costs 0.02 s. Past the cap the
+# first `limit` matches are a sample either way.
+_POOL_RANK_CAP = 50_000
+
+
+def search_albums(q, limit=500, month=None, day=None, field=None):
+    """Full-text search the pool's MB-only records, ranked by relevance — the arm
+    albums_fts can't see. If month/day are given, restrict to that calendar day; if
+    `field` is one of artist/title/genres, scope matching to it. Returns the same
+    enriched album dicts as the day/pick reads (via albums_by_uids), in rank order.
+
+    Degrades to [] when the index isn't built or is corrupt (a half-shipped file),
+    exactly like db.search_albums — an un-built index is 'nothing on file', never a
+    500, and search falls back to the Discogs arm alone."""
+    if field is not None and field not in _POOL_FTS_FIELDS:
+        return []
+    fq = db._fts_query(q or "", field=field)   # one escaping rule for both arms
+    if not fq:
+        return []
+    scoped = month is not None and day is not None
+    where = "pool_fts MATCH ?"
+    params = [fq]
+    if scoped:
+        # month/day are UNINDEXED payload, so this filters the matched set in SQL
+        # BEFORE the limit — no over-fetch-and-post-filter (the Discogs arm has to
+        # over-fetch 6x because albums_fts carries no date).
+        where += " AND month = ? AND day = ?"
+        params += [int(month), int(day)]
+    try:
+        with _pool_search_conn() as sc:
+            n = sc.execute(
+                f"SELECT count(*) FROM (SELECT 1 FROM pool_fts WHERE {where} "
+                "LIMIT ?)", params + [_POOL_RANK_CAP + 1]).fetchone()[0]
+            order = "" if n > _POOL_RANK_CAP else "ORDER BY rank "
+            rows = sc.execute(
+                f"SELECT uid FROM pool_fts WHERE {where} " + order + "LIMIT ?",
+                params + [int(limit)]).fetchall()
+    except sqlite3.Error:
+        return []
+    return albums_by_uids([r["uid"] for r in rows])
 
 
 def pool_dates_for(rows):

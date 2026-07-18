@@ -71,6 +71,15 @@ SEARCH_DB_PATH = Path(os.environ.get("AOTD_SEARCH_DB", DATA_DIR / "search.db"))
 POOL_DB_PATH = Path(os.environ.get("AOTD_POOL_DB", DATA_DIR / "pool.sqlite"))
 POOL_ENABLED = os.environ.get("AOTD_USE_POOL", "") not in ("", "0", "false", "False")
 
+# B24 — the FTS index over the pool's MB-only rows (tools/build_pool_search.py), the
+# arm albums_fts/search.db can't cover: search.db is built from albums.db, so ~46% of
+# the pool was un-findable in Explore. Its OWN file because it takes the POOL's
+# vintage, not albums.db's, and rides the existing pool rsync (a ~200 MB file, vs.
+# re-shipping the ~3.1 GB search.db — the 2026-07-08 disk rule). Absent file =>
+# Discogs-only search, exactly today's behaviour: this is additive, never a gate.
+POOL_SEARCH_DB_PATH = Path(os.environ.get("AOTD_POOL_SEARCH_DB",
+                                          DATA_DIR / "poolsearch.sqlite"))
+
 # ops.sqlite — counters this HOST owns and writes (opsdb.py). Deliberately NOT a table
 # in pool.sqlite: rsync_pool.sh replaces that file WHOLESALE several times a day, which
 # would silently reset anything the server wrote. Same disk, never in the rsync.
