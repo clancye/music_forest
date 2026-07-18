@@ -5,7 +5,7 @@
 // service-worker cache name — because the worker can swap its cache to a new build
 // in the background while a resumed PWA keeps running old code, which made a stale
 // page wrongly report "up to date". BUMP THIS WITH sw.js VERSION on any shell change.
-window.__MF_BUILD = "v218";
+window.__MF_BUILD = "v219";
 
 // --- tiny helpers -----------------------------------------------------------
 const $ = (sel) => document.querySelector(sel);
@@ -2344,6 +2344,10 @@ function applyCover(rid, cover, only) {
     el.style.backgroundImage = `url('${cssUrl(cover)}')`;
     el.textContent = "";
     el.appendChild(fixArtButton(rid));
+    // Remember the resolved cover on the album data so every OTHER surface — the
+    // story modal especially — renders the SAME image instead of re-resolving to a
+    // different one (feedback #65: deck cover ≠ details cover).
+    if (albumData[rid] && albumData[rid].cover !== cover) albumData[rid].cover = cover;
   };
   targets.forEach((el) => {
     // Hotlinked covers can be slow, 404, or expire. Load first, reveal after:
@@ -3914,7 +3918,10 @@ async function resolveDoor(uid) {
   if (!door || door.status !== "ok") return false;
   // The confirmed `platforms` map is the source of truth the door renders; the
   // legacy *_url fields are kept in sync only for non-door readers.
-  if (door.cover) a.cover = door.cover;
+  // Only BACKFILL a missing cover — never override the one the deck already resolved,
+  // or the details modal would show a different image than the card it opened from
+  // (feedback #65). Where the deck had no art, the door's cover fills the gap.
+  if (door.cover && !a.cover) a.cover = door.cover;
   a.platforms = Object.assign({}, a.platforms, door.platforms || {});
   if (door.apple_music_url) a.apple_music_url = door.apple_music_url;
   if (door.spotify_url) a.spotify_url = door.spotify_url;

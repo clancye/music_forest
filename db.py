@@ -744,6 +744,13 @@ def search_persons(q, limit=8):
     return [{"person_id": r["person_id"], "name": r["name"]} for r in rows]
 
 
+# Above this many track matches, ORDER BY rank has to bm25-score a huge doclist to find
+# the top few — 0.5s+ for a common word like "love" (~510k tracks), the whole reason
+# Explore search felt slow (feedback #70). Past the cap we take the first `limit` matches
+# unranked (~24x faster); 8 of half a million common-word tracks is a sample either way.
+_TRACK_RANK_CAP = 50_000
+
+
 def search_tracks(q, limit=8):
     """Full-text search track titles (tracks_fts in search.db), ranked by
     relevance. Returns [{'title', 'album_uid', 'pos', 'album_artist',
@@ -751,15 +758,24 @@ def search_tracks(q, limit=8):
     position ('trk:<album_uid>#<pos>' in the note namespace).
 
     Degrades to [] when tracks_fts isn't built (the heavy aux index is opt-in per
-    tools/build_search_aux.py). Prefix-AND matching, same as album search."""
+    tools/build_search_aux.py). Prefix-AND matching, same as album search. A cheap MATCH
+    count gates the ranking: specific terms (the common case) keep bm25 order; a
+    pathologically common term skips it so it can't cost seconds for 8 rows (#70)."""
     fq = _fts_query(q or "")
     if not fq:
         return []
     try:
         with _search_conn() as sc:
+            # Bounded probe: stop counting at the cap so even a stopword like "the"
+            # (~2.5M matches) can't make the COUNT itself the bottleneck.
+            n = sc.execute(
+                "SELECT count(*) FROM "
+                "(SELECT 1 FROM tracks_fts WHERE tracks_fts MATCH ? LIMIT ?)",
+                (fq, _TRACK_RANK_CAP + 1)).fetchone()[0]
+            order = "" if n > _TRACK_RANK_CAP else "ORDER BY rank "
             rows = sc.execute(
                 "SELECT title, album_uid, pos, album_artist, album_title "
-                "FROM tracks_fts WHERE tracks_fts MATCH ? ORDER BY rank LIMIT ?",
+                "FROM tracks_fts WHERE tracks_fts MATCH ? " + order + "LIMIT ?",
                 (fq, int(limit))).fetchall()
     except sqlite3.Error:             # missing/absent/corrupt search.db -> [] (see search_albums)
         return []
