@@ -5,7 +5,7 @@
 // service-worker cache name — because the worker can swap its cache to a new build
 // in the background while a resumed PWA keeps running old code, which made a stale
 // page wrongly report "up to date". BUMP THIS WITH sw.js VERSION on any shell change.
-window.__MF_BUILD = "v221";
+window.__MF_BUILD = "v222";
 
 // --- tiny helpers -----------------------------------------------------------
 const $ = (sel) => document.querySelector(sel);
@@ -1324,6 +1324,56 @@ function unmarkMet(key) {           // undoing a keep makes the record servable 
   if (s.delete(key)) saveMet(s);
 }
 
+// --- "Where you were today" (FB 2026-07-18) ----------------------------------
+// A reader opened a record, tapped Listen, and came back to a DIFFERENT record —
+// "I wanted to save one after listening to a couple songs, but the next album had
+// surfaced and I couldn't go back." Nothing advanced the deck: `deckState` is
+// in-memory only, so anything that ends the page (iOS discarding a backgrounded
+// tab, or the Listen fallback navigating the tab to the streaming site) rebuilds
+// it — and `loadDeck` re-deals the day at random from idx 0. The odds of landing
+// back on the record you were reading are about 1 in 2,000.
+//
+// So remember WHICH record you're on. Just the uid + the date: ~60 bytes, versus
+// ~57 KB (417 KB on Jan 1) to store the whole deal order — and localStorage is a
+// shared budget with the E2EE notebook, which is the irreplaceable thing here.
+//
+// Local, per-day, never synced (VISION: your own state on your own machine, not a
+// profile), and self-expiring on the date like MET_KEY above. It must also cost
+// NOTHING when it's gone — cleared site data, private mode, Safari's ~7-day
+// eviction — so every failure path falls through to a fresh deal, which is exactly
+// today's behaviour.
+const AT_KEY = "mf-today-at/v1";
+function loadAt() {
+  try {
+    const o = JSON.parse(localStorage.getItem(AT_KEY));
+    if (o && o.date === todayFull() && typeof o.uid === "string") return o.uid;
+  } catch (e) { /* corrupt or absent → no resume */ }
+  return null;
+}
+function saveAt(uid) {
+  try {
+    if (uid) localStorage.setItem(AT_KEY, JSON.stringify({ date: todayFull(), uid }));
+    else localStorage.removeItem(AT_KEY);
+  } catch (e) { /* private mode / quota — losing your place beats a thrown deck */ }
+}
+
+// Put the record you were last on back at the front of a freshly dealt deck. NOT a
+// jump to its old index: the records before it were never seen, so skipping them
+// would quietly cost you part of the day. Everything else keeps its dealt order
+// behind it.
+//
+// Returns the list untouched whenever the remembered record isn't available — no
+// entry, a new day, or it's since been kept/skipped (it's filtered out of `records`
+// before this runs) or dropped out of the pool. Deliberately absorbing: a resume
+// that can't be honoured is a fresh deal, never an error.
+function resumeAt(list) {
+  const uid = loadAt();
+  if (!uid) return list;
+  const i = list.findIndex((r) => albumKey(r) === uid);
+  if (i <= 0) return list;                 // absent, or already first
+  return [list[i], ...list.slice(0, i), ...list.slice(i + 1)];
+}
+
 function deckLoadingHtml() {
   return `<div class="deck-card skeleton" aria-hidden="true">
     <div class="skel-cover skel"></div>
@@ -1396,7 +1446,11 @@ async function loadDeck(force = false) {
   // be undone (DELETE the row); size is still the "you kept N" count.
   // Keep the full day (`all`) so the genre filter can re-derive the visible deck
   // without a refetch; `records` is the balanced view of the (optionally) filtered set.
-  deckState = { key, all: records, records: dealOrder(applyGenreFilter(records)),
+  // resumeAt only on this FRESH-BUILD path: the same-session early return above
+  // already has your place, and a filter change (which re-deals via the other
+  // dealOrder call site) is a deliberate "show me something else".
+  deckState = { key, all: records,
+                records: resumeAt(dealOrder(applyGenreFilter(records))),
                 idx: 0, kept: new Map(), aside: [] };
   renderGenrePref();
   if (deckState.records.length) renderDeck();
@@ -1439,11 +1493,13 @@ function renderDeck() {
   if (!wrap || !deckState) return;
   updateSetAsideBar();
   if (deckState.idx >= deckState.records.length) {
+    saveAt(null);              // deck's done — there's no record to come back to
     wrap.innerHTML = deckEndHtml();
     return;
   }
   const a = deckState.records[deckState.idx];
   const key = albumKey(a);
+  saveAt(key);                 // whatever is on screen IS your place (see AT_KEY)
   a._doorPending = poolOn() && !a._doorFilled;
   // A record is normally kept-then-advanced, so the deck only shows a "kept" state
   // when it was kept from Album details (which stays put): acknowledge it, offer undo
