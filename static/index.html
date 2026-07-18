@@ -6,8 +6,15 @@
 <title>Music Forest</title>
 <!-- Brand: search + link-share description. Tagline leads; the notebook (E2EE) is
      the trust anchor (BRAND.md). twitter:card=summary — we ship the square icon, not
-     a wide banner. -->
+     a wide banner (and album art is square, so summary frames a shared record right).
+
+     H6: everything between the og markers below is REPLACED SERVER-SIDE when the
+     request carries ?album=<uid> — a shared record unfurls as the record (cover +
+     "Artist — Title") instead of the app icon. See server.index(). Keep the
+     markers, and keep this block valid on its own: a request with no ?album, an
+     unknown uid, or any resolve failure serves exactly what's written here. -->
 <meta name="description" content="Find music, write notes. Records released on this date, any year — met one at a time, with a private, end-to-end-encrypted notebook.">
+<!--og:start-->
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Music Forest">
 <meta property="og:title" content="Music Forest — Find music, write notes.">
@@ -18,6 +25,7 @@
 <meta name="twitter:title" content="Music Forest — Find music, write notes.">
 <meta name="twitter:description" content="Records released on this date, any year — met one at a time, with a private, end-to-end-encrypted notebook.">
 <meta name="twitter:image" content="https://musicforest.lol/static/icons/icon-512.png">
+<!--og:end-->
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2314150e'/%3E%3Cpath d='M16 5 L24 19 H8 Z' fill='%2386a86a'/%3E%3Cpath d='M16 12 L23 24 H9 Z' fill='%2386a86a'/%3E%3Crect x='14.5' y='23' width='3' height='4' fill='%239a7b5a'/%3E%3C/svg%3E">
 <!-- PWA (H1.3): installable shell. Manifest + theme color + iOS home-screen metas. -->
 <link rel="manifest" href="/static/manifest.webmanifest">

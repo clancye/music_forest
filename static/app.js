@@ -5,7 +5,7 @@
 // service-worker cache name — because the worker can swap its cache to a new build
 // in the background while a resumed PWA keeps running old code, which made a stale
 // page wrongly report "up to date". BUMP THIS WITH sw.js VERSION on any shell change.
-window.__MF_BUILD = "v219";
+window.__MF_BUILD = "v221";
 
 // --- tiny helpers -----------------------------------------------------------
 const $ = (sel) => document.querySelector(sel);
@@ -784,7 +784,7 @@ function restoreBuckets() {
 // like the platform filter's refreshSurfaces; kept rows persist server-side.
 function refilterDeck() {
   if (!deckState || !deckState.all) { loadDeck(true); return; }
-  deckState.records = balancedOrder(applyGenreFilter(deckState.all));
+  deckState.records = dealOrder(applyGenreFilter(deckState.all));
   deckState.idx = 0;
   deckState.aside = [];
   deckState.kept = new Map();
@@ -1149,11 +1149,30 @@ function metaSub(a) {
 // month/day is implicit — it's on-this-day) and at most three genres. No full date,
 // no country, no label, no decade — the deck is for noticing one record, not
 // scanning a catalog row. Genres stay pull-threads.
+//
+// B25 adds exactly two facts, and ONLY when they'd otherwise surprise you: that the
+// record is a compilation, and that it's long. Feedback #64 met a 102-track box set
+// rendered identically to a 40-minute album — the defect was silence, not the record.
+// ~97% of records say neither thing, so the spare deck stays spare and speaks up
+// where it has something to warn you about. Both are exact, counted facts (the
+// entity's type; the tracklist we actually hold), never a guess — an unknown length
+// says nothing rather than "0 tracks" (honesty rule).
+const LONG_RECORD_TRACKS = 25;    // a double LP is ~20-24; past this it's a set
+
 function deckMeta(a) {
   const sep = ' <span class="dot">·</span> ';
   const parts = [];
   const yr = a.year || (a.released ? String(a.released).slice(0, 4) : "");
   if (/^\d{4}$/.test(String(yr))) parts.push(esc(String(yr)));
+  // Plain text, not a pull-link: these are facts about the record, not threads to
+  // follow. The sub line is already muted, and the genres beside them are buttons,
+  // so they read as quiet by contrast — no new styling needed.
+  if (a.is_compilation) parts.push("compilation");
+  // esc() expects a string (it calls .replace), and n_tracks arrives as a JSON
+  // number — String() first or this throws and takes the whole card render with it.
+  if (a.n_tracks >= LONG_RECORD_TRACKS) {
+    parts.push(`${esc(String(a.n_tracks))} tracks`);
+  }
   genresOf(a).slice(0, 3).forEach((g) => parts.push(catalogThread("genres", g)));
   return parts.join(sep);
 }
@@ -1239,6 +1258,35 @@ function balancedOrder(list) {
     queues = queues.filter((q) => q.length);
   }
   return out;
+}
+
+// B25 — deal compilations and box sets LATER, not never. Feedback #64/#65: a
+// 102-track Proper Records box set ("Slim Gaillard — Laughing in Rhythm") and a
+// generic Various-Artists comp both arrived looking exactly like a 40-minute album.
+// They're ~7% of a day's available pool (measured 2026-07-18), so they're not
+// flooding Today — but meeting one is a poorer version of the daily act, since
+// there's no single record to sit with.
+//
+// Same discipline as balancedOrder above: this REORDERS the deal, it never removes.
+// Every compilation stays in the deck and stays reachable by keeping going; a share
+// of them (see the rate) still rides in normal rotation, so this reads as "fewer,"
+// not "none" — the day is still what the day holds. `is_compilation` is the
+// server's flag (pooldb._is_compilation owns the taxonomy; the client never
+// re-derives it), and a record with no verdict is simply not held back.
+//
+// Set the rate to 1 to turn this off entirely.
+const COMP_DEAL_RATE = 0.25;      // ~1 in 4 compilations stays in normal rotation
+
+function dealOrder(list) {
+  const front = [], back = [];
+  for (const rec of list) {
+    if (rec.is_compilation && Math.random() >= COMP_DEAL_RATE) back.push(rec);
+    else front.push(rec);
+  }
+  // Each tier is genre-balanced in its own right, so holding some records back
+  // can't skew the variety of what you meet first.
+  return back.length ? [...balancedOrder(front), ...balancedOrder(back)]
+                     : balancedOrder(front);
 }
 
 // --- "Already met today" set (D6) --------------------------------------------
@@ -1348,7 +1396,7 @@ async function loadDeck(force = false) {
   // be undone (DELETE the row); size is still the "you kept N" count.
   // Keep the full day (`all`) so the genre filter can re-derive the visible deck
   // without a refetch; `records` is the balanced view of the (optionally) filtered set.
-  deckState = { key, all: records, records: balancedOrder(applyGenreFilter(records)),
+  deckState = { key, all: records, records: dealOrder(applyGenreFilter(records)),
                 idx: 0, kept: new Map(), aside: [] };
   renderGenrePref();
   if (deckState.records.length) renderDeck();

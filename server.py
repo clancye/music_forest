@@ -16,6 +16,7 @@ Run:  python server.py     (then open http://127.0.0.1:8000)
 """
 import base64
 import hmac
+import html
 import json
 import logging
 import mimetypes
@@ -26,9 +27,11 @@ import threading
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from urllib.parse import quote_plus
+from pathlib import Path
+from urllib.parse import quote, quote_plus
 
-from flask import Blueprint, Flask, abort, g, jsonify, request, send_from_directory
+from flask import (Blueprint, Flask, abort, current_app, g, jsonify, request,
+                   send_from_directory)
 from werkzeug.exceptions import HTTPException
 
 # Flask-Limiter is a HOSTED-ONLY dependency (requirements-hosted.txt), imported
@@ -373,9 +376,104 @@ def security_headers(resp):
     return resp
 
 
+# --- H6: per-record link previews ---------------------------------------------
+# The ↗ Share door sends `/?album=<uid>`. Without this, that link unfurls in
+# iMessage/Slack/WhatsApp as the app icon + site tagline — but in a group chat THE
+# UNFURL IS THE SHARE: most recipients decide whether to tap from the card alone. So
+# when the shell is requested with an `album` param we swap the generic og:/twitter:
+# block (marked off in static/index.html) for the record's own cover and title.
+#
+# Rules this path holds to:
+#   * LOCAL CATALOG ONLY. _album_for_uid reads the pool + albums.db and the door
+#     CACHE; it never fires a door call, so an unfurl bot can't burn the metered
+#     iTunes/Spotify budget. Nothing here may ever call out.
+#   * NO CLOAKING. Bots and people get the same HTML — the app reads ?album itself
+#     and opens the record as a door. This only changes the <head>.
+#   * FAIL BACK TO GENERIC. No param, an unknown/stale uid, a missing marker, or any
+#     error serves the file exactly as written.
+_OG_BLOCK_RE = re.compile(r"<!--og:start-->.*?<!--og:end-->", re.S)
+_SHELL_PATH = Path(__file__).resolve().parent / "static" / "index.html"
+
+
+def _abs_url(url):
+    """Absolutize a URL for og:/twitter: (they require absolute, and several
+    unfurlers reject or downgrade http). Render terminates TLS at its proxy and the
+    app has no ProxyFix, so request.url_root reports the INTERNAL http scheme —
+    X-Forwarded-Proto is the only honest source of the scheme a recipient will use.
+    Derived from the request rather than hard-coded, so staging unfurls as staging."""
+    if not url:
+        return None
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    proto = (request.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip()
+    scheme = proto or request.scheme
+    return f"{scheme}://{request.host}/{url.lstrip('/')}"
+
+
+def _record_og_tags(album, share_url):
+    """The og:/twitter: block for one record. Every interpolated value is
+    HTML-escaped — artist/title are catalog text and land inside an attribute."""
+    e = lambda s: html.escape(str(s or ""), quote=True)      # noqa: E731
+    artist, title = (album.get("artist") or "").strip(), (album.get("title") or "").strip()
+    name = " — ".join([p for p in (artist, title) if p]) or "A record"
+    # The canonical tagline stands as its own sentence, verbatim (BRAND.md).
+    released = (album.get("released") or "")[:10]
+    desc = (f"Released {released}. Find music, write notes." if released
+            else "Find music, write notes.")
+    cover = _abs_url(album.get("cover")) or _abs_url("/static/icons/icon-512.png")
+    tags = [
+        # Kept as `website`: music.album is the semantically tighter type but is
+        # unevenly supported, and a wrong-typed card is worse than a plain one.
+        '<meta property="og:type" content="website">',
+        '<meta property="og:site_name" content="Music Forest">',
+        f'<meta property="og:title" content="{e(name)}">',
+        f'<meta property="og:description" content="{e(desc)}">',
+        f'<meta property="og:url" content="{e(share_url)}">',
+        f'<meta property="og:image" content="{e(cover)}">',
+        f'<meta property="og:image:alt" content="{e("Cover of " + name)}">',
+        # summary, not summary_large_image: album art is square, and the wide card
+        # would crop it. The square thumbnail is the right frame for a record.
+        '<meta name="twitter:card" content="summary">',
+        f'<meta name="twitter:title" content="{e(name)}">',
+        f'<meta name="twitter:description" content="{e(desc)}">',
+        f'<meta name="twitter:image" content="{e(cover)}">',
+    ]
+    return "\n".join(tags)
+
+
+def _shell_html():
+    """static/index.html, cached in-process and re-read when it changes on disk (one
+    stat per shell request, only on the ?album path)."""
+    st = _SHELL_PATH.stat()
+    stamp = (st.st_mtime_ns, st.st_size)
+    if getattr(_shell_html, "_stamp", None) != stamp:
+        _shell_html._text = _SHELL_PATH.read_text(encoding="utf-8")
+        _shell_html._stamp = stamp
+    return _shell_html._text
+
+
 @bp.route("/")
 def index():
-    return send_from_directory("static", "index.html")
+    uid = _canon_uid(request.args.get("album"))
+    if not uid:
+        return send_from_directory("static", "index.html")
+    try:
+        album = _album_for_uid(uid)
+        if not album:
+            return send_from_directory("static", "index.html")
+        share_url = _abs_url("/?album=" + quote(uid, safe=""))
+        html_text, n = _OG_BLOCK_RE.subn(
+            lambda _m: _record_og_tags(album, share_url), _shell_html(), count=1)
+        if not n:                      # markers gone -> serve the file as written
+            return send_from_directory("static", "index.html")
+    except Exception:  # noqa: BLE001 - a preview is polish; never fail the app shell
+        log.exception("share_preview_failed")
+        return send_from_directory("static", "index.html")
+    resp = current_app.response_class(html_text, mimetype="text/html")
+    # Crawlers refetch per platform; let them (and any CDN) hold it briefly, but keep
+    # it short so a re-crawl picks up corrected catalog data the same day.
+    resp.headers["Cache-Control"] = "public, max-age=300"
+    return resp
 
 
 @bp.route("/admin")

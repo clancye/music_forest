@@ -28,6 +28,7 @@ echo "== sw.js navigation (5xx -> cached shell) ==" ; node sw-navigation.test.mj
 echo "== strings.js (R8) =="      ; node strings.test.mjs
 echo "== pick-listen priority selection ==" ; node pick-listen.test.mjs
 echo "== balanced-order (A8 genre-balanced deal) ==" ; node balanced-order.test.mjs
+echo "== deal-order (B25 compilations dealt later) ==" ; node deal-order.test.mjs
 echo "== genre-filter (A8 Phase 2 client filter) ==" ; node genre-filter.test.mjs
 echo "== analytics parity vs journal.py =="
 python3 "$ROOT/tests/js/parity_gen.py" > /tmp/aotd_parity.json

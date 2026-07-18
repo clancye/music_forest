@@ -209,7 +209,7 @@ def _cached_mb_enrich(rows):
         return {}
     out = {}
     for uid, mbids in want.items():
-        cover = discogs_url = genres = label = None
+        cover = discogs_url = genres = label = n_tracks = None
         for m in mbids:
             e = enrich.get(m)
             if not e:
@@ -225,6 +225,11 @@ def _cached_mb_enrich(rows):
                 nm = (e["labels"][0] or {}).get("name")
                 if nm:
                     label = nm
+            # B25: first release with a stored tracklist gives the length, same
+            # first-wins rule as the fields above (and as db.mb_tracks_for, so the
+            # count agrees with the list the tracks door actually renders).
+            if n_tracks is None and e.get("n_tracks"):
+                n_tracks = e["n_tracks"]
         info = {}
         if cover:
             info["cover"] = cover
@@ -236,6 +241,8 @@ def _cached_mb_enrich(rows):
             info["genres"] = ", ".join(genres)
         if label:
             info["label"] = label
+        if n_tracks:
+            info["n_tracks"] = n_tracks
         if info:
             out[uid] = info
     return out
@@ -321,6 +328,32 @@ def genre_bucket(genres):
     return GENRE_UNKNOWN
 
 
+# --- B25: is this record a compilation / box set? ------------------------------
+# Feedback #64/#65: "Slim Gaillard — Laughing in Rhythm" is a Proper Records BOX SET
+# (102 tracks, measured) served as one album, and "Various — Jamz Vol. 1" is a generic
+# Various-Artists comp. Both read as an album, neither is one you sit with.
+#
+# The signal is already resolved and cross-source: the catalog entity layer's `type`
+# carries MB's release-group primary+secondary types ("Album · Compilation" — which
+# BOTH reported records carry). Various-Artists is the second, independent shape: a
+# comp with no single artist to have a story with, which the entity type doesn't
+# always mark. Track count is deliberately NOT part of this test — a long record is a
+# separate fact the card states on its own, and plenty of legitimate albums are long.
+#
+# Server-owned, like genre_bucket: the client reads the flag, never re-derives the
+# taxonomy, so there's one source of truth.
+_VARIOUS_ARTISTS = {"various", "various artists", "va", "v.a.", "verschiedene"}
+
+
+def _is_compilation(a):
+    """True when the record is a compilation/anthology or a Various-Artists set.
+    Reads the entity `type` when the catalog resolved one, else the artist name.
+    Unknown type + a real artist -> False (we don't guess an album is a comp)."""
+    if "compilation" in (a.get("type") or "").lower():
+        return True
+    return (a.get("artist") or "").strip().lower() in _VARIOUS_ARTISTS
+
+
 def _enrich(rows):
     """Turn pool rows into full album dicts. Discogs rows are joined back to
     albums.db in ONE batched query (db.albums_by_ids), preserving the input order;
@@ -340,6 +373,9 @@ def _enrich(rows):
             if rid is not None:
                 rid_for[r["uid"]] = rid
     rich = {a["release_id"]: a for a in db.albums_by_ids(list(rid_for.values()))}
+    # B25: how long the record is, batched (~7 ms for a full day). MB-only rows get
+    # theirs from the mb_enrich fold below, which already reads that table.
+    ntr_for = db.track_counts_for(list(rid_for.values()))
     door_for = _cached_door_platforms([r["uid"] for r in rows])
     bc_for = _cached_bandcamp(rows)
     mbe_for = _cached_mb_enrich(rows)   # F29: CAA cover / genres / exact Discogs
@@ -435,6 +471,15 @@ def _enrich(rows):
                 a["label"] = mbe["label"]
             if mbe.get("discogs_url"):
                 a["discogs_url"] = mbe["discogs_url"]
+        # B25: how long the record is + whether it's a compilation. A 102-track box
+        # set presented exactly like a 40-minute album is what feedback #64 hit; the
+        # deck says so when it's notable, and the deal uses it. Discogs counts come
+        # from the batched tracklists read, MB's ride the mb_enrich fold above.
+        # ABSENT when unknown (never 0) — an un-ingested tracklist is not "no tracks".
+        n_tracks = ntr_for.get(rid) if rid is not None else (mbe or {}).get("n_tracks")
+        if n_tracks:
+            a["n_tracks"] = n_tracks
+        a["is_compilation"] = _is_compilation(a)
         # A8: the coarse genre bucket for the client's balanced draw (+ future
         # filter). Computed AFTER every genre fold above, so it sees the full
         # cross-source union (entity genres+styles ∪ MB) this record ends up with.
