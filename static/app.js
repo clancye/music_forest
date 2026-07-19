@@ -5,7 +5,7 @@
 // service-worker cache name — because the worker can swap its cache to a new build
 // in the background while a resumed PWA keeps running old code, which made a stale
 // page wrongly report "up to date". BUMP THIS WITH sw.js VERSION on any shell change.
-window.__MF_BUILD = "v226";
+window.__MF_BUILD = "v227";
 
 // --- tiny helpers -----------------------------------------------------------
 const $ = (sel) => document.querySelector(sel);
@@ -403,11 +403,13 @@ function appIntentLink(key, url) {
     + `package=com.google.android.apps.youtube.music;end`;
 }
 
-// The data-* attributes wireDeepLinks reads, for one confirmed link.
+// The data-* attributes wireDeepLinks reads, for one confirmed link — plus
+// data-listen, the service key wireListenCount's anonymous tap counter reads.
 function listenAttrs(key, url) {
   const app = appDeepLink(key, url || "");
   const intent = appIntentLink(key, url || "");
-  return (app ? ` data-app="${esc(app)}"` : "")
+  return ` data-listen="${esc(key)}"`
+    + (app ? ` data-app="${esc(app)}"` : "")
     + (intent ? ` data-intent="${esc(intent)}"` : "");
 }
 
@@ -5287,6 +5289,23 @@ function wireDeepLinks() {
   });
 }
 
+// The listen-tap beacon: ONE anonymous count when an outward door is actually
+// walked through (owner ask 2026-07-19) — the door-resolution counter fires on
+// show, so it can't say this. sendBeacon so the count survives the navigation it
+// rides on and never delays it. Counts only: the service key + the coarse tier
+// (same posture as clientMode()'s header) — no album, no URL, no identity, so
+// the server can never say who listened to what.
+function wireListenCount() {
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest && e.target.closest("a[data-listen]");
+    if (!a || !navigator.sendBeacon) return;
+    try {
+      navigator.sendBeacon("/api/usage/listen?svc="
+        + encodeURIComponent(a.dataset.listen) + "&tier=" + clientMode());
+    } catch (err) { /* a counter never breaks a listen */ }
+  });
+}
+
 // #5: keep external links from swallowing the installed app. In a standalone PWA
 // there are no tabs, so any cross-origin link replaces the app's only window —
 // the "I opened a Listen link and couldn't get back" papercut. Reroute those to
@@ -5736,6 +5755,7 @@ function init() {
     });
   }
   wireDeepLinks();
+  wireListenCount();               // anonymous listen-tap count (svc + tier only)
   wireExternalLinksStandalone();   // #5: keep the installed app from being replaced
   wireCopySearch();                // copy an "artist — title" search string (F#10)
   // Tiny build readout in the footer so "which version am I on?" is answerable at

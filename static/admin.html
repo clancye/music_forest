@@ -193,15 +193,46 @@
   .usage-hint { font-size: .78rem; line-height: 1.45; color: #8f8f8f; margin: .2rem 0 .9rem; max-width: 62ch; }
   .usage-nb { font-size: .95rem; font-variant-numeric: tabular-nums; margin: 0; }
   .usage-foot { font-size: .8rem; line-height: 1.5; margin-top: 1.4rem; border-left: 3px solid #26402c; background: #14180f; padding: .55rem .7rem; color: #b7c3ab; }
-  .usage-hist { display: flex; flex-direction: column; gap: .3rem; }
-  .usage-hrow { display: flex; align-items: center; gap: .6rem; font-size: .82rem; }
-  .usage-hrow .uh-lab { width: 6.5rem; flex: none; color: #9a9a9a; font-variant-numeric: tabular-nums; }
-  .usage-hrow .meter-track { flex: 1; }
-  .usage-hrow .uh-n { width: 2.5rem; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
-  .usage-trend { display: flex; align-items: flex-end; gap: 4px; height: 84px; padding: .2rem 0; }
-  .usage-trend .ut-col { flex: 1; height: 100%; display: flex; align-items: flex-end; }
-  .usage-trend .ut-bar { width: 100%; background: #3a6ea5; border-radius: 3px 3px 0 0; min-height: 2px; }
-  .usage-trend .ut-bar.zero { background: #262626; }
+  .kpi .s { display: block; font-size: .76rem; color: #9a9a9a; margin-top: .1rem; }
+  /* Metric / timeframe selectors shared by the Usage charts. */
+  .pills { display: flex; gap: .35rem; flex-wrap: wrap; }
+  .pill { background: #1c1c1c; border: 1px solid #333; color: #bbb; cursor: pointer;
+    padding: .24rem .65rem; border-radius: 999px; font: inherit; font-size: .78rem; }
+  .pill:hover { background: #262626; }
+  .pill.on { background: #243a52; border-color: #3a6ea5; color: #cfe3ff; font-weight: 600; }
+  .chart-controls { display: flex; justify-content: space-between; gap: .8rem; flex-wrap: wrap; margin: .4rem 0 .5rem; }
+  .chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+  .chart-meta { font-size: .78rem; color: #8f8f8f; font-variant-numeric: tabular-nums; }
+  /* Per-day bar chart: stacked segments per column, a faint max gridline on top. */
+  .chart-box { position: relative; margin-top: .3rem; }
+  .chart-box .ymax { position: absolute; top: -2px; right: 0; font-size: .7rem; color: #666; font-variant-numeric: tabular-nums; }
+  .chart-box .gridline { position: absolute; top: 8px; left: 0; right: 0; border-top: 1px dashed #262626; }
+  .usage-trend { display: flex; align-items: flex-end; gap: 3px; height: 96px; padding: 8px 0 .2rem; }
+  .usage-trend .ut-col { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; min-width: 0; }
+  .usage-trend .useg { width: 100%; border-radius: 3px 3px 0 0; min-height: 2px; }
+  .usage-trend .useg.zero { background: #262626; border-radius: 3px; }
+  .xlabels { display: flex; justify-content: space-between; font-size: .7rem; color: #666; font-variant-numeric: tabular-nums; }
+  .chart-legend { display: flex; gap: 1rem; font-size: .78rem; color: #9a9a9a; margin-top: .45rem; flex-wrap: wrap; }
+  .chart-legend .ldot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: .35rem; vertical-align: -1px; }
+  /* Listen clicks: headline total + one composition bar + the service table. */
+  .lc-total { margin: .1rem 0 .55rem; display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+  .lc-total .v { font-size: 1.9rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .comp-bar { display: flex; gap: 2px; height: 16px; max-width: 40rem; margin-bottom: .7rem; }
+  .comp-bar .seg { border-radius: 3px; min-width: 3px; }
+  .comp-bar .seg:first-child { border-radius: 8px 3px 3px 8px; }
+  .comp-bar .seg:last-child { border-radius: 3px 8px 8px 3px; }
+  .svc-table { border: 1px solid #262626; border-radius: 10px; overflow: hidden; max-width: 40rem; }
+  .svc-row { display: flex; align-items: center; gap: .6rem; padding: .42rem .7rem; border-top: 1px solid #1f1f1f; font-size: .88rem; }
+  .svc-row:first-child { border-top: 0; }
+  .svc-row .dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+  .svc-row .name { flex: 1; }
+  .svc-row .n { width: 3.5rem; text-align: right; font-variant-numeric: tabular-nums; }
+  .svc-row .pct { width: 3.5rem; text-align: right; font-variant-numeric: tabular-nums; color: #9a9a9a; }
+  /* Notebook running total: two SVG lines with endpoint labels. */
+  .linechart svg { display: block; width: 100%; height: 130px; }
+  .linechart .endlab { font-size: .72rem; fill: #9a9a9a; font-variant-numeric: tabular-nums; }
+  .req-goto { font-size: .78rem; border: 1px solid #335; background: #243a52; color: #cfe3ff;
+    border-radius: 999px; padding: .18rem .6rem; cursor: pointer; }
 
   /* --- Pool tab: records per listening service, per day ---------------------
      Reuses .meter-row/.meter-head/.meter-track from the cost panel, but the

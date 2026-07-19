@@ -16,7 +16,7 @@
  * next load (skipWaiting + clients.claim), and `activate` deletes the old cache.
  * No user-facing "refresh?" prompt by design — see H1.3 decision 1.
  */
-const VERSION = 'v226';
+const VERSION = 'v227';
 const CACHE = `forest-shell-${VERSION}`;
 
 // The same-origin app shell. Cross-origin CDN scripts are intentionally absent:

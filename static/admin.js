@@ -919,11 +919,15 @@
     return bytes >= COST_GB ? (bytes / COST_GB).toFixed(1) + " GB"
       : (bytes / COST_MB).toFixed(0) + " MB";
   }
-  function costKpi(label, value) {
+  function costKpi(label, value, sub) {
     const d = document.createElement("div"); d.className = "kpi";
     const k = document.createElement("span"); k.className = "k"; k.textContent = label;
     const v = document.createElement("span"); v.className = "v"; v.textContent = value;
     d.append(k, v);
+    if (sub) {
+      const s = document.createElement("span"); s.className = "s"; s.textContent = sub;
+      d.append(s);
+    }
     return d;
   }
   function costMeter(label, used, cap, valText) {
@@ -1170,15 +1174,44 @@
   }
 
   // --- Usage panel: anonymized, aggregate signals only (no notebook content) ---
+  // Redesigned 2026-07-19 (owner workshop): funnel tiles first (no meter repeating
+  // them), then guests, then listen taps as a windowed TOTAL with a per-service
+  // composition (deliberately not a time series — at beta scale the owner reads
+  // totals), one activity chart for the remaining counters, and the notebook over
+  // time. Fetched once; the pill selectors re-render from the cached payload.
   // [counter key, label, one-line plain-English description of what it counts].
-  const USAGE_FEATURES = [
-    ["today_served", "Today opened",
-      "The Today page loaded a day's records (a visit, or a genre re-filter)."],
+  const USAGE_ACTIVITY = [
+    ["today_served", "Today loads",
+      "Every load of a day's records — a visit, a refresh, or a genre re-filter, "
+      + "so it runs higher than “people who came.”"],
     ["explore_search", "Explore searches",
       "A search run in the Explore tab."],
-    ["door_open", "Records opened to listen",
-      "A record's Listen links were fetched — roughly, a record opened for listening."],
+    ["door_open", "Listen links resolved",
+      "The server resolved a shown record's streaming links. Fires on show, not "
+      + "on tap — plumbing volume, not listens (those are counted above)."],
   ];
+  // Service key -> [label, segment color]. A CVD-validated categorical set on the
+  // dark ground; identity is never color alone (the table carries dot + name +
+  // count, segments carry tooltips). "other" is the neutral bucket for a service
+  // key the server didn't recognize — deliberately gray, outside the set.
+  const LISTEN_SERVICES = [
+    ["spotify", "Spotify", "#3f9f5f"],
+    ["apple", "Apple Music", "#a75a95"],
+    ["youtube", "YouTube Music", "#b04a3a"],
+    ["deezer", "Deezer", "#2f9fc4"],
+    ["tidal", "TIDAL", "#6a6fb5"],
+    ["amazon", "Amazon Music", "#7f8f3f"],
+    ["pandora", "Pandora", "#8a5fc9"],
+    ["bandcamp", "Bandcamp", "#a97f3a"],
+    ["other", "Other", "#7a7a7a"],
+  ];
+  const USAGE_COLORS = { account: "#3a6ea5", guest: "#a97f3a", unknown: "#555555",
+    keeps: "#3a6ea5", notes: "#4f9f6f" };
+  const USAGE_RANGES = [["today", "Today"], ["7d", "7d"], ["30d", "30d"], ["all", "All"]];
+  let usageData = null;
+  const usageSel = { lc: "7d", metric: "today_served", act: "7d",
+    nbView: "daily", nbRange: "30d" };
+
   async function loadUsage() {
     const status = $("#usageStatus");
     let data;
@@ -1195,34 +1228,205 @@
       status.textContent = "Couldn't reach the usage endpoint.";
       return;
     }
+    usageData = data;
+    renderUsage();
+    status.textContent = "measured as of " + (data.generated_at || "now");
+    const un = (data.features || {}).features_error || data.features_error;
+    if (un) status.textContent = "features unavailable: " + un;
+  }
+
+  function usagePills(items, current, onpick) {
+    const wrap = document.createElement("div"); wrap.className = "pills";
+    for (const [id, label] of items) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "pill" + (id === current ? " on" : "");
+      b.textContent = label;
+      b.addEventListener("click", () => { onpick(id); renderUsage(); });
+      wrap.append(b);
+    }
+    return wrap;
+  }
+  // One counter's value inside the selected window, off the payload's buckets.
+  function usageWindow(range) {
+    const f = (usageData && usageData.features) || {};
+    if (range === "today") {
+      const day = (f.by_day || {})[f.today] || {};
+      return { get: (k) => day[k] || 0, label: "today (UTC)" };
+    }
+    if (range === "7d") return { get: (k) => (f.totals_7d || {})[k] || 0, label: "past 7 days" };
+    if (range === "30d") return { get: (k) => (f.totals_30d || {})[k] || 0, label: "past 30 days" };
+    return { get: (k) => (f.totals_all || {})[k] || 0,
+             label: f.since ? "all time · since " + f.since : "all time" };
+  }
+  function usageDayLabel(day) {
+    const m = String(day || "").split("-");
+    return m.length === 3 ? Number(m[1]) + "/" + Number(m[2]) : day;
+  }
+
+  function renderUsage() {
+    if (!usageData) return;
+    const data = usageData;
     const acc = data.accounts || {}, feat = data.features || {}, con = data.content || {};
     const hosted = acc.available === true;
+    const inv = (hosted && acc.invites) || {};
+    const funnel = !!(inv.available && inv.invited);
 
-    // KPI row. Account tiles read "—" off the hosted deploy (SQLite has no auth.users);
-    // notebook counts are available everywhere.
-    $("#usageKpis").replaceChildren(
-      costKpi("Accounts", hosted ? String(acc.total) : "—"),
-      costKpi("Signed in · 7d", hosted ? String(acc.active_7d) : "—"),
-      costKpi("New · 7d", hosted ? String(acc.new_7d) : "—"),
-      costKpi("Keeps", con.keeps == null ? "—" : String(con.keeps)));
+    // KPI row = the funnel itself, read left to right (invited → joined → signed
+    // in → actually using it) — no meter bars repeating the same numbers (owner,
+    // 2026-07-19). Plain account tiles when there's no funnel to show.
+    const kpis = [];
+    if (funnel) {
+      kpis.push(
+        costKpi("Invited", String(inv.invited)),
+        costKpi("Joined", String(inv.joined), "confirmed the invite"),
+        costKpi("Signed in · 7d", String(acc.active_7d)),
+        costKpi("Touched notebook · 7d",
+          acc.active_savers_7d == null ? "—" : String(acc.active_savers_7d),
+          "kept or wrote"));
+    } else {
+      kpis.push(
+        costKpi("Accounts", hosted ? String(acc.total) : "—"),
+        costKpi("Signed in · 7d", hosted ? String(acc.active_7d) : "—"),
+        costKpi("New · 7d", hosted ? String(acc.new_7d) : "—"),
+        costKpi("Keeps", con.keeps == null ? "—" : String(con.keeps)));
+    }
+    $("#usageKpis").replaceChildren(...kpis);
 
-    const body = $("#usageBody");
-    const t7 = feat.totals_7d || {};
     const parts = [];
+    // The funnel numbers no tile carries, in one quiet line.
+    if (funnel) {
+      const bits = [];
+      if (inv.never_opened) {
+        bits.push(inv.never_opened + " never opened it");
+        if (inv.cold) bits.push(inv.cold + " of those invited more than 7 days ago");
+      }
+      if (inv.median_accept_s != null)
+        bits.push("median invite → joined " + humanDuration(inv.median_accept_s));
+      if (acc.dormant != null)
+        bits.push("dormant 30d+: " + acc.dormant + " of " + acc.total);
+      if (bits.length) {
+        const p = document.createElement("p"); p.className = "usage-sub muted";
+        p.textContent = bits.join(" · ");
+        parts.push(p);
+      }
+      parts.push(usageHint("The tiles read left to right as the funnel: invited → "
+        + "joined (confirmed the invite) → signed in this week → touched the "
+        + "notebook. Sign-in recency leans low — a PWA stays signed in for weeks — "
+        + "so “touched notebook” (kept or wrote, metadata only) is the honest "
+        + "“actively using it” number."));
+    } else if (hosted && inv.available === false) {
+      parts.push(usageHint("Couldn't read the invite columns from Supabase auth"
+        + (inv.error ? ": " + inv.error : ".")
+        + " Showing plain account tiles; the rest of the panel is unaffected."));
+    } else if (hosted && inv.available && !inv.invited) {
+      parts.push(usageHint("No invited accounts on this instance yet. Supabase's "
+        + "“Invite user” stamps invited_at; an account made any other way isn't "
+        + "counted, which is why a dev/staging project usually reads zero here."));
+    } else if (!hosted) {
+      parts.push(usageHint(acc.error
+        ? "Account activity unavailable: " + acc.error
+        : "Account tiles read Supabase auth, so they populate on the live site — "
+          + "this local build has no auth to read."));
+    }
 
-    // Activity over time — the per-day log the counters keep in ops.sqlite (persisted
-    // across deploys, never rsync'd over). A trend is legible where an instantaneous
-    // number isn't; gaps fill with zero so the timeline is honest. Fills in as the beta
-    // runs. This is the "graph over time" — the live gauge below is only a spot check.
-    parts.push(sectionLabel("Today opened · per day (last 14 days, UTC)"));
-    parts.push(usageTrend(feat.by_day || {}, "today_served", 14));
-    parts.push(usageHint("Each bar is one day; hover for its date and count. For live "
-      + "traffic OVER TIME — request rate, CPU, memory, properly windowed and graphed — "
-      + "Render's own metrics dashboard is the right tool, and better than any number here."));
+    // Guests — activity by tier + who's knocking. Unique guest PEOPLE are
+    // deliberately uncountable (no fingerprint), and the hint says so.
+    parts.push(sectionLabel("Guests"));
+    const w7 = usageWindow("7d");
+    const req = data.requests || null;
+    const gk = document.createElement("div"); gk.className = "cost-kpis";
+    gk.append(
+      costKpi("Guest Today loads · 7d", String(w7.get("today_guest")),
+        w7.get("today_account") + " by accounts"),
+      costKpi("Guest listen taps · 7d", String(w7.get("listen_guest"))));
+    const rk = costKpi("Access requests", req ? String(req.new) : "—",
+      req ? "awaiting review" : (data.requests_error || "unavailable"));
+    if (req) {
+      const s = document.createElement("span"); s.className = "s";
+      const go = document.createElement("button"); go.type = "button";
+      go.className = "req-goto"; go.textContent = "open Requests →";
+      go.addEventListener("click", () => showTab("requests"));
+      s.append(go); rk.append(s);
+    }
+    gk.append(rk);
+    parts.push(gk);
+    parts.push(usageHint("Guest activity is countable (the client tags Today loads "
+      + "and listen taps by tier — guest or account, never an identity); unique "
+      + "guest people are deliberately not — that would take a device fingerprint "
+      + "we don't set. A guest becomes an account only when they make one."));
 
-    // Right now — a spot check of the load this instant. It is INSTANTANEOUS with no
-    // window (peak is since this worker restarted), so it flickers; the trend above is the
-    // real "over time" view. Music Forest never counts concurrent PEOPLE (session tracking).
+    // Listen clicks — the outward doors actually walked through: one windowed
+    // total + the per-service composition (bar + table with counts and shares).
+    parts.push(sectionLabel("Listen clicks"));
+    const lcHead = document.createElement("div"); lcHead.className = "chart-controls";
+    const lcTitle = document.createElement("p"); lcTitle.className = "usage-sub";
+    lcTitle.textContent = "Outward doors walked through";
+    lcHead.append(lcTitle,
+      usagePills(USAGE_RANGES, usageSel.lc, (id) => { usageSel.lc = id; }));
+    parts.push(lcHead);
+    const w = usageWindow(usageSel.lc);
+    const lcTotal = w.get("listen_click");
+    const head = document.createElement("p"); head.className = "lc-total";
+    const hv = document.createElement("span"); hv.className = "v";
+    hv.textContent = lcTotal.toLocaleString();
+    const hs = document.createElement("span"); hs.className = "muted";
+    const tierN = w.get("listen_account") + w.get("listen_guest");
+    hs.textContent = "listen taps · " + w.label
+      + (tierN ? " · " + w.get("listen_account") + " by accounts, "
+        + w.get("listen_guest") + " by guests" : "");
+    head.append(hv, hs);
+    parts.push(head);
+    const svcs = LISTEN_SERVICES
+      .map(([key, label, color]) => [label, color, w.get("listen_svc_" + key)])
+      .filter((s) => s[2] > 0)
+      .sort((x, y) => y[2] - x[2]);
+    if (lcTotal > 0 && svcs.length) {
+      const bar = document.createElement("div"); bar.className = "comp-bar";
+      for (const [label, color, n] of svcs) {
+        const seg = document.createElement("div"); seg.className = "seg";
+        seg.style.background = color;
+        seg.style.flexGrow = n;
+        seg.title = label + ": " + n + " (" + Math.round((n / lcTotal) * 100) + "%)";
+        bar.append(seg);
+      }
+      parts.push(bar);
+      const table = document.createElement("div"); table.className = "svc-table";
+      for (const [label, color, n] of svcs) {
+        const row = document.createElement("div"); row.className = "svc-row";
+        const dot = document.createElement("span"); dot.className = "dot";
+        dot.style.background = color;
+        const name = document.createElement("span"); name.className = "name";
+        name.textContent = label;
+        const nn = document.createElement("span"); nn.className = "n";
+        nn.textContent = n.toLocaleString();
+        const pct = document.createElement("span"); pct.className = "pct";
+        pct.textContent = Math.round((n / lcTotal) * 100) + "%";
+        row.append(dot, name, nn, pct);
+        table.append(row);
+      }
+      parts.push(table);
+    } else {
+      const none = document.createElement("p"); none.className = "muted usage-sub";
+      none.textContent = "No listen taps counted in this window yet."
+        + (usageSel.lc === "all" ? " Counting starts at app v227." : "");
+      parts.push(none);
+    }
+    parts.push(usageHint("A Listen button tapped, counted by service — an outward "
+      + "door walked through. Counts only: no account and no record attached, so "
+      + "this can never say who listened to what. Distinct from “listen links "
+      + "resolved” below, which fires when a record is merely shown."));
+
+    // Activity over time — the remaining per-day counters, one chart, selectable.
+    parts.push(sectionLabel("Activity over time"));
+    const actHead = document.createElement("div"); actHead.className = "chart-controls";
+    actHead.append(
+      usagePills(USAGE_ACTIVITY.map((m) => [m[0], m[1]]), usageSel.metric,
+        (id) => { usageSel.metric = id; }),
+      usagePills([["7d", "7d"], ["30d", "30d"]], usageSel.act,
+        (id) => { usageSel.act = id; }));
+    parts.push(actHead);
+    parts.push(...activityChart(feat));
     if (data.live) {
       const n = data.live.in_flight;
       const live = document.createElement("p"); live.className = "muted usage-sub";
@@ -1231,137 +1435,232 @@
       parts.push(live);
     }
 
-    // Account activity — hosted only. Say so plainly rather than show fake zeros.
-    if (hosted) {
-      parts.push(sectionLabel("Active accounts"));
-      parts.push(usageHint("“Active” = signed in within the window: daily = last "
-        + "24h, weekly = 7 days, monthly = 30 days. A signed-in PWA can stay logged in for "
-        + "weeks, so this leans low — the truer “using it” number is below."));
-      const active = document.createElement("div"); active.className = "cost-kpis";
-      active.append(
-        costKpi("Signed in · 24h", String(acc.active_1d)),
-        costKpi("Signed in · 7d", String(acc.active_7d)),
-        costKpi("Signed in · 30d", String(acc.active_30d)));
-      parts.push(active);
-      if (acc.active_savers_7d != null) {
-        const savers = document.createElement("p"); savers.className = "usage-nb";
-        savers.textContent = acc.active_savers_7d + " kept or wrote something in the last "
-          + "7 days · " + acc.active_savers_30d + " in 30 days";
-        parts.push(savers);
-        parts.push(usageHint("Distinct accounts that actually touched their notebook — the "
-          + "most honest “actively using it” signal (metadata only, never content)."));
-      }
-      const seen = document.createElement("p"); seen.className = "muted usage-sub";
-      seen.textContent = "dormant (no sign-in in 30 days): " + acc.dormant + " of " + acc.total;
-      parts.push(seen);
-      // Invite → account. Supabase's "Invite user" creates the auth.users row at SEND
-      // time, so created_at is when WE invited someone, not when they joined; this block
-      // reads invited_at/confirmed_at instead and is the honest version of the chart
-      // below it. Degrades quietly when the auth schema has no invite columns.
-      const inv = acc.invites || {};
-      // Always render the section when the query RAN, even at zero. Hiding it on an
-      // empty cohort meant staging — which has one, uninvited account — drew nothing
-      // at all, so the block couldn't be checked anywhere before prod. An empty state
-      // that says which case it is beats a section that silently isn't there.
-      if (inv.available === false) {
-        parts.push(sectionLabel("Invites → accounts"));
-        parts.push(usageHint("Couldn't read the invite columns from Supabase auth"
-          + (inv.error ? ": " + inv.error : ".")
-          + " The rest of this panel is unaffected."));
-      } else if (inv.available && !inv.invited) {
-        parts.push(sectionLabel("Invites → accounts"));
-        parts.push(usageHint("No invited accounts on this instance yet. Supabase's "
-          + "“Invite user” stamps invited_at; an account made any other way "
-          + "isn't counted here, which is why a dev/staging project usually reads zero."));
-      } else if (inv.available) {
-        parts.push(sectionLabel("Invites → accounts"));
-        const funnel = document.createElement("div"); funnel.className = "cost-kpis";
-        funnel.append(
-          costKpi("Invited", String(inv.invited)),
-          costKpi("Joined", String(inv.joined)),
-          costKpi("Never opened it", String(inv.never_opened)));
-        parts.push(funnel);
-        const pct = Math.round((inv.joined / inv.invited) * 100);
-        const rate = document.createElement("p"); rate.className = "usage-nb";
-        rate.textContent = pct + "% of invites became accounts";
-        parts.push(rate);
-        if (inv.median_accept_s != null) {
-          parts.push(usageHint("Median time from invite to joining: "
-            + humanDuration(inv.median_accept_s)
-            + (inv.max_accept_s != null ? " · longest " + humanDuration(inv.max_accept_s) : "")
-            + ". Sign-in links expire, so a long tail here is worth reading next to the "
-            + "expiry window, not just as hesitation."));
-        }
-        if (inv.cold) {
-          const cold = document.createElement("p"); cold.className = "muted usage-sub";
-          cold.textContent = inv.cold + " invited more than 7 days ago and still "
-            + "haven't opened it";
-          parts.push(cold);
-        }
-        const joined = inv.joined_by_day || [];
-        if (joined.length) {
-          parts.push(sectionLabel("Joined · last 30 days"));
-          parts.push(usageBars(joined.map((h) => [h.day, h.n])));
-          parts.push(usageHint("The day each person actually joined."));
-        }
-      }
-      const hist = acc.signups_by_day || [];
-      if (hist.length) {
-        // Deliberately NOT "accounts created": for an invited user the row is created
-        // when the invite is sent, so this is a record of invite waves. Kept because
-        // that IS useful — just not as a signup count.
-        parts.push(sectionLabel("Invites sent · last 30 days"));
-        parts.push(usageBars(hist.map((h) => [h.day, h.n])));
-        parts.push(usageHint("When accounts were created in Supabase — which for an "
-          + "invited person is when the invite went out, not when they joined. "
-          + (inv.available ? "The joined chart above is the arrival signal." : "")));
-      }
+    // Notebook over time — new entries per day, or the running total (a toggle,
+    // never both on one axis: the cumulative line would flatten the bars).
+    parts.push(sectionLabel("Notebook over time"));
+    const cs = data.content_series || {};
+    if (cs.available) {
+      const nbHead = document.createElement("div"); nbHead.className = "chart-controls";
+      nbHead.append(
+        usagePills([["daily", "New per day"], ["total", "Running total"]],
+          usageSel.nbView, (id) => { usageSel.nbView = id; }),
+        usagePills([["7d", "7d"], ["30d", "30d"]], usageSel.nbRange,
+          (id) => { usageSel.nbRange = id; }));
+      parts.push(nbHead);
+      parts.push(...notebookChart(cs));
     } else {
-      parts.push(sectionLabel("Accounts"));
-      parts.push(usageHint(acc.error
-        ? "Account activity unavailable: " + acc.error
-        : "Account activity (accounts, sign-ins, signups) reads Supabase auth, so it "
-          + "populates on the live site — this local build has no auth to read."));
+      parts.push(usageHint("Per-day notebook series unavailable"
+        + (cs.error ? ": " + cs.error : "") + "."));
     }
-
-    // Feature usage — the per-day request counters this host has recorded (last 7 days),
-    // each with a plain description so the number is legible.
-    parts.push(sectionLabel("Feature usage · last 7 days"));
-    const fmax = Math.max(1, ...USAGE_FEATURES.map(([k]) => t7[k] || 0));
-    for (const [key, label, desc] of USAGE_FEATURES) {
-      const n = t7[key] || 0;
-      parts.push(costMeter(label, n, fmax, n.toLocaleString()));
-      // Guest/account split rides under Today, the one counter the client tags by tier.
-      let d = desc;
-      if (key === "today_served" && (t7.today_guest != null || t7.today_account != null)) {
-        d += "  ·  " + (t7.today_guest || 0) + " by guests, "
-          + (t7.today_account || 0) + " by accounts.";
-      }
-      parts.push(usageHint(d));
-    }
-    parts.push(usageHint("Guests are people using Music Forest without an account. We count "
-      + "their activity (loads above), but not how many unique guests there are — that would "
-      + "need a device fingerprint, which we don't set. A guest becomes an account only when "
-      + "they make one."));
-
-    // Notebook (all-time, metadata only). Kept separate from the 7-day counters above
-    // so a cumulative total is never mistaken for recent activity.
-    parts.push(sectionLabel("In the notebook · all time"));
     const nb = document.createElement("p"); nb.className = "usage-nb";
-    nb.textContent = (con.keeps == null ? "—" : con.keeps.toLocaleString()) + " keeps · "
+    nb.textContent = "All time: "
+      + (con.keeps == null ? "—" : con.keeps.toLocaleString()) + " keeps · "
       + (con.notes == null ? "—" : con.notes.toLocaleString()) + " notes written";
     parts.push(nb);
+    parts.push(usageHint("Counts of encrypted rows by kind — metadata only; the "
+      + "writing itself (and any timestamp inside it) is unreadable by design, so "
+      + "entries are dated by when they reached the server."
+      + (cs.dated_by === "updated_at"
+        ? " Until migration 0008 runs, an edited entry moves to its last-edit day."
+        : "")));
 
     const foot = document.createElement("p"); foot.className = "muted usage-foot";
-    foot.textContent = "Counts only — no identity attached. The notebook is "
-      + "end-to-end encrypted, so its contents never appear here. Skips aren't counted: "
-      + "they stay on the device and are never sent.";
+    foot.textContent = "Counts only — no identity attached, ever. A listen tap is "
+      + "a number going up, not a record of who played what. The notebook stays "
+      + "end-to-end encrypted, so its contents never appear here. Skips aren't "
+      + "counted: they stay on the device and are never sent.";
     parts.push(foot);
 
-    body.replaceChildren(...parts);
-    status.textContent = "measured as of " + (data.generated_at || "now");
-    const un = feat.features_error || data.features_error;
-    if (un) status.textContent = "features unavailable: " + un;
+    $("#usageBody").replaceChildren(...parts);
+  }
+
+  // The shared per-day bar chart scaffold: max label + faint gridline + stacked
+  // columns (2px gaps between segments), first/last date underneath, hover title
+  // per column. `cells` = [{title, segs: [[color, n], ...] bottom-up, total}].
+  function usageBarChart(cells, meta) {
+    const headWrap = document.createElement("div"); headWrap.className = "chart-head";
+    const title = document.createElement("p"); title.className = "usage-sub";
+    title.textContent = meta.title;
+    const m = document.createElement("span"); m.className = "chart-meta";
+    m.textContent = meta.meta;
+    headWrap.append(title, m);
+    const max = Math.max(1, ...cells.map((c) => c.total));
+    const box = document.createElement("div"); box.className = "chart-box";
+    const ymax = document.createElement("span"); ymax.className = "ymax";
+    ymax.textContent = "max " + max.toLocaleString();
+    const grid = document.createElement("div"); grid.className = "gridline";
+    const trend = document.createElement("div"); trend.className = "usage-trend";
+    for (const cell of cells) {
+      const col = document.createElement("div"); col.className = "ut-col";
+      col.title = cell.title;
+      if (!cell.total) {
+        const z = document.createElement("div"); z.className = "useg zero";
+        col.append(z);
+      } else {
+        // DOM order is top-down in the flex column, so append top segment first.
+        for (let i = cell.segs.length - 1; i >= 0; i--) {
+          const [color, n] = cell.segs[i];
+          if (!n) continue;
+          const seg = document.createElement("div"); seg.className = "useg";
+          seg.style.background = color;
+          seg.style.height = Math.max(4, (n / max) * 100) + "%";
+          col.append(seg);
+        }
+      }
+      trend.append(col);
+    }
+    box.append(ymax, grid, trend);
+    const x = document.createElement("div"); x.className = "xlabels";
+    const x0 = document.createElement("span"); x0.textContent = meta.x0;
+    const x1 = document.createElement("span"); x1.textContent = meta.x1;
+    x.append(x0, x1);
+    return [headWrap, box, x];
+  }
+  function chartLegend(pairs) {
+    const legend = document.createElement("div"); legend.className = "chart-legend";
+    for (const [color, label] of pairs) {
+      const item = document.createElement("span");
+      const dot = document.createElement("span"); dot.className = "ldot";
+      dot.style.background = color;
+      item.append(dot, document.createTextNode(label));
+      legend.append(item);
+    }
+    return legend;
+  }
+  // The last `days` UTC day-keys, oldest first — matching opsdb's buckets.
+  function usageDays(days) {
+    const now = new Date(), out = [];
+    for (let i = days - 1; i >= 0; i--) {
+      out.push(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(),
+        now.getUTCDate() - i)).toISOString().slice(0, 10));
+    }
+    return out;
+  }
+
+  function activityChart(feat) {
+    const metric = USAGE_ACTIVITY.find((mm) => mm[0] === usageSel.metric);
+    const key = metric[0], label = metric[1], desc = metric[2];
+    const stacked = key === "today_served";
+    const byDay = feat.by_day || {};
+    const days = usageDays(usageSel.act === "7d" ? 7 : 30);
+    let sum = 0, anyUnknown = false;
+    const cells = days.map((day) => {
+      const row = byDay[day] || {};
+      if (!stacked) {
+        const n = row[key] || 0;
+        sum += n;
+        return { total: n, segs: [[USAGE_COLORS.account, n]],
+          title: day + ": " + n };
+      }
+      const served = row.today_served || 0;
+      const account = row.today_account || 0, guest = row.today_guest || 0;
+      const unknown = Math.max(0, served - account - guest);
+      if (unknown) anyUnknown = true;
+      sum += served;
+      return { total: served,
+        segs: [[USAGE_COLORS.account, account], [USAGE_COLORS.guest, guest],
+               [USAGE_COLORS.unknown, unknown]],
+        title: day + ": " + served + (served ? " (" + account + " account, "
+          + guest + " guest" + (unknown ? ", " + unknown + " untagged" : "") + ")" : "") };
+    });
+    const parts = usageBarChart(cells, {
+      title: label, meta: "per day · UTC · total " + sum.toLocaleString(),
+      x0: usageDayLabel(days[0]), x1: usageDayLabel(days[days.length - 1]) });
+    if (stacked) {
+      const pairs = [[USAGE_COLORS.account, "accounts"], [USAGE_COLORS.guest, "guests"]];
+      // "untagged" = an older client that didn't say which tier; shown, not hidden.
+      if (anyUnknown) pairs.push([USAGE_COLORS.unknown, "untagged"]);
+      parts.push(chartLegend(pairs));
+    }
+    parts.push(usageHint(desc + " Hover a bar for its date and exact count."));
+    return parts;
+  }
+
+  function notebookChart(cs) {
+    const byDay = {};
+    for (const r of cs.by_day || []) byDay[r.day] = r;
+    const days = usageDays(usageSel.nbRange === "7d" ? 7 : 30);
+    const base = cs.baseline || { keeps: 0, notes: 0 };
+    if (usageSel.nbView === "daily") {
+      let sum = 0;
+      const cells = days.map((day) => {
+        const r = byDay[day] || {};
+        const keeps = r.keeps || 0, notes = r.notes || 0;
+        sum += keeps + notes;
+        return { total: keeps + notes,
+          // notes are the base of the stack; keeps ride on top (mock order).
+          segs: [[USAGE_COLORS.notes, notes], [USAGE_COLORS.keeps, keeps]],
+          title: day + ": " + notes + " notes, " + keeps + " keeps" };
+      });
+      const parts = usageBarChart(cells, {
+        title: "New entries per day",
+        meta: "per day · UTC · " + sum.toLocaleString() + " in this window",
+        x0: usageDayLabel(days[0]), x1: usageDayLabel(days[days.length - 1]) });
+      parts.push(chartLegend([[USAGE_COLORS.notes, "notes written"],
+        [USAGE_COLORS.keeps, "keeps"]]));
+      return parts;
+    }
+    // Running total: two lines from the pre-window baseline, endpoint-labeled.
+    // For a window that starts before the counters, the baseline IS the start.
+    let ck = base.keeps, cn = base.notes;
+    // Entries inside the 30d payload but before this (7d) window still count
+    // toward the starting height — walk every payload day once.
+    for (const r of cs.by_day || []) {
+      if (r.day < days[0]) { ck += r.keeps || 0; cn += r.notes || 0; }
+    }
+    const kPts = [], nPts = [];
+    for (const day of days) {
+      const r = byDay[day] || {};
+      ck += r.keeps || 0; cn += r.notes || 0;
+      kPts.push(ck); nPts.push(cn);
+    }
+    const headWrap = document.createElement("div"); headWrap.className = "chart-head";
+    const title = document.createElement("p"); title.className = "usage-sub";
+    title.textContent = "Running total";
+    const m = document.createElement("span"); m.className = "chart-meta";
+    m.textContent = "per day · UTC";
+    headWrap.append(title, m);
+    const W = 800, H = 130, PADR = 84;
+    const lo = Math.min(kPts[0], nPts[0]);
+    const span = Math.max(1, Math.max(kPts[kPts.length - 1], nPts[nPts.length - 1]) - lo);
+    const xy = (v, i, len) => [
+      (i / Math.max(1, len - 1)) * (W - PADR),
+      H - 10 - ((v - lo) / span) * (H - 26)];
+    const NS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    svg.setAttribute("preserveAspectRatio", "none");
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "Running totals: keeps and notes");
+    for (const [pts, color, endText] of [
+      [kPts, USAGE_COLORS.keeps, kPts[kPts.length - 1].toLocaleString() + " keeps"],
+      [nPts, USAGE_COLORS.notes, nPts[nPts.length - 1].toLocaleString() + " notes"],
+    ]) {
+      const line = document.createElementNS(NS, "polyline");
+      line.setAttribute("fill", "none");
+      line.setAttribute("stroke", color);
+      line.setAttribute("stroke-width", "2");
+      line.setAttribute("points",
+        pts.map((v, i) => xy(v, i, pts.length).map((c) => c.toFixed(1)).join(","))
+          .join(" "));
+      const [ex, ey] = xy(pts[pts.length - 1], pts.length - 1, pts.length);
+      const dot = document.createElementNS(NS, "circle");
+      dot.setAttribute("r", "3.5"); dot.setAttribute("fill", color);
+      dot.setAttribute("cx", ex.toFixed(1)); dot.setAttribute("cy", ey.toFixed(1));
+      const t = document.createElementNS(NS, "text");
+      t.setAttribute("class", "endlab");
+      t.setAttribute("x", String(W - PADR + 8)); t.setAttribute("y", (ey + 4).toFixed(1));
+      t.textContent = endText;
+      svg.append(line, dot, t);
+    }
+    const chart = document.createElement("div"); chart.className = "linechart";
+    chart.append(svg);
+    const x = document.createElement("div"); x.className = "xlabels";
+    const x0 = document.createElement("span"); x0.textContent = usageDayLabel(days[0]);
+    const x1 = document.createElement("span"); x1.textContent = usageDayLabel(days[days.length - 1]);
+    x.append(x0, x1);
+    return [headWrap, chart, x,
+      chartLegend([[USAGE_COLORS.notes, "notes written"], [USAGE_COLORS.keeps, "keeps"]])];
   }
   function sectionLabel(text) {
     const d = document.createElement("div"); d.className = "usage-seclabel";
@@ -1384,51 +1683,6 @@
     const d = Math.floor(h / 24), rh = h % 24;
     return rh ? d + "d " + rh + "h" : d + "d";
   }
-  // A compact vertical bar trend of one counter over the last `days` days (UTC, matching
-  // opsdb's day buckets). Generates the full timeline and fills missing days with zero so
-  // a quiet day reads as a short bar, not a gap.
-  function usageTrend(byDay, key, days) {
-    const wrap = document.createElement("div"); wrap.className = "usage-trend";
-    const now = new Date();
-    const cells = [];
-    let max = 1;
-    for (let i = days - 1; i >= 0; i--) {
-      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(),
-        now.getUTCDate() - i));
-      const day = d.toISOString().slice(0, 10);
-      const n = (byDay[day] && byDay[day][key]) || 0;
-      max = Math.max(max, n);
-      cells.push([day, n]);
-    }
-    for (const [day, n] of cells) {
-      const col = document.createElement("div"); col.className = "ut-col";
-      col.title = day + ": " + n.toLocaleString();
-      const bar = document.createElement("div");
-      bar.className = "ut-bar" + (n === 0 ? " zero" : "");
-      bar.style.height = (n === 0 ? 2 : Math.max(6, Math.round((n / max) * 100))) + "%";
-      col.append(bar);
-      wrap.append(col);
-    }
-    return wrap;
-  }
-  // A compact bar row for a small [label, value] series (the signups histogram),
-  // scaled to the series max. Reuses the meter track/fill look.
-  function usageBars(pairs) {
-    const wrap = document.createElement("div"); wrap.className = "usage-hist";
-    const max = Math.max(1, ...pairs.map((p) => p[1]));
-    for (const [label, n] of pairs) {
-      const row = document.createElement("div"); row.className = "usage-hrow";
-      const l = document.createElement("span"); l.className = "uh-lab"; l.textContent = label;
-      const track = document.createElement("div"); track.className = "meter-track";
-      const fill = document.createElement("div"); fill.className = "meter-fill";
-      fill.style.width = Math.max(2, Math.round((n / max) * 100)) + "%";
-      track.append(fill);
-      const v = document.createElement("span"); v.className = "uh-n"; v.textContent = n;
-      row.append(l, track, v); wrap.append(row);
-    }
-    return wrap;
-  }
-
   // --- Beta capacity band (Summary) ------------------------------------------
   // The ceilings that actually bite as invites go out (INVITE_ROLLOUT_PLAN §2):
   // the Render box (threads / RAM / disk), the Supabase database, and upstream API

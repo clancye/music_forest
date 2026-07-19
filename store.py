@@ -95,6 +95,7 @@ class SQLiteStore:
         client_id   TEXT NOT NULL,
         ciphertext  BLOB,
         nonce       BLOB,
+        created_at  TEXT,               -- 0008 parity: set on insert, kept on edit
         updated_at  TEXT NOT NULL,
         deleted_at  TEXT,
         PRIMARY KEY (user_id, kind, client_id)
@@ -128,6 +129,13 @@ class SQLiteStore:
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA busy_timeout=30000")
         c.executescript(self.SCHEMA)
+        # 0008 parity: a store file from before created_at gains the column here
+        # (nullable — content_series COALESCEs to updated_at for those old rows).
+        # On a current file the ALTER errors as duplicate and is ignored.
+        try:
+            c.execute("ALTER TABLE journal_rows ADD COLUMN created_at TEXT")
+        except sqlite3.OperationalError:
+            pass
         return c
 
     def ping(self):
@@ -178,27 +186,27 @@ class SQLiteStore:
                     c.execute(
                         """INSERT INTO journal_rows
                            (user_id, kind, client_id, ciphertext, nonce,
-                            updated_at, deleted_at)
-                           VALUES (?,?,?,NULL,NULL,?,?)
+                            created_at, updated_at, deleted_at)
+                           VALUES (?,?,?,NULL,NULL,?,?,?)
                            ON CONFLICT(user_id, kind, client_id) DO UPDATE SET
                              ciphertext=NULL, nonce=NULL,
                              updated_at=excluded.updated_at,
                              deleted_at=excluded.deleted_at""",
-                        (user_id, row["kind"], cid, now, now))
+                        (user_id, row["kind"], cid, now, now, now))
                 else:
                     ct = _as_bytes(row.get("ciphertext"), "ciphertext")
                     no = _as_bytes(row.get("nonce"), "nonce")
                     c.execute(
                         """INSERT INTO journal_rows
                            (user_id, kind, client_id, ciphertext, nonce,
-                            updated_at, deleted_at)
-                           VALUES (?,?,?,?,?,?,NULL)
+                            created_at, updated_at, deleted_at)
+                           VALUES (?,?,?,?,?,?,?,NULL)
                            ON CONFLICT(user_id, kind, client_id) DO UPDATE SET
                              ciphertext=excluded.ciphertext,
                              nonce=excluded.nonce,
                              updated_at=excluded.updated_at,
                              deleted_at=NULL""",
-                        (user_id, row["kind"], cid, ct, no, now))
+                        (user_id, row["kind"], cid, ct, no, now, now))
                 written += 1
             c.commit()
         return written
@@ -342,6 +350,47 @@ class SQLiteStore:
                 "SELECT COUNT(*) FROM journal_rows "
                 "WHERE kind='note' AND deleted_at IS NULL").fetchone()[0]
         return {"keeps": keeps, "notes": notes}
+
+    def content_series(self, days=30):
+        """Per-day NEW live-entry counts by kind (keeps/notes) for the Usage tab's
+        notebook chart, plus the totals from before the window so a running total
+        starts at the right height. Dated by created_at where the row has one,
+        else updated_at (rows older than that column) — server-arrival time either
+        way; the E2EE ciphertext, including any timestamp inside it, is never
+        read. Counts only, no user ids."""
+        start = _days_ago(int(days))[:10]
+        day = "substr(COALESCE(created_at, updated_at), 1, 10)"
+        with self._conn() as c:
+            rows = c.execute(
+                f"SELECT {day} AS d, "
+                "SUM(kind IN ('choice','pick')) AS keeps, "
+                "SUM(kind = 'note') AS notes "
+                "FROM journal_rows WHERE deleted_at IS NULL "
+                "AND kind IN ('choice','pick','note') "
+                f"AND {day} >= ? GROUP BY d ORDER BY d", (start,)).fetchall()
+            base = c.execute(
+                "SELECT SUM(kind IN ('choice','pick')) AS keeps, "
+                "SUM(kind = 'note') AS notes "
+                "FROM journal_rows WHERE deleted_at IS NULL "
+                "AND kind IN ('choice','pick','note') "
+                f"AND {day} < ?", (start,)).fetchone()
+        return {"available": True, "days": int(days), "dated_by": "created_at",
+                "by_day": [{"day": r["d"], "keeps": r["keeps"], "notes": r["notes"]}
+                           for r in rows],
+                "baseline": {"keeps": base["keeps"] or 0, "notes": base["notes"] or 0}}
+
+    def access_request_counts(self):
+        """Counts by status for the Usage tab's Guests row ({new, invited,
+        declined}). Metadata only — no address leaves this query."""
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT status, COUNT(*) AS n FROM access_requests "
+                "GROUP BY status").fetchall()
+        out = {"new": 0, "invited": 0, "declined": 0}
+        for r in rows:
+            if r["status"] in out:
+                out[r["status"]] = r["n"]
+        return out
 
     def account_activity(self, days=30):
         """SQLite/dev has no Supabase auth.users, so account activity (sign-ins,
@@ -630,6 +679,55 @@ class PostgresStore:
             cur.execute("SELECT COUNT(*) FROM journal_rows "
                         "WHERE kind='note' AND deleted_at IS NULL")
             out["notes"] = cur.fetchone()[0]
+        return out
+
+    def content_series(self, days=30):
+        """Per-day NEW live-entry counts by kind (keeps/notes) + the totals from
+        before the window, for the Usage tab's notebook chart and its running
+        total. Tries created_at (migration 0008; ON CONFLICT never touches it, so
+        an edit keeps its day) and degrades to updated_at on a pre-0008 store —
+        `dated_by` says which, so the panel can be honest about it. Either way
+        this is server-arrival time: the real write moment lives inside the E2EE
+        ciphertext, which is never read. Counts only, no user ids. autocommit
+        means the failed created_at probe can't poison the retry."""
+        for col in ("created_at", "updated_at"):
+            try:
+                with self._cursor() as cur:
+                    cur.execute(
+                        f"SELECT to_char(date_trunc('day', {col}), 'YYYY-MM-DD') AS d, "
+                        "COUNT(*) FILTER (WHERE kind IN ('choice','pick')) AS keeps, "
+                        "COUNT(*) FILTER (WHERE kind = 'note') AS notes "
+                        "FROM journal_rows WHERE deleted_at IS NULL "
+                        "AND kind IN ('choice','pick','note') "
+                        f"AND {col} >= now() - (%s || ' days')::interval "
+                        "GROUP BY 1 ORDER BY 1", (int(days),))
+                    by_day = [{"day": d, "keeps": k, "notes": n}
+                              for d, k, n in cur.fetchall()]
+                    cur.execute(
+                        "SELECT COUNT(*) FILTER (WHERE kind IN ('choice','pick')), "
+                        "COUNT(*) FILTER (WHERE kind = 'note') "
+                        "FROM journal_rows WHERE deleted_at IS NULL "
+                        "AND kind IN ('choice','pick','note') "
+                        f"AND {col} < now() - (%s || ' days')::interval", (int(days),))
+                    bk, bn = cur.fetchone()
+                return {"available": True, "days": int(days), "dated_by": col,
+                        "by_day": by_day, "baseline": {"keeps": bk, "notes": bn}}
+            except Exception:  # noqa: BLE001 - pre-0008 store: created_at absent
+                continue
+        return {"available": False}
+
+    def access_request_counts(self):
+        """Counts by status for the Usage tab's Guests row. Metadata only — no
+        address leaves this query. Guarded at the endpoint: a pre-0003 store
+        without the table raises and reports requests_error instead."""
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT status, COUNT(*) FROM access_requests GROUP BY status")
+            rows = cur.fetchall()
+        out = {"new": 0, "invited": 0, "declined": 0}
+        for status, n in rows:
+            if status in out:
+                out[status] = n
         return out
 
     def account_activity(self, days=30):

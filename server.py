@@ -682,6 +682,30 @@ def api_pool_door():
     return jsonify(pooldb.door_links(uid))
 
 
+# The services a Listen tap can name — db.PLATFORM_ORDER, the same fixed set the
+# client's Listen door renders. Anything else (a future platform, junk input)
+# folds into "other" rather than minting counter keys from request strings.
+_LISTEN_SERVICES = frozenset(db.PLATFORM_ORDER)
+
+
+@bp.route("/api/usage/listen", methods=["POST"])
+@_LIMIT_CATALOG
+def api_usage_listen():
+    """Count ONE Listen tap — an outward door actually walked through (owner ask,
+    2026-07-19). This is the thing door_open can't say: that counter fires when a
+    shown record's links get RESOLVED, not when a person leaves through one.
+    sendBeacon-shaped: reads two allowlisted words (service + coarse tier),
+    counts them in opsdb, answers 204 with no body. Counts only — no user, no
+    album, no URL is ever read, so the beacon cannot say who listened to what."""
+    svc = (request.args.get("svc") or "").strip().lower()
+    opsdb.bump("listen_click")
+    opsdb.bump("listen_svc_" + (svc if svc in _LISTEN_SERVICES else "other"))
+    tier = (request.args.get("tier") or "").strip().lower()
+    if tier in ("guest", "account"):
+        opsdb.bump("listen_" + tier)
+    return "", 204
+
+
 # --- uid identity helpers (P3 M2) -------------------------------------------
 # Album identity is the source-agnostic uid (d:<release_id> for Discogs,
 # m:<album_id> for MB-only). The helpers that bridge a request's string uid to
@@ -2136,15 +2160,28 @@ def api_admin_usage():
             if d >= cutoff_7d:
                 t7[k] = t7.get(k, 0) + n
             by_day.setdefault(d, {})[k] = n
+        totals = opsdb.usage_totals()
         out["features"] = {"totals_7d": t7, "totals_30d": t30, "by_day": by_day,
-                           "today": today}
+                           "today": today, "totals_all": totals["keys"],
+                           "since": totals["since"]}
     except Exception as e:  # noqa: BLE001 - report, never sink the panel
         out["features_error"] = str(e)
-    # (2) Notebook metadata — live keep/note counts (never content).
+    # (2) Notebook metadata — live keep/note counts (never content), plus the
+    # per-day new-entries series behind the Usage tab's notebook chart. Counts of
+    # encrypted rows by kind and day only; the ciphertext is never read.
     try:
         out["content"] = store.get_store().content_stats()
     except Exception as e:  # noqa: BLE001
         out["content_error"] = str(e)
+    try:
+        out["content_series"] = store.get_store().content_series(30)
+    except Exception as e:  # noqa: BLE001
+        out["content_series"] = {"available": False, "error": str(e)}
+    # Access requests by status — the Guests row's "asking to come in" number.
+    try:
+        out["requests"] = store.get_store().access_request_counts()
+    except Exception as e:  # noqa: BLE001
+        out["requests_error"] = str(e)
     # (1) Account activity — hosted (Supabase auth) only; SQLite → available:False.
     try:
         out["accounts"] = store.get_store().account_activity()

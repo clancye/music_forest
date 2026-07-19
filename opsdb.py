@@ -138,6 +138,22 @@ def usage_recent(days=30, *, now=None):
     return [dict(r) for r in rows]
 
 
+def usage_totals():
+    """All-time per-key sums plus the first counted day — the "All" window for the
+    /admin Usage panel (day-window sums come from usage_recent). Shape
+    {"keys": {key: n}, "since": "YYYY-MM-DD" | None}; the empty shape when
+    unreadable, same never-fails discipline as every read here."""
+    try:
+        with _conn() as c:
+            c.execute(_USAGE_SCHEMA)
+            rows = c.execute(
+                "SELECT key, SUM(n) AS n FROM usage_counter GROUP BY key").fetchall()
+            since = c.execute("SELECT MIN(day) FROM usage_counter").fetchone()[0]
+    except Exception:  # noqa: BLE001
+        return {"keys": {}, "since": None}
+    return {"keys": {r["key"]: r["n"] for r in rows}, "since": since}
+
+
 def spotify_burn_recent(limit=14):
     """Recent days, newest first — the trend, so a creeping burn is visible before it
     is a 429. [] when unreadable."""
