@@ -1,0 +1,28 @@
+# Extra dependencies for the hosted (Render + Supabase) deployment only.
+# Local dev and the test suite need NONE of these — the sync layer falls back to
+# a local SQLite file and bypasses auth when the AOTD_SUPABASE_* env vars are
+# unset (see config.py / auth.py / store.py). Install on the host alongside
+# requirements.txt:  pip install -r requirements.txt -r requirements-hosted.txt
+-r requirements.txt
+
+# Postgres driver for the Supabase-backed encrypted-row store (store.PostgresStore).
+# Imported lazily, so it is only needed when AOTD_SUPABASE_DB_URL is set.
+psycopg[binary]>=3.1
+
+# Verifies asymmetric (ES256/RS256) Supabase JWTs against the project's JWKS
+# (auth._verify_asymmetric). Imported lazily, so it is only needed once you've
+# rotated to Supabase's signing-keys system. The [crypto] extra pulls in
+# `cryptography` for the elliptic-curve/RSA signature checks. Legacy HS256
+# tokens need none of this (verified with the standard library).
+pyjwt[crypto]>=2.8
+
+# Production WSGI server (BETA_PLAN.md §6 runs Flask behind gunicorn: `server:app`).
+gunicorn>=21.0
+
+# Coarse abuse caps on the public, unauthenticated endpoints (H1.5 part 2), with
+# in-memory storage. Imported lazily/conditionally in server.py: when this isn't
+# installed (local dev + the default test suite) no limiting is wired and the app
+# is unchanged. Keyed on the real client IP via Render's X-Forwarded-For. With 2
+# gunicorn workers the in-memory counters are per-worker (~2x nominal) — fine for
+# coarse caps; we deliberately don't add Redis.
+flask-limiter>=3.5

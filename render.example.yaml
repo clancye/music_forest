@@ -1,0 +1,55 @@
+# Render blueprint (example) — Music Forest, the hosted E2EE PWA.
+#
+# One Web Service: Flask (under gunicorn) serves the PWA + JSON API + the
+# read-only catalog + hotlinked art, all same-origin (no CORS). A persistent
+# disk holds the catalog SQLite files (shipped in separately — they are NOT in
+# git). Encrypted notebook rows live in Supabase Postgres.
+#
+# Copy to render.yaml and fill in your own service name, region, and the
+# dashboard secrets below before deploying.
+services:
+  - type: web
+    name: music-forest
+    runtime: python
+    plan: standard            # 2 GB / 1 vCPU — the pool + hot catalog pages fit in cache
+    region: oregon            # the disk and the service must share a region
+    branch: main
+    buildCommand: pip install -r requirements.txt -r requirements-hosted.txt
+    # gunicorn imports server:app and never calls main(), so the local-only
+    # startup work (prefetch / backup) is correctly skipped on the host.
+    # --threads keeps concurrent request slots for this I/O-bound app. Do not run
+    # more than one worker on a <1-vCPU plan (two workers peg a half-core importing
+    # the app twice at boot and the health check can time out). --preload is not an
+    # option — a background thread starts in create_app() and must live in a worker.
+    startCommand: gunicorn -w 2 --threads 8 --timeout 120 -b 0.0.0.0:$PORT server:app
+    healthCheckPath: /healthz # asserts catalog + store are ready before Render swaps
+                              # in a new instance. BOOTSTRAP: on a fresh service the
+                              # disk has no catalog yet and /healthz 503s — set this to
+                              # / for the very first deploy, seed the disk, then restore.
+    disk:
+      name: catalog
+      mountPath: /var/data
+      sizeGB: 20              # sized for the catalog DBs + the rsync temp-file swap
+    envVars:
+      # --- runtime config (safe to commit) ---
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: AOTD_DATA_DIR             # catalog DBs resolve here
+        value: /var/data
+      - key: AOTD_CACHE_ART_BYTES      # 0 = hotlink art from the source CDN, cache none
+        value: "0"
+      - key: AOTD_PREFETCH             # no background cover prefetch on the host
+        value: "0"
+      - key: AOTD_RATE_LIMIT           # rate-limit the public endpoints
+        value: "1"
+      - key: AOTD_ACCOUNT_DELETE_AUTH  # account deletion also removes the auth.users row
+        value: "1"
+      # --- secrets: set these in the Render dashboard (Environment), not here ---
+      - key: AOTD_SUPABASE_URL         # https://<project>.supabase.co
+        sync: false
+      - key: AOTD_SUPABASE_ANON_KEY    # public anon key (frontend)
+        sync: false
+      - key: AOTD_SUPABASE_JWT_SECRET  # JWT secret used to verify sign-in tokens
+        sync: false
+      - key: AOTD_SUPABASE_DB_URL      # pooled Postgres URL -> encrypted rows land here
+        sync: false

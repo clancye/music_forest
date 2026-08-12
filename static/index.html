@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Music Forest</title>
+<!-- Brand: search + link-share description. Tagline leads; the notebook (E2EE) is
+     the trust anchor (BRAND.md). twitter:card=summary — we ship the square icon, not
+     a wide banner (and album art is square, so summary frames a shared record right).
+
+     H6: everything between the og markers below is REPLACED SERVER-SIDE when the
+     request carries ?album=<uid> — a shared record unfurls as the record (cover +
+     "Artist — Title") instead of the app icon. See server.index(). Keep the
+     markers, and keep this block valid on its own: a request with no ?album, an
+     unknown uid, or any resolve failure serves exactly what's written here. -->
+<meta name="description" content="Find music, write notes. Records released on this date, any year — met one at a time, with a private, end-to-end-encrypted notebook.">
+<!--og:start-->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Music Forest">
+<meta property="og:title" content="Music Forest — Find music, write notes.">
+<meta property="og:description" content="Records released on this date, any year — met one at a time, with a private, end-to-end-encrypted notebook.">
+<meta property="og:url" content="https://musicforest.lol/">
+<meta property="og:image" content="https://musicforest.lol/static/icons/icon-512.png">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Music Forest — Find music, write notes.">
+<meta name="twitter:description" content="Records released on this date, any year — met one at a time, with a private, end-to-end-encrypted notebook.">
+<meta name="twitter:image" content="https://musicforest.lol/static/icons/icon-512.png">
+<!--og:end-->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2314150e'/%3E%3Cpath d='M16 5 L24 19 H8 Z' fill='%2386a86a'/%3E%3Cpath d='M16 12 L23 24 H9 Z' fill='%2386a86a'/%3E%3Crect x='14.5' y='23' width='3' height='4' fill='%239a7b5a'/%3E%3C/svg%3E">
+<!-- PWA (H1.3): installable shell. Manifest + theme color + iOS home-screen metas. -->
+<link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="theme-color" content="#14150e">
+<link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Forest">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="auth-pending">
+<button id="feedbackBtn" class="feedback-fab" title="Send feedback about the app">Feedback</button>
+<!-- U24 (owner 2026-07-12): the always-on floating "⤳ Trail" button was retired —
+     "it was fun but the app does such a good job" without it. The wander map itself
+     (openWanderMap) is still reachable from the wander breadcrumb (#wanderBar,
+     data-wmap) while you're actively wandering — pull, not a permanent affordance. -->
+<header>
+  <!-- BRAND. FB#101 (2026-08-04): the line under the wordmark is no longer the fixed
+       tagline on every surface. It's per-surface now — "Released on this day in
+       history" on Today, nothing on Notebook and Explore — set by setSubtitleFor() in
+       app.js. Today's text is seeded here so the first paint isn't blank.
+
+       2026-08-07 (owner): a mark-plus-STACKED-wordmark lockup — the icon stands as tall
+       as the two lines beside it, and the wordmark and the line under it left-align to
+       each other as one block. This is why #subtitle now lives INSIDE #brandHome: the
+       two lines have to be one column for the mark to sit against them. Tapping the
+       line therefore also returns you to Today, which is a widening of the home
+       affordance BRAND.md describes as "icon + wordmark" — accepted deliberately.
+
+       It also dissolves a problem rather than compensating for one. Centred, the icon
+       and wordmark were centred as a UNIT, so the wordmark itself sat 29px right of
+       centre; the first fix for that was a translateX, which is the kind of arithmetic
+       that rots. As one left-aligned lockup there is nothing to offset. -->
+  <div class="brand">
+    <!-- #9/#10: icon + wordmark are one home affordance — tap to return to Today. -->
+    <div id="brandHome" class="brand-home" role="button" tabindex="0"
+      title="Music Forest — back to Today" aria-label="Music Forest — back to Today">
+      <img class="brand-icon" src="/static/icons/icon-192.png" alt="" width="40" height="40">
+      <div class="brand-text">
+        <h1>Music&nbsp;Forest</h1>
+        <p id="subtitle">Released on this day in history</p>
+      </div>
+    </div>
+  </div>
+  <div class="controls">
+    <!-- Pick the services you use. Doing so both filters the Listen door to those
+         AND surfaces only albums you can play on them (the pick + browse). Pick
+         nothing -> every album surfaces (default). Dig mode always ignores it. We
+         only offer platforms we can confirm (Spotify / Apple / YouTube / Deezer);
+         Spotify is warmed for the current day, so its filter is meaningful today and
+         unknown for distant days (dig always full). -->
+    <!-- Owner (2026-07-03): the old single hint ("Show only albums I can play
+         on — drag to set which plays first:") crammed three ideas into one
+         small line. Now: a plain button ("Where you listen", U26 2026-07-12; was
+         "Select platforms"), a lead that says what to do, and one short line per
+         effect — the drag line only appears once there's an order to set. -->
+    <details class="listen-pref" id="listenPref">
+      <summary title="Choose the services you use">Where you listen</summary>
+      <div class="listen-pref-box">
+        <p class="listen-pref-lead">Choose the services you use</p>
+        <p class="listen-pref-hint">Only albums you can play there will surface —
+          choose none to see everything.</p>
+        <p class="listen-pref-hint hidden" id="listenPrefDragHint">Drag your
+          services to set which plays first.</p>
+        <div class="pref-list" id="prefList" role="list"></div>
+        <p class="listen-pref-note" id="listenPrefNote" aria-live="polite"></p>
+        <!-- U21 (owner 2026-07-05): "dig deeper" folded in here — it's the other end
+             of the same dial (the platform toggles narrow the pool to what you can
+             play; this widens it past availability entirely). Shown only when the
+             pool is serving (updateDigVisibility toggles .hidden); same #digWrap /
+             #digToggle the choice-actions used, so all its wiring rides along. -->
+        <div class="dig-opt hidden" id="digWrap">
+          <label class="dig-label">
+            <input type="checkbox" id="digToggle">
+            <span>Dig deeper</span>
+          </label>
+          <p class="dig-desc">Also include records with no confirmed way to listen
+            yet — the full set released on this day, not just the listenable ones.</p>
+        </div>
+      </div>
+    </details>
+  </div>
+</header>
+
+<!-- TABS (FB#105, owner 2026-08-05): "let's move the today/notebook/explore tabs to
+     the bottom of the page. the album/keep/skip box can move up." They used to sit in
+     the header between the brand and the record, which put a row of navigation in the
+     way of the one thing the screen is for — and cost the record 52px it now keeps.
+     Out of <header> entirely, because it is no longer part of the masthead: it's a
+     dock fixed to the foot of the viewport. Still declared HERE, high in the document,
+     so keyboard focus and screen-reader reading order still meet the primary
+     navigation before the page content, whatever the paint order says.
+     Being viewport-anchored is also what holds it still. FB#100/#101 fixed a 25px jump
+     between surfaces by keeping the per-surface line under the wordmark permanently in
+     flow (a blank line carrying a non-breaking space), because anything that collapsed
+     above the tabs moved them. Nothing in the document can move them now, so that
+     placeholder is gone (setSubtitleFor in app.js) and Notebook/Explore get their 19px
+     back. If this bar ever DOES drift between surfaces, something is sizing it from
+     content — see the FB#105 acceptance note in BACKLOG.md.
+     Labelled Today / Notebook; the mode keys stay decide / journal in code (the
+     keep-model redesign renamed the label only).
+     FB#100 (owner): "the tab bar of today, notebook, and explore looks too similar to
+     the by genre and by filter buttons. the first three navigate to different pages,
+     while the last two change the output of the first page." They read as two
+     different kinds of control — and as of FB#105 they aren't even on the same end of
+     the screen. -->
+<nav class="tabs-row" aria-label="Main">
+  <div class="tabs">
+    <button class="tab active" data-mode="decide">Today</button>
+    <button class="tab" data-mode="journal">Notebook</button>
+    <!-- N3: Explore is its own top tab now (it used to be a pill inside the
+         Notebook head; the head lost its segmented control when it became
+         one trail). -->
+    <button class="tab" data-mode="forest">Explore</button>
+  </div>
+</nav>
+
+<!-- WANDER breadcrumb (T1): pinned root + collapsed middle. A door you can close
+     to return from — never a corridor. Hidden until you pull your first door. -->
+<nav id="wanderBar" class="wander-bar hidden" aria-label="Your wander"></nav>
+
+<!-- ACC1 C [2.4.1 Bypass Blocks, A]: the primary content sits in one <main>
+     landmark, so a screen-reader user can skip the header + nav straight to it.
+     Wraps every view (Choose / Explore / Browse / your journal). -->
+<main id="main">
+<!-- TODAY: the day's records, one at a time — keep or skip -->
+<section id="decide" class="view">
+  <!-- ACC1 C [1.3.1]: an invisible per-view <h2> gives the outline a rung between
+       the site <h1> and each section's <h3>s, so headings can be skimmed by voice. -->
+  <h2 class="sr-only">Today's records</h2>
+  <!-- No prose prompt: the deck's "ON THIS DAY, ANY YEAR" eyebrow carries the
+       framing, and the record's own meta names its release date — a second
+       date-scoped line here was redundant (owner 2026-07-12). -->
+  <div id="choice" class="choice">
+    <!-- one record at a time, injected by renderDeck() -->
+  </div>
+  <!-- NARROW TODAY (FB#105, 2026-08-07): "By genre" and "By year" live UNDER the
+       record now, not above it. In the header they sat between the tabs and the
+       card, in the slot a settings bar occupies — they read as something to set
+       before you were allowed to look. Down here they answer "not this one?", which
+       is the order the app actually works in (VISION: pull, not push), and the 40px
+       they cost the header goes to the record instead.
+       They open UPWARD (`.narrow-today .genre-pref-box`) — a popover that opened
+       downward from the bottom of the page would put its own chips below the fold.
+       Kept inside #decide so they hide with the view on a tab switch; the
+       `body.is-decide` display rule still holds for anything that reads it. -->
+  <div class="narrow-today">
+    <!-- A8 Phase 2: the opt-in genre filter for Today. The balanced draw (Phase 1)
+         already varies the deck for everyone; this is the deliberate "just show me
+         X" control. Client-side only — the day payload already carries each record's
+         coarse `bucket`, so the chips + per-genre counts (rendered by renderGenrePref)
+         and the filtering need no round-trip. Today-only (CSS keys off body.is-decide);
+         dig mode ignores it (honesty rule). "unknown"-genre records are never a chip —
+         filtering to a genre honestly hides them. -->
+    <!-- Owner 2026-07-26: "Narrow today" split into two plainly-named controls, since the
+         single label read as unclear. "By genre" = the buckets + typed styles; "By year" =
+         the F31 decade chips + a year range + a door to Explore's exact-day searcher (F33).
+         Same client-side filter model (dig ignores both; unknown genre / no-year → no chip). -->
+    <details class="genre-pref" id="genrePref">
+      <summary title="Show only certain genres">Genre<span class="genre-tally" id="genreTally" hidden></span></summary>
+      <div class="genre-pref-box">
+        <button type="button" class="pref-close" data-pref-close
+          title="Close" aria-label="Close">✕</button>
+        <p class="genre-pref-lead">Show me</p>
+        <div class="genre-chips" id="genreChips" role="group" aria-label="Filter today by genre"></div>
+        <!-- FB#57b: type a finer tag ("shoegaze", "hard bop") + Enter / Add to drop it
+             into the chip list above; it filters against each record's genres + styles. -->
+        <div class="genre-add-row">
+          <input type="search" id="genreText" class="genre-text" autocomplete="off"
+            placeholder="add a style — shoegaze, hard bop…"
+            aria-label="Add a genre or style filter, then press Enter">
+          <button type="button" id="genreAdd" class="genre-add">Add</button>
+        </div>
+        <div id="genreSuggest" class="genre-suggest" role="listbox"
+             aria-label="Matching genres and styles" hidden></div>
+        <p class="genre-pref-note" id="genrePrefNote" aria-live="polite"></p>
+      </div>
+    </details>
+    <details class="genre-pref" id="datePref">
+      <summary title="Filter today by decade, a year range, or reach a specific day">Year<span class="genre-tally" id="dateTally" hidden></span></summary>
+      <div class="genre-pref-box">
+        <button type="button" class="pref-close" data-pref-close
+          title="Close" aria-label="Close">✕</button>
+        <!-- F31: decade chips actually present in today's records, each with its count.
+             Composes (AND) with genres and the year range. Hidden when a day has no year data. -->
+        <div class="era-row" id="eraRow" hidden>
+          <p class="genre-pref-lead era-lead">By decade</p>
+          <div class="genre-chips" id="eraChips" role="group" aria-label="Filter today by decade"></div>
+        </div>
+        <!-- Owner 2026-07-26: a precise complement to the decade chips — a start/stop year
+             span. Composes (AND) with the decades. -->
+        <div class="year-range" id="yearRange">
+          <p class="genre-pref-lead">Or a span of years</p>
+          <div class="year-range-row">
+            <input type="number" id="yearFrom" class="year-in" inputmode="numeric"
+              min="1900" max="2100" placeholder="from" aria-label="From year">
+            <span class="year-dash" aria-hidden="true">–</span>
+            <input type="number" id="yearTo" class="year-in" inputmode="numeric"
+              min="1900" max="2100" placeholder="to" aria-label="To year">
+            <button type="button" id="yearRangeClear" class="linkish year-clear hidden">✕ clear</button>
+          </div>
+        </div>
+        <p class="genre-pref-note" id="datePrefNote" aria-live="polite"></p>
+        <!-- F33: a door to Explore's exact-day searcher — reach any calendar day (a
+             birthday); records resolve lazily per opened record on that cold day. -->
+        <div class="date-door-row">
+          <button type="button" class="linkish date-door" id="specificDayBtn"
+            title="See records released on any calendar day — a birthday, an anniversary">See a specific day →</button>
+        </div>
+      </div>
+    </details>
+    <!-- SET-ASIDE PILE (D2): how many you skipped today; pulls open the reopenable
+         pile. Local, per-day and ephemeral — never synced.
+         FB#105 follow-up (owner, on an iPhone 13 mini): it used to be `position: fixed`
+         above the dock, which put it straight on top of "By genre" on a short screen —
+         measured, the two overlapped on BOTH axes. Being fixed was buying nothing any
+         more: it existed so the pill stayed reachable while Today scrolled, and Today no
+         longer scrolls. As a sibling of the pills it kept colliding with, it cannot
+         overlap them on any screen, and it wraps with them when it has to.
+         LAST in the row on purpose: CSS pushes it to the right edge so it lands under
+         Skip, while "By genre" / "By year" stay left under Keep — each control beneath
+         the button it belongs to (owner, 2026-08-07).
+         Still inside #decide, so it hides with the view on a tab switch. -->
+    <div id="setAsideBar" class="set-aside-bar hidden" role="button" tabindex="0"
+         aria-label="Open the records you skipped">
+      <span class="sab-label">Skipped</span>
+      <span class="sab-count" id="setAsideCount">0</span>
+    </div>
+  </div>
+  <!-- No date control here: the deck is year-independent (records from THIS month +
+       day, any year), so it's always today (owner 2026-07-05). -->
+  <!-- (#59) The F26 "remember" door is retired — a guest reaches the whole catalog
+       through Explore now, and writes notes on the real ✎ affordance. -->
+  <!-- FB#97 (owner): the "why this record?" / "why keep?" doors are retired. Both
+       answered the same question every time, under a record the reader had already
+       decided to look at — and the tour cards say the same thing at the moment it's
+       actually needed. The mechanic (the on-this-date draw, the genre-balanced
+       order, what keeping does) belongs in About, reached from ☰ by anyone curious
+       enough to go looking. Nothing is lost; it stopped being said twice. -->
+
+</section>
+
+<!-- The pull-up pile itself — a door over Today (VISION: pull-only, returnable). -->
+<div id="setAsideSheet" class="set-aside-sheet hidden" role="dialog" aria-modal="true"
+     aria-label="Records you skipped today">
+  <div class="sas-panel">
+    <div class="sas-head">
+      <h3>Skipped today</h3>
+      <button id="setAsideClose" type="button" class="modal-close" title="Close">✕</button>
+    </div>
+    <p class="sas-hint muted">Records you skipped today — bring any back to look
+      again. This pile clears tomorrow; nothing here is saved.</p>
+    <div id="setAsideList" class="sas-list"><!-- injected --></div>
+  </div>
+</div>
+
+<!-- REMEMBER HEAD (owner feedback 2026-07-04: "the buttons all move around"):
+     the ONE control cluster for the whole remember surface. Journal (Notes +
+     Choices) and Explore (the forest) share it, so the search slot and the
+     Notes/Choices/Explore pills sit in the same place in both views instead of
+     rearranging on every hop. The search slot swaps content by mode — the
+     journal filter box, or the forest's tucked-away catalog search — and the
+     pill bar stays put, with Explore carrying a real "you are here" state. -->
+<div id="rememberHead" class="remember-head hidden">
+  <!-- N3: Remember is one interleaved trail now — the segmented [Choices|Notes|
+       Explore] control is gone (Explore became its own top tab; choices + notes
+       interleave into a single stream). Writing moved to a sticky "Take a note"
+       pill at the foot of the trail (#trailPill), so the head is just the search.
+       The slot is shared with Explore: the trail filter on Remember, the catalog
+       search on Explore, swapped by mode so the cluster never rearranges. -->
+  <div class="filters">
+    <input type="search" id="journalSearch" aria-label="Search your notebook — choices and notes" placeholder="Search your notebook…">
+    <form class="forest-find hidden" id="forestFind">
+      <input type="search" id="forestSearchInput"
+        aria-label="Search every album or song by artist, title, label, or genre"
+        placeholder="Search by artist, album, song, label, or genre…">
+    </form>
+  </div>
+</div>
+
+<!-- EXPLORE (U21): just a search over the whole catalog — no wood, no seeds, no
+     threads (those live on Choices and read clearer there). The search box is
+     #forestSearchInput in the shared remember head above; runExploreSearch paints
+     its results here. The #forest id / mode "forest" stay so the pill + wiring are
+     untouched. -->
+<section id="forest" class="view hidden">
+  <h2 class="sr-only">Explore the catalog</h2>
+  <!-- F33: the exact-day searcher. Pick any calendar day (a birthday) to see the
+       records released then, ANY year — the on-this-day mechanic pointed at a date
+       you choose. Uses the cached pool (no live Spotify/Apple query); each record
+       resolves its links lazily only when opened. -->
+  <!-- Hidden until you arrive via Today's "By date → a specific day" (owner 2026-07-26):
+       it read as a stray dropdown parked under the search. gotoSpecificDay() reveals it. -->
+  <div class="forest-day-row hidden" id="forestDayRow">
+    <span class="fdr-label">Records released on a specific day, any year:</span>
+    <!-- Owner 2026-07-26: plain month/day fields you type in — the native date picker's
+         calendar was clumsy and irrelevant (the year is ignored; it's a month+day). The
+         fields sit on their own row under the label so the long lead-in can't crowd them. -->
+    <div class="fdr-fields">
+      <input type="number" id="forestDayMonth" class="fdr-num" inputmode="numeric" min="1" max="12"
+        placeholder="MM" aria-label="Month (1–12)">
+      <span class="fdr-sep" aria-hidden="true">/</span>
+      <input type="number" id="forestDayDay" class="fdr-num" inputmode="numeric" min="1" max="31"
+        placeholder="DD" aria-label="Day (1–31)">
+      <button type="button" id="forestDayClear" class="linkish hidden">✕ clear</button>
+    </div>
+  </div>
+  <div id="forestBody"><!-- search results injected --></div>
+</section>
+
+<!-- BROWSE (T3): no longer a tab you navigate to — only ever the result of
+     following a thread out of the Forest (a label / genre / decade / artist
+     pull), returnable via the wander stack. Its old top-down controls are hidden
+     in CSS; the inputs stay in the DOM so the pull machinery can still drive them. -->
+<section id="browse" class="view hidden">
+  <h2 class="sr-only">Browse results</h2>
+  <div class="filters">
+    <input type="search" id="search" aria-label="Filter results by artist, title, or style" placeholder="Filter by artist, title, style…">
+    <select id="fieldFilter" title="Scope search to a specific field">
+      <option value="">All fields</option>
+      <option value="artist">Artist</option>
+      <option value="title">Album</option>
+      <option value="label">Label</option>
+      <option value="genres">Genre</option>
+    </select>
+    <select id="scope" title="Search this day only, or the whole catalog">
+      <option value="day">This day</option>
+      <option value="all">All dates</option>
+    </select>
+    <label id="onlyDayWrap" class="onlyday hidden" title="Restrict results to the selected date">
+      <input type="checkbox" id="onlyDay"> only this day
+    </label>
+    <select id="decadeFilter" title="Filter by decade">
+      <option value="">All decades</option>
+    </select>
+    <select id="sort" aria-label="Sort results">
+      <option value="year">Newest first</option>
+      <option value="year-asc">Oldest first</option>
+      <option value="artist">Artist A–Z</option>
+    </select>
+    <span id="count" class="count"></span>
+  </div>
+  <div id="genreChips" class="chips" title="Filter by genre — choose any number"></div>
+  <p class="filter-note">
+    Genres come straight from Discogs' own classification, not ours —
+    including combined categories like “Folk, World, &amp; Country”, which
+    Discogs treats as a single genre.
+  </p>
+  <div id="grid" class="grid"><!-- cards injected --></div>
+</section>
+
+<!-- REMEMBER (N3): one interleaved trail — the choices and noticings you authored,
+     newest first (free notes, record-anchored notes, and choices in one stream,
+     grouped by day). Read-time assembly of /api/journal + /api/choices. A sticky
+     "Take a note" pill at the foot opens the free composer (record-optional). -->
+<section id="journal" class="view hidden">
+  <h2 class="sr-only">Your field notebook</h2>
+  <!-- #58: the guest's Notebook is a real taste, but it lives only in this browser.
+       Say so plainly — the honest durability pay-moment. Shown for guests only
+       (body.guest); a quiet mirror, never a nag (VISION P4). -->
+  <p class="guest-notebook-note">This lives only in this browser — not synced or backed up.
+    <button type="button" class="linkish" data-guest-keep
+      title="Start your Notebook — sync it, back it up, and keep it for good">Keep it for good →</button></p>
+  <div id="trail" class="notebook-trail"><!-- interleaved dated entries injected --></div>
+  <div class="trail-foot">
+    <button type="button" id="trailPill" class="take-note-pill">✎ Write a note</button>
+  </div>
+  <!-- #48 (v2): the selection bar. Appears while long-press selection is active;
+       deletes the checked entries (notes + kept records) as one batch. -->
+  <div id="trailSelectBar" class="trail-select-bar hidden" role="toolbar"
+       aria-label="Delete selected notebook entries">
+    <span class="tsb-count"><b id="trailSelectCount">0</b> selected</span>
+    <div class="tsb-actions">
+      <button type="button" id="trailSelectCancel" class="tsb-cancel">Cancel</button>
+      <button type="button" id="trailSelectDelete" class="tsb-delete">Delete</button>
+    </div>
+  </div>
+</section>
+</main>
+
+<!-- (T3) The notes "Connections" wood (word-frequency / subject graph) was
+     retired for now — no aggregation/summarization. The Forest above is the new
+     place to wander, grown from albums you've explored rather than note terms.
+     Server-side journal.subject_graph() is left intact, cheap to revive. -->
+
+<!-- FB#97 (owner): "we should clean up the entire bottom section to maybe just be
+     privacy and terms and version #. the data stuff can live in the pancake menu."
+     The footer carried the sources line, the About-the-data door and two legal
+     links; on a phone that's four things competing under every record. It's the
+     legal minimum + the build now, and everything explanatory moved into the ☰
+     menu's About door below. -->
+<footer>
+  <span><a href="/privacy" class="pull-link" target="_blank" rel="noopener">Privacy</a>
+    · <a href="/terms" class="pull-link" target="_blank" rel="noopener">Terms</a></span>
+  <span class="build-tag" id="buildTag" title="App version"></span>
+</footer>
+
+<!-- ABOUT (FB#97, was U19's "About the data"): the ☰ menu's About door — why this
+     exists, then the honest account of where everything on screen comes from. Same
+     calm card shape as the welcome. Pull-only; it never opens itself. -->
+<div id="dataModal" class="modal onboard-modal hidden" role="dialog"
+     aria-modal="true" aria-label="About Music Forest">
+  <div class="onboard-card">
+    <button id="dataClose" type="button" class="modal-close onboard-close"
+      title="Close">✕</button>
+    <h3>About Music Forest</h3>
+    <div class="onboard-body about-data">
+      <!-- ══ THE OWNER'S PIECE — HIS WORDS, VERBATIM ══════════════════════════
+           Landed 2026-08-07, replacing the placeholder that held this slot (his
+           own welcome-screen copy). FB#97 asked for exactly this: "it could go to
+           a page that I type up and explain why I made music forest."
+           DO NOT EDIT FOR VOICE. This is the one place in the app that speaks as
+           a person rather than as the product, so BRAND.md's "UI speaks as the
+           product, never I" rule does NOT apply here — the first person is the
+           point. Don't tighten it, don't swap his words for house vocabulary,
+           don't let a copy pass smooth it out. Only he changes this.
+           ═════════════════════════════════════════════════════════════════════ -->
+      <h4 class="about-h">Why this exists</h4>
+      <p>I made Music&nbsp;Forest because I want my relationship with music to be
+        more active and exploratory without being tracked and algorithmically
+        recommended.</p>
+      <p>I want to feel like a kid digging around in the dirt, noticing what exists
+        and forming my own opinions of it without anyone telling me how to feel or
+        what to look for. The origins of this project started with notions of
+        mycelial networks, fairies, and forest metaphors that would help guide the
+        vision of this project.</p>
+      <p>A lot of that whimsy has since been dropped (like the little magical fairy
+        who would help you through the tutorial); however, the underpinnings of
+        those ecosystems remain in this project. Explore connections and walk around
+        in the forest of music, examining each object at a time, jotting down your
+        observations in your notebook.</p>
+      <p>Every day I open up Music&nbsp;Forest and discover artists I probably would
+        have never discovered. Sometimes I like them, sometimes I just listen to a
+        few songs and move on to the next album. My listening practice has slowed
+        down in a beautiful way.</p>
+      <p>There are no ranking systems, recommendations, curated lists, etc. Just
+        ears.</p>
+      <p>I like to use the notebook as a way to keep track of what I've listened to.
+        There is a lot of power in the notebook for me.</p>
+      <p>My relationship with listening has positively changed as a result of this
+        project and I hope it has a similar effect for you.</p>
+      <!-- HYPHEN, and not italic — owner's explicit call on review, 2026-08-08,
+           overriding both of my defaults. I had set an em dash to match the tour's
+           sign-off (onboarding.js `tourFeedbackChip`) and italicised it; he wants it
+           plainer. Leave it exactly as typed. The tour's sign-off still uses an em
+           dash; the two differ on purpose until he says otherwise. -->
+      <p class="about-signoff">- Clancy</p>
+
+      <!-- FB#97: this is where Today's retired "why this record? → how, exactly?"
+           door went. It was the most honest thing on that screen — exactly how the
+           day is drawn, and what is deliberately NOT weighted — so it moves rather
+           than disappears. (VISION: progressive disclosure; the honesty rule.) -->
+      <h4 class="about-h">How the day is put together</h4>
+      <p>Every album in the catalogue is tagged with its original release month and
+        day. Music&nbsp;Forest gathers every record whose release date lands on
+        today's month and day — any year — and shows them one at a time.</p>
+      <p>The order is a <b>genre-balanced deal</b>: records are grouped by a coarse
+        genre and the deck takes one genre per round, so the first records span
+        genres instead of leading with a run of the most common one. Within that,
+        placement is random. Genre is the <em>only</em> thing balanced — to keep the
+        day varied — and there's no weighting by popularity, era, label, or anything
+        about you; nothing about you is stored or read to build the day. Only one
+        canonical version of each album is counted, so reissues and duplicate
+        pressings can't crowd the day or show up twice.</p>
+      <p>Prefer a narrower day? <b>By&nbsp;genre</b> and <b>By&nbsp;year</b> show only
+        what you choose — and the filtered set still runs through the same balanced
+        deal, so "Jazz&nbsp;+&nbsp;Folk" interleaves rather than all-jazz-then-folk.</p>
+
+      <h4 class="about-h">Where the data comes from</h4>
+      <p><b>Discogs</b> — one of two catalog sources: releases, dates, labels
+        and editions, from its CC0 community data.</p>
+      <p><b>MusicBrainz</b> — the other catalog source, global and an equal peer
+        (nearly half the pickable pool comes from it), and where many albums'
+        tracklists, genres and cover art come from.</p>
+      <p><b>Deezer</b> — the availability check: an album only counts as
+        listenable once it's been confirmed streamable there.</p>
+      <p><b>Apple Music / iTunes &amp; the Cover Art Archive</b> — cover art,
+        plus exact Apple album links.</p>
+      <p><b>Spotify &amp; YouTube Music</b> — exact album links from each
+        service's own catalog lookup (Spotify's cached only briefly, per its
+        terms).</p>
+      <p><b>Bandcamp</b> — exact album links drawn straight from MusicBrainz's
+        url-relations, so a Bandcamp album is confirmed by construction — no
+        lookup needed.</p>
+      <p><b>Odesli</b> — fans a confirmed album out to exact links on further
+        services (TIDAL, Amazon Music, Pandora and more).</p>
+      <p class="muted">The house rule: a link or badge only appears when the
+        exact album was confirmed on that service. An album that hasn't been
+        checked yet is <i>unknown</i> — never "unavailable."</p>
+      <p class="muted">The catalog is read-only and offline-first: it lives on the
+        server, and the app itself works without a connection once loaded.</p>
+
+      <!-- The deep-dive door. It used to hang off the welcome card, but the owner
+           took it off the opener (2026-08-07) and FB#97 had already re-pointed the
+           ☰ "About" item at THIS modal — which left /architecture linked from
+           nowhere in the app. This is its honest home: someone reading about how
+           the day is put together is exactly who wants the longer version. Same
+           class as the old link so the two doors look identical; opens in a new
+           tab so your place on the records is kept (VISION: a door, not a
+           corridor). -->
+      <a class="onboard-howitworks" href="/architecture" target="_blank"
+        rel="noopener">How Music Forest works ↗</a>
+    </div>
+  </div>
+</div>
+
+<!-- FIX ARTWORK modal -->
+<div id="artModal" class="modal hidden">
+  <div class="modal-box">
+    <button id="artClose" class="modal-close" title="Close">✕</button>
+    <h3>Fix artwork</h3>
+    <p id="artFor" class="muted"></p>
+    <div class="art-search">
+      <input type="search" id="artTerm" aria-label="Search for artwork by artist and album" placeholder="Search term (artist + album)…">
+      <button id="artSearchBtn">Search</button>
+    </div>
+    <div id="artResults" class="art-results"></div>
+    <div class="art-url">
+      <input type="url" id="artUrl" aria-label="Paste an image URL for the artwork" placeholder="…or paste an image URL">
+      <button id="artUrlBtn">Use URL</button>
+    </div>
+    <p id="artStatus" class="muted"></p>
+  </div>
+</div>
+
+<!-- F26: the remember door — one search box with note-intent. Find the record;
+     it opens with the reflect window already up. The guest's taste of the
+     journal (buffered on-device, migrates at signup) and the signed-in
+     "write about any album" path — the same door for both. -->
+<div id="rememberModal" class="modal hidden" role="dialog" aria-modal="true"
+     aria-label="What’s an album you remember?">
+  <div class="modal-box">
+    <button id="rememberClose" class="modal-close" title="Close">✕</button>
+    <h3>What’s an album you remember?</h3>
+    <p class="muted remember-hint">Type an artist or an album. If it’s on file,
+      it opens ready to hold what you remember.</p>
+    <input type="search" id="rememberSearch" aria-label="Find an album by artist or title" placeholder="Artist or album…"
+      autocomplete="off">
+    <div id="rememberResults" class="rem-results" aria-live="polite"></div>
+  </div>
+</div>
+
+<!-- ADD NOTE modal. N1 Step 2 (the occasion prompt): one open question leads —
+     "What do you notice?" — pointing at nothing in particular, so it invites
+     reflection without steering (no "who?/where?" nudges). The long instructional
+     placeholder is retired; track/time are demoted below the writing. (The choose
+     flow uses its own prompt — "Why did you choose this? What do you notice?" — in
+     the reveal's inline composer, opened one-tap now that N1 1d/N2 retired the
+     "Reflect" stone.) The composer never auto-focuses (that popped the mobile
+     keyboard on open); the keyboard springs only when you tap in. -->
+<div id="noteModal" class="modal hidden">
+  <div class="modal-box">
+    <button id="noteClose" class="modal-close" title="Close">✕</button>
+    <h3 id="noteModalTitle">Add a note</h3>
+    <!-- #52: a <div> (not <p>) so the record line can carry a clickable cover thumb
+         (a block) alongside the linked title — both a door to Album details. -->
+    <div id="noteFor" class="muted"></div>
+    <!-- N3b: a free note is record-optional. When opened from "Take a note" this
+         attach control shows; tying something fills #noteFor and reveals track/time.
+         v8: you can tie to a record, an artist, a person on the credits, or a song. -->
+    <!-- FB#106a (owner): "when i tap 'write a note' on an album page, i am frustrated
+         that i can't select a track if i want to… this happens often — i will open the
+         album in my app, listen, and then when a song catches my ear the first 'note'
+         screen i see is when i open Music Forest back up." The composer arrived from an
+         album locked to album-level; the per-track ✎ was back on the details page,
+         behind a close-and-scroll. The album's own tracks ride here as pills instead,
+         one tap to re-point the note (and another to come back to the record). -->
+    <div id="noteTracks" class="note-tracks hidden">
+      <p class="nt-lead muted">Want to tag a specific song?</p>
+      <div id="noteTrackPills" class="nt-pills"></div>
+    </div>
+    <div id="noteAttach" class="note-attach hidden">
+      <button type="button" id="noteAttachOpen" class="linkish note-attach-open">＋ Tag a song, artist, etc.</button>
+      <div id="noteAttachSearch" class="note-attach-search hidden">
+        <input type="search" id="noteAttachInput" autocomplete="off"
+          aria-label="Find a record, artist, person, or song to tie this note to"
+          placeholder="A record, artist, person, or song…">
+        <div id="noteAttachResults" class="rem-results" aria-live="polite"></div>
+      </div>
+    </div>
+    <textarea id="noteBody" rows="5" aria-label="Your note"></textarea>
+    <!-- FB#43: the "What do you notice?" prompt, the placeholder, and the visible
+         "pin to a moment" track/time aside are retired (owner, 2026-07-13). track +
+         timestamp stay in the note schema, so these hidden inputs preserve an
+         existing note's values on edit; new notes just leave them empty. -->
+    <input type="hidden" id="noteTrack">
+    <input type="hidden" id="noteTime">
+    <!-- #48 (v2): a Delete lives here, shown only while editing an existing note
+         (openNoteModal toggles .hidden). It sits apart from Save on the left. -->
+    <div class="note-actions">
+      <button type="button" id="noteDelete" class="note-delete hidden">Delete note</button>
+      <button id="noteSave">Save note</button>
+    </div>
+    <p id="noteStatus" class="muted"></p>
+  </div>
+</div>
+
+<!-- YOUR NOTES door (N1 Step 1): the inward door — your own words for one album
+     (verbatim, edit/delete) + the composer. Split out of the story door so
+     "Album details" (below) holds the record's own words and this holds yours. -->
+<div id="yourNotesModal" class="modal hidden">
+  <div class="modal-box">
+    <button id="yourNotesClose" class="modal-close" title="Close">✕</button>
+    <div id="yourNotesHead"></div>
+    <div class="story-section">
+      <h4>Your notes</h4>
+      <div id="yourNotes"></div>
+    </div>
+    <div class="note-actions">
+      <button id="yourNotesAdd" class="ghost">✎ Add a note</button>
+    </div>
+  </div>
+</div>
+
+<!-- ALBUM DETAILS door (U3, N1 Step 1): the record's own story — threads to
+     pull, the room, other releases, the bio. Your notes live in their own door
+     above; this one is outward-only now. -->
+<div id="storyModal" class="modal hidden">
+  <div class="modal-box">
+    <button id="storyClose" class="modal-close" title="Close">✕</button>
+    <div id="storyHead"></div>
+    <!-- Request 1: Keep / Skip for the CURRENT Today record, shown only when
+         Album details is opened from the deck (renderStoryDeckActions). -->
+    <div id="storyDeckActions" class="story-deck-actions hidden"></div>
+    <!-- FB#40: a plain button to take a note on this record, on every album view
+         (the per-entity pencils tie a note to a track/person; this ties to the
+         album itself). Opens the same composer, tied to the record. -->
+    <button type="button" id="storyNoteBtn" class="story-note-btn">✎ Write a note</button>
+    <!-- FB#105 (owner): Share used to sit in the head, between the platform links
+         and the acts, which is part of what buried Keep. It's a secondary, outward
+         thing — it belongs after the acts, not ahead of them. Rendered here rather
+         than in #storyHead so the reading order is head → acts → share. -->
+    <div class="story-share-row">
+      <button type="button" id="storyShareBtn" class="story-share" data-share-album
+        aria-label="Share this record so someone can find it on Music Forest"><span
+        class="ss-i" aria-hidden="true">↗</span> Share</button>
+    </div>
+    <!-- FB#89 (owner): "I want to be able to see the notes I wrote about an album
+         when I open it up." Album details knew you'd KEPT a record (FB#87) but showed
+         nothing you'd written, so the one place your own words are most wanted was the
+         one place they were absent — reaching them meant leaving for the Notebook and
+         searching. This section is the inward-facing counterpart to Threads to pull,
+         which faces out; it sits ABOVE the threads for that reason. Hidden entirely
+         until you've written something, so a first meeting with a record is unchanged.
+         `data-notes-for` carries the album uid so the shared edit/delete delegate
+         knows which record to compose against. -->
+    <div id="storyNotesSec" class="story-section hidden" data-notes-for="">
+      <!-- Collapsed by default, carrying the count (owner 2026-08-06): "the motivation
+           here is to not eat up too much of the vertical space by default so that the
+           user can still see threads to pull, etc." A real <details> so the keyboard
+           and screen readers get the disclosure for free, and so the open/closed state
+           lives in the DOM rather than a class we'd have to keep in sync.
+           The summary is STICKY while the section is open — that's the answer to
+           "make sure it is easy to collapse regardless of how many notes/where you are
+           in the scrolling": one control, pinned to the top of the modal's scroll for
+           as long as any of the list is on screen, rather than a second collapse button
+           at the bottom that only helps if you reach the bottom. -->
+      <details id="storyNotesBox" class="story-notes">
+        <summary class="story-notes-sum">
+          <h4>Your notes</h4>
+          <span class="sn-count" id="storyNotesCount"></span>
+          <span class="sn-caret" aria-hidden="true">▸</span>
+        </summary>
+        <div id="storyNotes"></div>
+      </details>
+    </div>
+    <!-- FB#98 (owner): "remove the blurb under 'threads to pull' that starts with
+         'doors to wander'." The chips are self-evident — you tap one and it searches
+         — so the line was explaining the app to someone already using it. -->
+    <div class="story-section">
+      <h4>Threads to pull</h4>
+      <div id="storyThreads" class="nc-row"></div>
+    </div>
+    <!-- Feedback #23 (2026-07-07): the tracklist — album details should show the
+         tracks. Hidden until they arrive (an MB-only album with no Discogs id, or a
+         pre-ingest release, shows no empty scaffold). -->
+    <div id="storyTracksSec" class="story-section hidden">
+      <h4>Tracks</h4>
+      <div id="storyTracks" class="track-list"></div>
+    </div>
+    <!-- F27/F28: the room — release-level personnel, hidden until credits
+         arrive (a pre-ingest catalog shows no empty scaffold). The hint is
+         source-aware: sleeve quotes for a Discogs album, MusicBrainz's typed
+         vocabulary for an MB-only one — the honesty label app.js swaps in. -->
+    <div id="storyRoomSec" class="story-section hidden">
+      <h4>Everyone in the room</h4>
+      <p class="muted story-hint" id="storyRoomHint">The credits as the sleeve
+        lists them. A linked name is a door — follow anyone outward.</p>
+      <div id="storyRoom"></div>
+    </div>
+    <!-- F27-1b: other releases of this album — a collapsed lineage door (the
+         pressings, and the labels the album has worn across territories/years:
+         A7). Hidden when this pressing is the only one on file. -->
+    <div id="storyPressSec" class="story-section hidden">
+      <h4>Other releases of this album</h4>
+      <div id="storyPressings"></div>
+    </div>
+    <div class="story-section">
+      <h4>About the artist</h4>
+      <div id="storyBio"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ARTIST PANEL (A2): an artist's catalog by date + an optional short bio -->
+<div id="artistModal" class="modal hidden">
+  <div class="modal-box modal-box-wide">
+    <button id="artistClose" class="modal-close" title="Close">✕</button>
+    <div id="artistHead"></div>
+    <!-- N1 §4.4: the retrieval echo — your own words on this artist, surfaced only
+         inside the artist door you opened, verbatim, exact-match. Hidden when you
+         haven't written about them. -->
+    <div id="artistWordsSec" class="story-section hidden">
+      <h4 id="artistWordsHead">Your words</h4>
+      <div id="artistWords"></div>
+      <p class="muted echo-foot" id="artistWordsFoot"></p>
+    </div>
+    <div class="story-section">
+      <h4>About the artist</h4>
+      <div id="artistBio"></div>
+    </div>
+    <div class="story-section">
+      <h4>Catalog</h4>
+      <p class="muted story-hint">Albums we have on file, newest first. Open one
+        to wander its own threads.</p>
+      <div id="artistCatalog" class="grid"></div>
+    </div>
+  </div>
+</div>
+
+<!-- LABEL PANEL (T2): a label's catalogue as a bounded door, like the artist
+     panel — exact-match, newest first, opened on demand from any label thread. -->
+<div id="labelModal" class="modal hidden">
+  <div class="modal-box modal-box-wide">
+    <button id="labelClose" class="modal-close" title="Close">✕</button>
+    <div id="labelHead"></div>
+    <div class="story-section">
+      <h4>On this label</h4>
+      <p class="muted story-hint">Records on this label, newest first. Open one
+        to wander its own threads.</p>
+      <div id="labelCatalog" class="grid"></div>
+    </div>
+  </div>
+</div>
+
+<!-- PERSONNEL PANEL (F27): a person from the credits as a bounded door — every
+     record we have them credited on, newest first, the role quoted per record
+     (never aggregated into what someone "is"). Keyed on the stable Discogs
+     person id; mirrors the artist/label panels. -->
+<div id="personModal" class="modal hidden">
+  <div class="modal-box modal-box-wide">
+    <button id="personClose" class="modal-close" title="Close">✕</button>
+    <div id="personHead"></div>
+    <!-- N1 §4.4 (3a): the person-door echo — your own words that name this credited
+         person, surfaced only inside the door you opened. Fuzzy but catalog-anchored
+         (a full-name match, or a partial the album's own credits confirm), verbatim.
+         Hidden when you haven't written about them; your private people never show. -->
+    <div id="personWordsSec" class="story-section hidden">
+      <h4 id="personWordsHead">You've written this name</h4>
+      <div id="personWords"></div>
+      <p class="muted echo-foot" id="personWordsFoot"></p>
+    </div>
+    <div class="story-section">
+      <h4>Credited on</h4>
+      <p class="muted story-hint">Records where this person appears in the
+        credits, newest first — the role quoted as each sleeve credited it.
+        Open one to wander its own threads.</p>
+      <div id="personCatalog" class="grid"></div>
+    </div>
+  </div>
+</div>
+
+<!-- KEEP REVEAL (E2): the kept album opens as a door over the Today deck — open over
+     context, ✕/Esc back to the deck — instead of a panel below. Keeps the #pick
+     id/class so every #pick-scoped selector (decorateMarks, the why-box) is
+     unchanged. Sits a hair below the other doors (.modal z-index 50; this is 48 in
+     CSS) so a story/artist/label/note pulled *from* the reveal stacks on top. -->
+<div id="choiceRevealModal" class="modal hidden">
+  <div class="modal-box modal-box-choice">
+    <button id="choiceRevealClose" class="modal-close" title="Close (Esc)">✕</button>
+    <div id="pick" class="pick"><!-- kept album injected --></div>
+  </div>
+</div>
+
+
+<!-- SEND FEEDBACK modal: captures a note + the current state, stored locally -->
+<div id="feedbackModal" class="modal hidden">
+  <div class="modal-box">
+    <button id="feedbackClose" class="modal-close" title="Close">✕</button>
+    <h3>Send feedback</h3>
+    <p id="feedbackHelp" class="muted">The more detail the better.</p>
+    <textarea id="feedbackBody" rows="5" aria-label="Your feedback"></textarea>
+    <label class="fb-opt" title="Include a screenshot + a snapshot of the current view">
+      <input type="checkbox" id="feedbackShot"> Attach a snapshot of the current view
+    </label>
+    <div class="note-actions">
+      <button id="feedbackSave">Save feedback</button>
+      <!-- #8: hold to slip the panel + keyboard aside and see what's behind it. -->
+      <button type="button" id="feedbackPeek" class="ghost"
+        title="Hold to peek at the screen behind this window">👁 Hold to peek</button>
+    </div>
+    <p id="feedbackStatus" class="muted"></p>
+  </div>
+</div>
+
+<!-- WANDER MAP (T1): the whole session as a tree of doors you can walk back -->
+<div id="wanderMapModal" class="modal hidden">
+  <div class="modal-box">
+    <button id="wanderMapClose" class="modal-close" title="Close">✕</button>
+    <h3>Where you've wandered</h3>
+    <p class="muted">The doors you pulled this session. Tap any to go back.</p>
+    <div id="wanderMapBody" class="wander-map"></div>
+    <!-- Saved Trails (name a wander, re-walk it later) parked for now (owner
+         2026-07-04: "feels archaic from earlier revs"). The live session wander
+         below stays — it's the pull-back mechanic, not a saved feature. The
+         /api/trails endpoints remain; re-add this UI from git to revive. -->
+    <!-- T6: a session-long record of every door pulled — kept even after you
+         leave the active wander (a tab switch resets the return-stack, not this).
+         Pull-only: it sits here for you to reach for, never surfaced at you. -->
+    <div id="sessionHistorySection" class="session-history hidden">
+      <h4>Earlier this session</h4>
+      <p class="muted story-hint">Everywhere you've been this session. Tap to walk back.</p>
+      <div id="sessionHistoryList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Undo toast (D3). ACC1 C [4.1.3 Status Messages, AA]: role="status" (an implicit
+     polite live region) so "Note deleted / Undo", "Couldn't save your choice — retry"
+     etc. are announced to a screen reader. showToast() un-hides this BEFORE writing the
+     text, so the region is in the a11y tree when the message lands (a display:none
+     region can't announce). -->
+<div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+<!-- ===================================================================== -->
+<!-- H1.2 — hosted E2EE beta. Vetted crypto primitives loaded from a CDN with  -->
+<!-- NO BUILD STEP, pinned to exact versions. Subresource Integrity (SRI) MUST -->
+<!-- be added to the two CDN <script> tags below before any deploy: run         -->
+<!--   tools/compute_sri.sh                                                    -->
+<!-- which downloads the pinned files, computes their sha384 hashes, and        -->
+<!-- inserts integrity="…" crossorigin="anonymous" in place. The tags load     -->
+<!-- without integrity locally so the smoke test can run; SRI is the gate for   -->
+<!-- the H1.3 deploy. (Argon2id lib: libsodium-wrappers-sumo; CDN: jsDelivr.)  -->
+<!-- ===================================================================== -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.8/dist/umd/supabase.js" integrity="sha384-b4JKVkST7Jkb2qRVyZEamH2WA+trxThEkVN6z3JXWfUDFNZd14MnE/qRvt/zy2J5" crossorigin="anonymous"></script>
+<!-- libsodium (Argon2id) is split across two npm packages: the WASM core
+     (libsodium-sumo) sets window.libsodium, then the high-level wrapper
+     (libsodium-wrappers-sumo) reads it and sets window.sodium. Core MUST load
+     first. Both get SRI via tools/compute_sri.sh before deploy. -->
+<script src="https://cdn.jsdelivr.net/npm/libsodium-sumo@0.7.15/dist/modules-sumo/libsodium-sumo.js" integrity="sha384-kYotthKuvJt+n3lBEglaZ0p/sISW8Quni3QLWH1RLOVhB5is3z/zSXKbAc8o6NFz" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/libsodium-wrappers-sumo@0.7.15/dist/modules-sumo/libsodium-wrappers.js" integrity="sha384-yJ6IcndOlizL/8XUe1+ali2AzCeUM7D/7u0vsSnN8l7iILCYNDJfPYdf6M0aJVHz" crossorigin="anonymous"></script>
+
+<!-- App crypto/auth layer (same-origin; no SRI needed). Order matters:        -->
+<!-- primitives -> store -> the gate, which boots itself on DOMContentLoaded.  -->
+<script src="/static/crypto.js"></script>
+<script src="/static/sync.js"></script>
+<script src="/static/feedback-sync.js"></script>
+<script src="/static/journal-store.js"></script>
+<script src="/static/strings.js"></script>
+<script src="/static/app.js"></script>
+<script src="/static/label-panel.js"></script>
+<script src="/static/onboarding.js"></script>
+<script src="/static/whatsnew.js"></script>
+<script src="/static/guest-buffer.js"></script>
+<script src="/static/store-bridge.js"></script>
+<script src="/static/device-trust.js"></script>
+<script src="/static/journal-cache.js"></script>
+<script src="/static/auth-ui.js"></script>
+<script src="/static/migrate.js"></script>
+<!-- PWA (H1.3): register the app-shell service worker. Best-effort; external file
+     (not inline) so the strict CSP needs no script nonce. Loads last so it never
+     delays the crypto/auth boot. -->
+<script src="/static/sw-register.js"></script>
+</body>
+</html>

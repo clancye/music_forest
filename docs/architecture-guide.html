@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Music Forest &#8212; Architecture Guide</title>
+<style>
+  :root {
+    --ground:#14150e; --panel:#1c1e14; --panel-2:#23261a; --raise:#2b2e1f;
+    --line:#3a3d2c; --line-soft:#2c2f21;
+    --ink:#e9ead9; --ink-soft:#abb096; --ink-faint:#7f8468;
+    --accent:#9cc178; --accent-ink:#14150e;
+    --c-plain:#e2b45c; --c-cipher:#8aa2b3; --c-ident:#bb9cd4;
+    --c-catalog:#8fb96a; --c-door:#d68d4f;
+    --shadow:0 1px 0 rgba(0,0,0,.4), 0 8px 24px -14px rgba(0,0,0,.7);
+    --serif:"Iowan Old Style","Palatino Linotype","Book Antiqua",Palatino,Georgia,serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --ground:#e7e9dd; --panel:#f2f3ea; --panel-2:#fbfcf5; --raise:#ffffff;
+      --line:#ccd0bd; --line-soft:#dde0d1;
+      --ink:#25281c; --ink-soft:#585d47; --ink-faint:#868b70;
+      --accent:#4d7736; --accent-ink:#ffffff;
+      --c-plain:#a9761a; --c-cipher:#4f6b7c; --c-ident:#6f5296;
+      --c-catalog:#4f7a37; --c-door:#a85c26;
+      --shadow:0 1px 0 rgba(0,0,0,.03), 0 10px 26px -18px rgba(40,50,20,.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#14150e; --panel:#1c1e14; --panel-2:#23261a; --raise:#2b2e1f;
+    --line:#3a3d2c; --line-soft:#2c2f21;
+    --ink:#e9ead9; --ink-soft:#abb096; --ink-faint:#7f8468;
+    --accent:#9cc178; --accent-ink:#14150e;
+    --c-plain:#e2b45c; --c-cipher:#8aa2b3; --c-ident:#bb9cd4;
+    --c-catalog:#8fb96a; --c-door:#d68d4f;
+    --shadow:0 1px 0 rgba(0,0,0,.4), 0 8px 24px -14px rgba(0,0,0,.7);
+  }
+  :root[data-theme="light"] {
+    --ground:#e7e9dd; --panel:#f2f3ea; --panel-2:#fbfcf5; --raise:#ffffff;
+    --line:#ccd0bd; --line-soft:#dde0d1;
+    --ink:#25281c; --ink-soft:#585d47; --ink-faint:#868b70;
+    --accent:#4d7736; --accent-ink:#ffffff;
+    --c-plain:#a9761a; --c-cipher:#4f6b7c; --c-ident:#6f5296;
+    --c-catalog:#4f7a37; --c-door:#a85c26;
+    --shadow:0 1px 0 rgba(0,0,0,.03), 0 10px 26px -18px rgba(40,50,20,.5);
+  }
+
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--ground); color:var(--ink); font-family:var(--sans); line-height:1.6; -webkit-font-smoothing:antialiased; background-image:radial-gradient(120% 80% at 50% -10%, color-mix(in oklab, var(--accent) 6%, transparent), transparent 60%); }
+  .wrap { max-width:940px; margin:0 auto; padding:clamp(1.4rem,4vw,3.5rem) clamp(1rem,4vw,2rem) 5rem; }
+
+  .eyebrow { font-family:var(--mono); font-size:.72rem; letter-spacing:.22em; text-transform:uppercase; color:var(--ink-faint); margin:0 0 .9rem; display:flex; align-items:center; gap:.6rem; }
+  .eyebrow::before { content:""; width:1.4rem; height:1px; background:var(--accent); }
+  h1 { font-family:var(--serif); font-weight:600; font-size:clamp(2rem,5.5vw,3.1rem); line-height:1.04; letter-spacing:-.01em; margin:0 0 .7rem; text-wrap:balance; }
+  h1 .leaf { color:var(--accent); }
+  .lede { font-size:clamp(1.02rem,1.6vw,1.15rem); color:var(--ink-soft); max-width:64ch; margin:0; }
+  .lede b { color:var(--ink); font-weight:600; }
+  .toc { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:1.4rem; }
+  .toc a { font-family:var(--mono); font-size:.75rem; text-decoration:none; color:var(--ink-soft); border:1px solid var(--line); border-radius:999px; padding:.3rem .75rem; }
+  .toc a:hover { border-color:var(--accent); color:var(--ink); }
+
+  .rule { height:1px; background:linear-gradient(90deg,var(--line),transparent); border:0; margin:3rem 0 0; }
+  section { margin-top:3.4rem; scroll-margin-top:1rem; }
+  .sec-head { display:flex; align-items:baseline; gap:.8rem; margin-bottom:1.5rem; flex-wrap:wrap; }
+  .sec-num { font-family:var(--mono); font-size:.78rem; color:var(--accent); letter-spacing:.1em; padding-top:.25rem; white-space:nowrap; }
+  h2 { font-family:var(--serif); font-weight:600; font-size:clamp(1.5rem,3.2vw,2rem); margin:0; letter-spacing:-.01em; text-wrap:balance; }
+  .sec-sub { color:var(--ink-soft); margin:.3rem 0 0; max-width:66ch; }
+
+  /* ---------- plain words ---------- */
+  .plain-lead { font-size:clamp(1.05rem,1.8vw,1.25rem); color:var(--ink); max-width:60ch; margin:0; }
+  .plain-lead b { color:var(--accent); }
+  .plain-subhead { font-family:var(--serif); font-size:1.4rem; font-weight:600; margin:2.2rem 0 .15rem; }
+  .plain-sublead { color:var(--ink-soft); margin:0; max-width:60ch; }
+  .psteps { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:1.1rem; margin-top:1.6rem; }
+  .pcard { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:1.4rem 1.3rem; box-shadow:var(--shadow); }
+  .pnum { font-family:var(--mono); font-size:.72rem; letter-spacing:.12em; color:var(--accent); }
+  .picon { width:3rem; height:3rem; border-radius:50%; display:grid; place-items:center; background:color-mix(in oklab,var(--accent) 16%,var(--panel)); margin:.5rem 0 .9rem; }
+  .picon svg { width:1.55rem; height:1.55rem; stroke:var(--accent); fill:none; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+  .pcard h3 { font-family:var(--serif); font-size:1.22rem; font-weight:600; margin:0 0 .4rem; }
+  .pcard p { margin:0; color:var(--ink-soft); font-size:.98rem; line-height:1.55; }
+  .reassure { margin-top:1.3rem; border:1px solid color-mix(in oklab,var(--accent) 30%,var(--line)); border-radius:16px; background:color-mix(in oklab,var(--accent) 6%,var(--panel)); padding:1.2rem 1.4rem; display:grid; gap:.7rem; }
+  .reassure .ri { display:flex; gap:.7rem; align-items:baseline; font-size:1.02rem; color:var(--ink); }
+  .reassure .ck { color:var(--accent); flex:none; font-weight:800; }
+  .reassure .ri b { font-weight:600; }
+  .plain-close { margin-top:1.2rem; font-family:var(--serif); font-size:1.15rem; color:var(--ink); font-style:italic; }
+
+  /* ---------- Map 1: zones + wires ---------- */
+  .flow { display:flex; flex-direction:column; align-items:center; }
+  .zone { position:relative; width:100%; background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:1.05rem 1.15rem 1.15rem; box-shadow:var(--shadow); }
+  .zone-head { display:flex; align-items:center; gap:.55rem; margin-bottom:.35rem; flex-wrap:wrap; }
+  .zone-eyebrow { font-family:var(--mono); font-size:.66rem; letter-spacing:.15em; text-transform:uppercase; color:var(--ink-faint); }
+  .zone-title { font-family:var(--serif); font-size:1.14rem; font-weight:600; }
+  .zone-note { color:var(--ink-soft); font-size:.88rem; margin:0 0 .75rem; }
+  .zone.device { border-color:color-mix(in oklab,var(--c-plain) 45%,var(--line)); }
+  .zone.render { border-color:color-mix(in oklab,var(--accent) 35%,var(--line)); }
+  .zone.supa   { border-color:color-mix(in oklab,var(--c-cipher) 40%,var(--line)); }
+  .zone.ext    { border-color:color-mix(in oklab,var(--c-door) 45%,var(--line)); }
+  .zone .badge { margin-left:auto; }
+
+  .chips { display:flex; flex-wrap:wrap; gap:.5rem; }
+  .chip { display:inline-flex; align-items:center; gap:.5rem; background:var(--panel-2); border:1px solid var(--line-soft); border-radius:9px; padding:.42rem .62rem; font-size:.85rem; color:var(--ink); }
+  .chip .dot { width:.6rem; height:.6rem; border-radius:50%; flex:none; box-shadow:0 0 0 3px color-mix(in oklab,var(--_c) 20%,transparent); background:var(--_c); }
+  .chip code { font-family:var(--mono); font-size:.78rem; color:var(--ink-soft); }
+  .d-plain{--_c:var(--c-plain);} .d-cipher{--_c:var(--c-cipher);} .d-ident{--_c:var(--c-ident);} .d-catalog{--_c:var(--c-catalog);} .d-door{--_c:var(--c-door);}
+
+  /* code-in strip inside the Render zone (build-time deploy) */
+  .deploy-in { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; font-size:.82rem; color:var(--ink-soft); border:1px dashed color-mix(in oklab,var(--ink-faint) 55%,var(--line)); border-radius:9px; padding:.45rem .7rem; margin-bottom:.85rem; background:repeating-linear-gradient(45deg, color-mix(in oklab,var(--ink-faint) 6%,transparent) 0 6px, transparent 6px 12px); }
+  .deploy-in .gh { width:1rem; height:1rem; fill:var(--ink-soft); flex:none; }
+  .deploy-in b { color:var(--ink); font-weight:600; }
+  .deploy-in code { font-family:var(--mono); font-size:.76rem; color:var(--ink); }
+  .deploy-in .tagnote { font-family:var(--mono); font-size:.64rem; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-faint); margin-left:auto; }
+
+  /* the WIRE between zones &#8212; deliberately not a card: thin, double-arrowed */
+  .wire { display:flex; flex-direction:column; align-items:center; width:100%; padding:.15rem 0; }
+  .ah-up { width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-bottom:8px solid var(--line); }
+  .ah-dn { width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:8px solid var(--line); }
+  .wseg { width:2px; height:.5rem; background:var(--line); }
+  .wlabel { text-align:center; padding:.35rem .2rem; max-width:600px; }
+  .proto { display:inline-flex; align-items:center; gap:.4rem; font-family:var(--mono); font-size:.71rem; letter-spacing:.02em; color:var(--ink); background:color-mix(in oklab,var(--accent) 12%,var(--panel)); border:1px solid color-mix(in oklab,var(--accent) 32%,var(--line)); border-radius:6px; padding:.22rem .55rem; }
+  .wcap { display:block; font-size:.79rem; color:var(--ink-soft); margin-top:.4rem; line-height:1.5; }
+  .wcap .bi { color:var(--ink-faint); font-weight:700; }
+  .wcap b { color:var(--ink); font-weight:600; }
+  .wcap .seal { color:var(--c-cipher); font-weight:600; }
+  .wnote { display:block; font-size:.74rem; color:var(--ink-faint); margin-top:.3rem; }
+  .wnote b { color:var(--c-ident); }
+
+  .legend { margin-top:1.9rem; border:1px solid var(--line); border-radius:14px; background:var(--panel); padding:1.1rem 1.2rem; }
+  .legend h3 { font-family:var(--mono); font-size:.72rem; letter-spacing:.15em; text-transform:uppercase; color:var(--ink-faint); margin:0 0 .9rem; font-weight:600; }
+  .legend-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:.85rem 1.4rem; }
+  .leg { display:flex; gap:.6rem; }
+  .leg .dot { width:.7rem; height:.7rem; border-radius:50%; margin-top:.42rem; flex:none; background:var(--_c); box-shadow:0 0 0 3px color-mix(in oklab,var(--_c) 22%,transparent); }
+  .leg-t { font-weight:600; font-size:.9rem; }
+  .leg-d { color:var(--ink-soft); font-size:.84rem; }
+
+  .notes { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:1rem; margin-top:1.7rem; }
+  .note { border:1px solid var(--line); border-left:3px solid var(--_c,var(--accent)); border-radius:10px; background:var(--panel); padding:.9rem 1.05rem; }
+  .note .k { font-family:var(--mono); font-size:.66rem; letter-spacing:.11em; text-transform:uppercase; color:var(--_c,var(--accent)); }
+  .note p { margin:.35rem 0 0; font-size:.88rem; color:var(--ink-soft); }
+  .note p b { color:var(--ink); font-weight:600; }
+  .n-sealed{--_c:var(--c-cipher);} .n-ident{--_c:var(--c-ident);} .n-feedback{--_c:var(--c-plain);} .n-door{--_c:var(--c-door);}
+
+  /* ---------- codebase file map ---------- */
+  .repo { display:flex; align-items:center; gap:.7rem; flex-wrap:wrap; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:.85rem 1rem; box-shadow:var(--shadow); }
+  .repo .gh { width:1.4rem; height:1.4rem; flex:none; fill:var(--ink); }
+  .repo code { font-family:var(--mono); font-size:.9rem; color:var(--ink); }
+  .repo .muted { color:var(--ink-faint); font-size:.83rem; }
+  .filemap { margin-top:1.3rem; border:1px solid var(--line); border-radius:14px; background:var(--panel); overflow:hidden; }
+  .fm-row { display:grid; grid-template-columns:minmax(130px,190px) 1fr; gap:.3rem 1rem; padding:.6rem 1.05rem; border-top:1px solid var(--line-soft); font-size:.87rem; }
+  .fm-row:first-child { border-top:0; }
+  .fm-row code { font-family:var(--mono); font-size:.82rem; color:var(--accent); }
+  .fm-row .fd { color:var(--ink-soft); }
+  .fm-row.gitignore code { color:var(--ink-faint); }
+  .fm-row.gitignore .fd { color:var(--ink-faint); }
+
+  /* ---------- Map 2: flowchart ---------- */
+  .fc { display:flex; flex-direction:column; align-items:center; }
+  .fnode { width:100%; max-width:430px; border-radius:12px; padding:.85rem 1.05rem; box-shadow:var(--shadow); background:var(--panel); border:1px solid var(--line); text-align:center; }
+  .fnode .ft { font-weight:600; font-size:.98rem; }
+  .fnode .fd { color:var(--ink-soft); font-size:.82rem; margin-top:.2rem; line-height:1.5; }
+  .fnode.term { border-radius:999px; background:var(--panel-2); border-style:dashed; color:var(--ink-soft); max-width:320px; padding:.6rem 1.1rem; }
+  .fnode.screen { border-left:3px solid var(--accent); text-align:left; }
+  .fnode.screen .tag { font-family:var(--mono); font-size:.6rem; letter-spacing:.12em; text-transform:uppercase; color:var(--accent); }
+  .fnode.done { border-color:color-mix(in oklab,var(--accent) 55%,var(--line)); background:color-mix(in oklab,var(--accent) 10%,var(--panel)); }
+
+  /* consistent vertical connector */
+  .conn { display:flex; flex-direction:column; align-items:center; height:2.1rem; justify-content:center; position:relative; }
+  .conn .ln { width:2px; flex:1; background:var(--line); }
+  .conn .hd { width:0; height:0; border-left:5px solid transparent; border-right:5px solid transparent; border-top:7px solid var(--line); }
+  .elabel { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-family:var(--mono); font-size:.63rem; letter-spacing:.07em; text-transform:uppercase; color:var(--ink-faint); background:var(--ground); padding:.08rem .4rem; white-space:nowrap; }
+  .elabel.no { color:var(--c-door); }
+
+  /* tab switch &#8212; two peer screens you flip between (not a sequence) */
+  .tabconn { display:flex; flex-direction:column; align-items:center; gap:.28rem; padding:.55rem 0; }
+  .tabconn .tstem { width:2px; height:.6rem; background:var(--line); }
+  .tabconn .tlabel { font-family:var(--mono); font-size:.63rem; letter-spacing:.06em; text-transform:uppercase; color:var(--c-catalog); border:1px dashed color-mix(in oklab,var(--c-catalog) 45%,var(--line)); border-radius:999px; padding:.24rem .8rem; text-align:center; }
+
+  /* decision diamond + its side branch */
+  .drow { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; width:100%; }
+  .decision { grid-column:2; position:relative; width:150px; height:150px; display:grid; place-items:center; }
+  .decision .dia { position:absolute; left:50%; top:50%; width:106px; height:106px; transform:translate(-50%,-50%) rotate(45deg); border:2px solid var(--ink-soft); border-radius:9px; background:var(--panel); box-shadow:var(--shadow); }
+  .decision .dt { position:relative; font-weight:600; font-size:.85rem; text-align:center; max-width:118px; }
+  .ybranch { grid-column:3; justify-self:start; display:flex; align-items:center; gap:.4rem; min-width:0; }
+  .ybranch .blabel { flex:none; font-family:var(--mono); font-weight:600; font-size:.6rem; letter-spacing:.09em; text-transform:uppercase; }
+  .ybranch.yes .blabel { color:var(--c-catalog); }
+  .ybranch.no .blabel { color:var(--c-door); }
+  .ybranch .ystem { position:relative; flex:none; width:1.8rem; height:2px; background:var(--line); }
+  .ybranch .ystem::after { content:""; position:absolute; right:-1px; top:50%; transform:translateY(-50%); border-top:4px solid transparent; border-bottom:4px solid transparent; border-left:6px solid var(--line); }
+  .ybranch .bnode { flex:1; min-width:0; background:var(--panel); border:1px dashed var(--line); border-radius:10px; padding:.55rem .8rem; font-size:.84rem; color:var(--ink-soft); }
+  .ybranch .bnode b { color:var(--ink); font-weight:600; }
+
+  /* doors attached to a screen */
+  .doors { width:100%; max-width:430px; margin-top:.5rem; border:1px dashed color-mix(in oklab,var(--c-door) 45%,var(--line)); border-radius:11px; background:color-mix(in oklab,var(--c-door) 6%,var(--panel)); padding:.65rem .8rem; }
+  .doors .dh { font-family:var(--mono); font-size:.62rem; letter-spacing:.1em; text-transform:uppercase; color:var(--c-door); margin-bottom:.5rem; display:flex; align-items:center; gap:.4rem; }
+  .doors .dh::before { content:"\21C4"; font-size:.9rem; }
+  .doors .dl { display:flex; flex-wrap:wrap; gap:.4rem; }
+  .door { display:inline-flex; align-items:center; gap:.35rem; background:var(--panel-2); border:1px solid color-mix(in oklab,var(--c-door) 40%,var(--line)); border-radius:7px; padding:.28rem .55rem; font-size:.82rem; color:var(--ink); }
+  .door small { color:var(--c-door); font-family:var(--mono); font-size:.58rem; letter-spacing:.06em; text-transform:uppercase; }
+  .doors .ret { font-size:.75rem; color:var(--ink-faint); margin-top:.5rem; font-style:italic; }
+
+  .loopnote { display:flex; align-items:center; gap:.5rem; font-size:.82rem; color:var(--ink-faint); margin-top:.3rem; }
+  .loopnote::before { content:"\21BA"; font-size:1.1rem; color:var(--accent); }
+
+  .fc-legend { display:flex; flex-wrap:wrap; gap:.6rem 1.1rem; margin-top:1.9rem; padding:1rem 1.15rem; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
+  .fc-legend .li { display:flex; align-items:center; gap:.5rem; font-size:.82rem; color:var(--ink-soft); }
+  .glyph { width:1.15rem; height:1.15rem; flex:none; display:inline-block; }
+  .g-screen { border-radius:4px; border:1px solid var(--accent); border-left-width:3px; }
+  .g-step { border-radius:4px; border:1px solid var(--ink-soft); }
+  .g-dec { transform:rotate(45deg); width:.85rem; height:.85rem; border:2px solid var(--ink-soft); border-radius:3px; margin:.15rem; }
+  .g-term { border-radius:999px; border:1px dashed var(--ink-soft); }
+  .g-door { border-radius:4px; border:1px dashed var(--c-door); background:color-mix(in oklab,var(--c-door) 12%,transparent); }
+
+  footer { margin-top:3.6rem; padding-top:1.4rem; border-top:1px solid var(--line); color:var(--ink-faint); font-size:.82rem; display:flex; justify-content:space-between; flex-wrap:wrap; gap:.5rem; }
+  footer code { font-family:var(--mono); }
+  a { color:var(--accent); }
+
+  @media (max-width:640px) {
+    .chip,.door { font-size:.8rem; }
+    .fm-row { grid-template-columns:1fr; gap:.1rem; }
+    /* stack the decision branch on narrow screens with an elbow connector */
+    .drow { grid-template-columns:1fr; justify-items:center; }
+    .decision { grid-column:1; }
+    .ybranch { grid-column:1; justify-self:stretch; margin:.3rem 0 0 .4rem; position:relative; padding-left:1.4rem; align-items:center; }
+    .ybranch .ystem { display:none; }
+    .ybranch::before { content:""; position:absolute; left:.35rem; top:-.4rem; width:.95rem; height:1.2rem; border-left:2px solid var(--line); border-bottom:2px solid var(--line); border-bottom-left-radius:7px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Music Forest &middot; architecture guide</p>
+    <h1>The wires, the <span class="leaf">boundaries</span>, and the doors.</h1>
+    <p class="lede">One app, four ways in. <b>In plain words</b> is the whole privacy story for anyone. <b>Map&nbsp;1</b> follows your data outward &mdash; the protocol on every wire and the line your notebook never crosses in the clear. <b>The codebase</b> lists what&rsquo;s in the source. <b>Map&nbsp;2</b> is a flowchart of what a person actually does.</p>
+    <nav class="toc">
+      <a href="#plain">In plain words</a>
+      <a href="#map1">1 &middot; Data &amp; boundaries</a>
+      <a href="#code">2 &middot; The codebase</a>
+      <a href="#map2">3 &middot; User flowchart</a>
+    </nav>
+  </header>
+
+  <hr class="rule">
+
+  <!-- ============ PLAIN WORDS ============ -->
+  <section id="plain">
+    <div class="sec-head">
+      <span class="sec-num">Plain words</span>
+      <div>
+        <h2>What is Music Forest?</h2>
+        <p class="sec-sub">No tech knowledge needed &mdash; what the app is, and whether your information is safe.</p>
+      </div>
+    </div>
+
+    <p class="plain-lead"><i>Find music, write notes.</i> Every day, Music Forest brings you the records <b>released on this date</b> &mdash; any year &mdash; <b>one at a time</b>. You meet a record and <b>keep</b> the ones that stay with you, or <b>set the rest aside</b>. If you want to <b>write something down</b> about one, you can &mdash; whatever it is &mdash; in a private notebook that&rsquo;s yours alone. No feed, no algorithm, no ads.</p>
+
+    <h3 class="plain-subhead">Is my information safe?</h3>
+    <p class="plain-sublead">That private notebook is the part people ask about. Here&rsquo;s the whole story, in three steps.</p>
+
+    <div class="psteps">
+      <div class="pcard">
+        <div class="pnum">STEP 1</div>
+        <div class="picon"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+        <h3>You write. It locks.</h3>
+        <p>Jot down whatever you want about a record. Your own device locks it up right away, like a diary that snaps shut on its own.</p>
+      </div>
+      <div class="pcard">
+        <div class="pnum">STEP 2</div>
+        <div class="picon"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7c-2 0-3.8-.6-5.3-1.5"/><path d="M4 20 20 4"/></svg></div>
+        <h3>We keep it &mdash; but can&rsquo;t read it.</h3>
+        <p>We hold your locked notes safe so you never lose them. Only you have the key. Not us, not the company that stores it, not anyone.</p>
+      </div>
+      <div class="pcard">
+        <div class="pnum">STEP 3</div>
+        <div class="picon"><svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></svg></div>
+        <h3>You listen where you already do.</h3>
+        <p>When you want to play an album, it opens in Spotify, Apple Music, or wherever you listen. Music Forest just points you there &mdash; it never passes along anything about you.</p>
+      </div>
+    </div>
+
+    <div class="reassure">
+      <div class="ri"><span class="ck">&check;</span><span><b>No ads.</b> Ever. Nothing on this page is trying to sell you anything.</span></div>
+      <div class="ri"><span class="ck">&check;</span><span><b>No tracking.</b> We don&rsquo;t follow you around the web or build a profile of you.</span></div>
+      <div class="ri"><span class="ck">&check;</span><span><b>Only your email.</b> The single personal detail we keep &mdash; just so you can sign in. Nothing else.</span></div>
+      <div class="ri"><span class="ck">&check;</span><span><b>Nothing to sell.</b> We never sell your information &mdash; we can&rsquo;t even read the private part.</span></div>
+      <div class="ri"><span class="ck">&check;</span><span><b>Leave anytime.</b> Change your mind and delete everything in one step. It&rsquo;s truly gone.</span></div>
+    </div>
+
+    <p class="plain-close">That&rsquo;s the whole deal. Come for the music; your business stays your business.</p>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ MAP 1 ============ -->
+  <section id="map1">
+    <div class="sec-head">
+      <span class="sec-num">Map 1</span>
+      <div>
+        <h2>Data flow, protocols &amp; trust boundaries</h2>
+        <p class="sec-sub">Four places your data can be, top (closest to you) to bottom (farthest out). Between each pair is the <b>wire</b> that joins them &mdash; a two-way arrow with the protocol it speaks and what rides it in each direction.</p>
+      </div>
+    </div>
+
+    <div class="flow">
+
+      <!-- device -->
+      <div class="zone device">
+        <div class="zone-head">
+          <span class="zone-eyebrow">Zone 1 &middot; yours alone</span>
+          <span class="zone-title">Your device &middot; browser / installed PWA</span>
+          <span class="chip d-plain badge"><span class="dot"></span>plaintext lives only here</span>
+        </div>
+        <p class="zone-note">The one place your words exist in the clear. Encryption happens <b>here</b> with <code>libsodium</code> &mdash; Argon2id stretches your passphrase into a key that wraps the data key; the passphrase and keys stay in memory and are wiped on reload.</p>
+        <div class="chips">
+          <span class="chip d-plain"><span class="dot"></span>Decrypted notebook &mdash; your notes &amp; what you keep</span>
+          <span class="chip d-plain"><span class="dot"></span>Encryption key &amp; passphrase <code>in memory</code></span>
+          <span class="chip d-plain"><span class="dot"></span>Guest buffer + prefs <code>localStorage</code></span>
+          <span class="chip d-plain"><span class="dot"></span>Biometric unlock <code>WebAuthn, device-local</code></span>
+        </div>
+      </div>
+
+      <!-- wire: device <-> render -->
+      <div class="wire">
+        <div class="ah-up"></div><div class="wseg"></div>
+        <div class="wlabel">
+          <span class="proto">HTTPS / TLS &middot; REST + JSON &middot; Bearer&nbsp;JWT</span>
+          <span class="wcap"><span class="bi">&#8645; both ways.</span> <b>Down:</b> your requests &amp; <span class="seal">sealed writes</span>. <b>Up:</b> records, art, and your <span class="seal">sealed rows</span> back.</span>
+          <span class="wnote">Signing in uses a <b>separate direct wire</b> to Supabase Auth (HTTPS) &mdash; the only thing that carries your email.</span>
+        </div>
+        <div class="wseg"></div><div class="ah-dn"></div>
+      </div>
+
+      <!-- render -->
+      <div class="zone render">
+        <div class="deploy-in">
+          <svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          <span><b>Code in:</b> push to GitHub <code>main</code> &rarr; Render auto-deploys</span>
+          <span class="tagnote">build-time &middot; not your data</span>
+        </div>
+        <div class="zone-head">
+          <span class="zone-eyebrow">Zone 2 &middot; same origin</span>
+          <span class="zone-title">Render &middot; musicforest.lol</span>
+        </div>
+        <p class="zone-note">Flask + gunicorn. Serves the app, reads the public catalog for you, and <b>relays</b> your sealed rows onward. It never holds the key, so it can&rsquo;t read your notebook.</p>
+        <div class="chips">
+          <span class="chip d-catalog"><span class="dot"></span>PWA shell &amp; service worker</span>
+          <span class="chip d-catalog"><span class="dot"></span>Read-only catalog <code>albums.db &middot; pool.sqlite</code></span>
+          <span class="chip d-cipher"><span class="dot"></span>Sync relay <code>/api/sync/*</code> &mdash; passes ciphertext</span>
+          <span class="chip d-catalog"><span class="dot"></span>Availability + art resolver <code>cached</code></span>
+        </div>
+      </div>
+
+      <!-- wire: render <-> supabase -->
+      <div class="wire">
+        <div class="ah-up"></div><div class="wseg"></div>
+        <div class="wlabel">
+          <span class="proto">PostgreSQL wire &middot; TLS &middot; <code>psycopg</code> (pooled)</span>
+          <span class="wcap"><span class="bi">&#8645; both ways.</span> <b>Down:</b> store &amp; fetch. <b>Up:</b> <span class="seal">sealed rows + wrapped key</span> back. Encrypted in both directions.</span>
+        </div>
+        <div class="wseg"></div><div class="ah-dn"></div>
+      </div>
+
+      <!-- supabase -->
+      <div class="zone supa">
+        <div class="zone-head">
+          <span class="zone-eyebrow">Zone 3 &middot; the vault</span>
+          <span class="zone-title">Supabase &middot; Postgres + Auth</span>
+        </div>
+        <p class="zone-note">Durable storage with daily backups. Holds sealed rows, opaque keys, and your login &mdash; never anything readable from your notebook.</p>
+        <div class="chips">
+          <span class="chip d-cipher"><span class="dot"></span><code>journal_rows</code> &mdash; ciphertext</span>
+          <span class="chip d-cipher"><span class="dot"></span><code>user_keys</code> &mdash; wrapped key, opaque</span>
+          <span class="chip d-ident"><span class="dot"></span><code>auth.users</code> &mdash; email &amp; login</span>
+          <span class="chip d-ident"><span class="dot"></span><code>invited_emails &middot; access_requests</code></span>
+          <span class="chip d-plain"><span class="dot"></span><code>feedback</code> &mdash; team-readable, by design</span>
+        </div>
+      </div>
+
+      <!-- wire: render <-> external -->
+      <div class="wire">
+        <div class="ah-up"></div><div class="wseg"></div>
+        <div class="wlabel">
+          <span class="proto">HTTPS &middot; third-party REST &middot; server-side, cached</span>
+          <span class="wcap"><span class="bi">Render always starts it.</span> <b>Down:</b> a lookup by <b>album title only</b>. <b>Up:</b> availability, artwork, listen links. Nothing about you goes out.</span>
+        </div>
+        <div class="wseg"></div><div class="ah-dn"></div>
+      </div>
+
+      <!-- external -->
+      <div class="zone ext">
+        <div class="zone-head">
+          <span class="zone-eyebrow">Zone 4 &middot; the doors</span>
+          <span class="zone-title">External services</span>
+        </div>
+        <p class="zone-note">Spotify is the one keyed API (OAuth client token); the rest are keyless and best-effort. When <i>you</i> tap a listen link, your browser goes there directly &mdash; and still sends nothing that says it&rsquo;s you.</p>
+        <div class="chips">
+          <span class="chip d-door"><span class="dot"></span>Deezer</span>
+          <span class="chip d-door"><span class="dot"></span>Apple Music / iTunes</span>
+          <span class="chip d-door"><span class="dot"></span>Spotify</span>
+          <span class="chip d-door"><span class="dot"></span>YouTube Music</span>
+          <span class="chip d-door"><span class="dot"></span>Odesli</span>
+          <span class="chip d-door"><span class="dot"></span>MusicBrainz</span>
+          <span class="chip d-door"><span class="dot"></span>Cover Art Archive</span>
+          <span class="chip d-door"><span class="dot"></span>Discogs</span>
+          <span class="chip d-door"><span class="dot"></span>Bandcamp</span>
+        </div>
+      </div>
+
+    </div><!-- /flow -->
+
+    <div class="legend">
+      <h3>What each colour means &mdash; the kind of thing that&rsquo;s crossing</h3>
+      <div class="legend-grid">
+        <div class="leg d-plain"><span class="dot"></span><div><div class="leg-t">Your words, in the clear</div><div class="leg-d">Plaintext notebook + the key. On your device only.</div></div></div>
+        <div class="leg d-cipher"><span class="dot"></span><div><div class="leg-t">Sealed</div><div class="leg-d">Ciphertext &amp; wrapped keys. Moved &amp; stored, never read.</div></div></div>
+        <div class="leg d-ident"><span class="dot"></span><div><div class="leg-t">Your identity</div><div class="leg-d">Email &amp; login &mdash; the minimum to let you back in.</div></div></div>
+        <div class="leg d-catalog"><span class="dot"></span><div><div class="leg-t">Public catalog &amp; links</div><div class="leg-d">Records, dates, availability. Nothing about you.</div></div></div>
+        <div class="leg d-door"><span class="dot"></span><div><div class="leg-t">Outward door</div><div class="leg-d">A pull to another service. You leave; nothing follows.</div></div></div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <div class="note n-sealed"><span class="k">Sealed for good</span><p>Your notebook &mdash; <b>your notes and what you keep</b> &mdash; is encrypted in your browser. The server, the database, and the people who run Music Forest <b>cannot read it</b> &mdash; and no one can reset your password for you.</p></div>
+      <div class="note n-ident"><span class="k">What is visible</span><p>Your <b>email</b> is visible &mdash; it&rsquo;s how you sign in and how an invite reaches you. But nothing about <i>what you write</i> is ever tied to it in the clear.</p></div>
+      <div class="note n-feedback"><span class="k">The one open channel</span><p><b>Feedback</b> you send is readable by the Music Forest team, on purpose, so it can be acted on. It&rsquo;s the only thing you author that isn&rsquo;t sealed.</p></div>
+      <div class="note n-door"><span class="k">No push, ever</span><p>Availability lookups carry <b>album titles, not you</b>. No profile, no tracking beacon, no &ldquo;resurfacing.&rdquo; Connections are pull-only and stay on your machine.</p></div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ CODEBASE ============ -->
+  <section id="code">
+    <div class="sec-head">
+      <span class="sec-num">Part 2</span>
+      <div>
+        <h2>What&rsquo;s in the code</h2>
+        <p class="sec-sub">The repo behind it. <i>How</i> it reaches Render is drawn into Map&nbsp;1 above (the dashed &ldquo;code in&rdquo; wire); the catalog databases are too big for git and rsync in on their own.</p>
+      </div>
+    </div>
+
+    <div class="repo">
+      <svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      <code>Private GitHub repository</code>
+      <span class="muted">Flask + SQLite &middot; no-build static PWA &middot; single <code>main</code> branch</span>
+    </div>
+
+    <div class="filemap">
+      <div class="fm-row"><code>server.py</code><span class="fd">Flask app &mdash; JSON API, serves the PWA + cached art, <code>/api/sync/*</code>, security headers.</span></div>
+      <div class="fm-row"><code>db.py</code><span class="fd">All catalog SQL for <code>albums.db</code> &mdash; the one file to change for a different DB backend.</span></div>
+      <div class="fm-row"><code>pooldb.py</code><span class="fd">Reads the unified daily-pool: dedup, availability, confirmed platforms, the doors.</span></div>
+      <div class="fm-row"><code>journal.py</code><span class="fd">The local journal store; the hosted client mirrors it in <code>static/journal-store.js</code>.</span></div>
+      <div class="fm-row"><code>auth.py &middot; store.py</code><span class="fd">JWT verify + the SQLite-or-Postgres sync store (the Zone&nbsp;2&#8596;3 relay).</span></div>
+      <div class="fm-row"><code>static/</code><span class="fd">The PWA shell &mdash; <code>app.js</code>, <code>index.html</code>, <code>style.css</code>, <code>sw.js</code>, plus crypto + sync.</span></div>
+      <div class="fm-row"><code>tools/</code><span class="fd">Crawlers + pipeline: calendar warmer, prewarmers, MusicBrainz ingest, <code>rsync_pool.sh</code>.</span></div>
+      <div class="fm-row gitignore"><code>data/</code><span class="fd">Catalog + journal DBs (~5&nbsp;GB) &mdash; gitignored, never committed; rsync&rsquo;d in separately.</span></div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ MAP 2 &#8212; FLOWCHART ============ -->
+  <section id="map2">
+    <div class="sec-head">
+      <span class="sec-num">Map 2</span>
+      <div>
+        <h2>What a person can do</h2>
+        <p class="sec-sub">A flowchart from first arrival to keeping a notebook. Rectangles are screens or steps; diamonds are decisions the app makes; a <span style="color:var(--c-door);font-weight:600;">door</span> is a pull-only exit that keeps your place and returns at zero cost.</p>
+      </div>
+    </div>
+
+    <div class="fc">
+      <div class="fnode term">Open <b>musicforest.lol</b></div>
+      <div class="conn"><div class="ln"></div><div class="hd"></div></div>
+
+      <div class="drow">
+        <div class="decision"><div class="dia"></div><span class="dt">Signed in already?</span></div>
+        <div class="ybranch yes">
+          <span class="blabel">Yes</span>
+          <span class="ystem"></span>
+          <div class="bnode">Unlock with <b>password or Face&nbsp;ID</b> &rarr; straight to <b>Today</b>, signed in (bottom).</div>
+        </div>
+      </div>
+
+      <div class="conn"><span class="elabel no">no &middot; guest</span><div class="ln"></div><div class="hd"></div></div>
+
+      <div class="fnode screen">
+        <span class="tag">Screen you see</span>
+        <div class="ft">Today &mdash; the day&rsquo;s records, one at a time</div>
+        <div class="fd">Each released on this calendar day, any year. You meet one record at a time &mdash; nothing is a contest, and nothing is lost.</div>
+      </div>
+      <div class="doors">
+        <div class="dh">doors from here</div>
+        <div class="dl">
+          <span class="door">What is this?</span>
+          <span class="door">why this record?</span>
+          <span class="door">About the data</span>
+          <span class="door">&#8613; Set-aside pile</span>
+        </div>
+        <div class="ret">Each keeps your place &mdash; close it and you&rsquo;re back on Today.</div>
+      </div>
+
+      <div class="conn"><span class="elabel">meet a record</span><div class="ln"></div><div class="hd"></div></div>
+
+      <div class="fnode screen">
+        <span class="tag">Screen you see</span>
+        <div class="ft">A record to sit with &mdash; keep it, or set it aside</div>
+        <div class="fd">Listen, reflect, or wander into it. <b>Keep</b> it and it goes to your notebook; <b>set it aside</b> into a pile you can reopen. Writing a note is optional and saves on your device until you start a notebook.</div>
+      </div>
+      <div class="doors">
+        <div class="dh">doors from here</div>
+        <div class="dl">
+          <span class="door">&#9654; Listen on&hellip; <small>out</small></span>
+          <span class="door">Album details <small>story</small></span>
+          <span class="door">About the artist <small>story</small></span>
+          <span class="door">Write a note <small>saved on device</small></span>
+        </div>
+        <div class="ret">All optional, none pushed &mdash; and each returns you right here.</div>
+      </div>
+
+      <div class="conn"><span class="elabel">keep this</span><div class="ln"></div><div class="hd"></div></div>
+
+      <div class="drow">
+        <div class="decision"><div class="dia"></div><span class="dt">Have an invite?</span></div>
+        <div class="ybranch no">
+          <span class="blabel">No</span>
+          <span class="ystem"></span>
+          <div class="bnode">Request access &mdash; you&rsquo;re reviewed and invited by hand, later. Meanwhile, keep looking around.</div>
+        </div>
+      </div>
+
+      <div class="conn"><span class="elabel yes">yes &middot; first time</span><div class="ln"></div><div class="hd"></div></div>
+
+      <div class="fnode"><div class="ft">Email a sign-in link &rarr; open it</div><div class="fd">The link signs you in and creates your account.</div></div>
+      <div class="conn"><div class="ln"></div><div class="hd"></div></div>
+      <div class="fnode"><div class="ft">Set an encryption password</div><div class="fd">Only you ever know it. It can&rsquo;t be reset &mdash; it&rsquo;s what seals the notebook.</div></div>
+      <div class="conn"><div class="ln"></div><div class="hd"></div></div>
+      <div class="fnode"><div class="ft">Save your recovery code</div><div class="fd">The one way back in if the password is ever lost.</div></div>
+      <div class="conn"><div class="ln"></div><div class="hd"></div></div>
+
+      <div class="fnode done screen">
+        <span class="tag">Screen you see &middot; signed in &middot; tab 1</span>
+        <div class="ft">Today &mdash; the day&rsquo;s records</div>
+        <div class="fd">You still land here each day, same as before. The difference: everything you <b>keep</b>, and every note, is saved now. The &ldquo;already signed in&rdquo; branch up top also lands here.</div>
+      </div>
+      <div class="doors">
+        <div class="dh">doors from here</div>
+        <div class="dl">
+          <span class="door">Album story</span>
+          <span class="door">Artist</span>
+          <span class="door">&#10547; Trail</span>
+          <span class="door">Listen <small>out</small></span>
+        </div>
+      </div>
+
+      <div class="tabconn"><span class="tstem"></span><span class="tlabel">Today &middot; Notebook &middot; Explore &mdash; three tabs, switch anytime</span><span class="tstem"></span></div>
+
+      <div class="fnode done screen">
+        <span class="tag">Screen you see &middot; signed in &middot; tab 2</span>
+        <div class="ft">Notebook &mdash; your field notebook</div>
+        <div class="fd">Everything you&rsquo;ve kept, in one place &mdash; the records you kept and the <b>notes</b> you wrote. You can <b>write about any album</b> on file here, not just today&rsquo;s.</div>
+      </div>
+      <div class="doors">
+        <div class="dh">doors from here</div>
+        <div class="dl">
+          <span class="door">&#9998; Write about any album</span>
+          <span class="door">Album story</span>
+          <span class="door">Export notebook</span>
+          <span class="door">Delete account</span>
+        </div>
+      </div>
+
+      <div class="tabconn"><span class="tstem"></span><span class="tlabel">&hellip; and Explore, the third tab</span><span class="tstem"></span></div>
+
+      <div class="fnode done screen">
+        <span class="tag">Screen you see &middot; signed in &middot; tab 3</span>
+        <div class="ft">Explore &mdash; the whole catalog</div>
+        <div class="fd">Search any album, artist, or label &mdash; and write about anything you find, not only what today brought you. The forest grows from what you keep.</div>
+      </div>
+      <div class="doors">
+        <div class="dh">doors from here</div>
+        <div class="dl">
+          <span class="door">Search</span>
+          <span class="door">Album story</span>
+          <span class="door">About the artist</span>
+          <span class="door">&#9998; Write a note</span>
+        </div>
+      </div>
+
+      <div class="conn"><div class="ln"></div><div class="hd"></div></div>
+      <div class="loopnote">The day returns &mdash; new records to meet each day, one at a time.</div>
+    </div>
+
+    <div class="fc-legend">
+      <span class="li"><span class="glyph g-screen"></span>Screen you see</span>
+      <span class="li"><span class="glyph g-step"></span>A step in a flow</span>
+      <span class="li"><span class="glyph g-dec"></span>A decision the app makes</span>
+      <span class="li"><span class="glyph g-term"></span>Start / repeat</span>
+      <span class="li"><span class="glyph g-door"></span>Door &mdash; pull-only, returns you here</span>
+    </div>
+  </section>
+
+  <footer>
+    <span>Music Forest &mdash; <code>notice &middot; reflect &middot; connect</code>, one album at a time.</span>
+    <span>Architecture guide &middot; 2026-07-13</span>
+  </footer>
+</div>
+</body>
+</html>
