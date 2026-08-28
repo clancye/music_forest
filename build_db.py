@@ -389,6 +389,9 @@ def build_search_index(db_path, search_path):
     try:
         from tools import build_search_aux
         build_search_aux.build_persons_fts(sc, db_path)
+        # N4a: the MusicBrainz people arm (persons_mb_fts) rides the same cheap
+        # rebuild — ~97 K rows, so it stays same-vintage with persons_fts/albums_fts.
+        build_search_aux.build_persons_mb_fts(sc, db_path)
     except Exception as e:  # noqa: BLE001 - the album index is what must not fail
         print(f"Search index: persons_fts skipped ({e})")
     sc.close()

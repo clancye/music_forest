@@ -40,6 +40,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 import config
+import sqliteconn
 
 # "choice" was "pick" before v7. Legacy "pick" is still accepted so a migrated
 # client can tombstone its old pick-kind rows after re-keying them to "choice"
@@ -136,7 +137,7 @@ class SQLiteStore:
             c.execute("ALTER TABLE journal_rows ADD COLUMN created_at TEXT")
         except sqlite3.OperationalError:
             pass
-        return c
+        return sqliteconn.managed(c)
 
     def ping(self):
         """Cheap liveness probe for /healthz: prove the store file is reachable

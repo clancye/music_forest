@@ -20,6 +20,7 @@ from collections import Counter
 from datetime import datetime, timezone
 
 import config
+import sqliteconn
 from genres import split_genres as _split_genres
 
 # Bump if the export schema ever changes; import_data() checks it.
@@ -213,7 +214,7 @@ def _conn():
     c.executescript(SCHEMA)        # idempotent; CREATE TABLE IF NOT EXISTS only
     _migrate(c)                    # rebuild pre-v6 tables to the uid-keyed shape
     c.executescript(INDEXES)       # indexes last: every table is now the v6 shape
-    return c
+    return sqliteconn.managed(c)
 
 
 def _migrate(c):

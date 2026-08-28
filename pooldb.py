@@ -23,6 +23,7 @@ from datetime import date, datetime, timedelta, timezone
 import config
 import db
 import opsdb
+import sqliteconn
 from poolconn import LIVE, _conn  # noqa: F401 - shared leaf; _conn re-exported so pooldb._conn keeps working; LIVE is the live.sqlite schema prefix (BE2a)
 from poolshape import (  # noqa: F401 - re-exported so pooldb.<name> call sites keep working
     _door_platforms,
@@ -744,7 +745,7 @@ def _pool_search_conn():
                         timeout=30)
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA busy_timeout=30000")
-    return c
+    return sqliteconn.managed(c)
 
 
 # pool_fts has artist/title/genres only. `styles` and `label` are Discogs-shaped

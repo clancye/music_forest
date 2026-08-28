@@ -26,6 +26,7 @@ import sqlite3
 from pathlib import Path
 
 import config
+import sqliteconn
 
 
 def _live_enabled():
@@ -70,4 +71,4 @@ def _conn():
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA busy_timeout=30000")
     attach_live(c)
-    return c
+    return sqliteconn.managed(c)

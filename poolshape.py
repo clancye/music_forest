@@ -77,25 +77,24 @@ def _lean_row(row, rep_rid=None):
     }
 
 
-# The long-tail Listen platforms that ride in a door row's Odesli links_json (not a
+# The long-tail Listen platform(s) that ride in a door row's Odesli links_json (not a
 # dedicated column) — our canonical key -> the key Odesli uses in linksByPlatform.
-# Most match; Amazon's STREAMING link is Odesli's `amazonMusic` (we deliberately do
-# NOT surface `amazonStore`, the buy-the-MP3 link — that's a store, not a listen).
-# All are PERMANENT (Odesli-sourced, no TTL — same footing as the row's Deezer link,
-# unlike the direct-resolve Spotify link). Keys line up with _door_platforms' extras.
+# Only Bandcamp remains: Tidal / Amazon Music / Pandora were removed 2026-08-27 because
+# they came ONLY from the Odesli fan-out, whose keyless API was permanently retired
+# 2026-08-19 — with no way to refresh or confirm them, they can't honestly badge or
+# filter (see db.PLATFORM_ORDER). Bandcamp stays: it's sourced from the MB crosswalk
+# (build_mb_bandcamp), not Odesli, so it's still live. Re-add the three here if a
+# commercial Odesli key is ever wired in. Keys line up with _door_platforms' extras.
 _ODESLI_EXTRA_KEYS = {
-    "tidal": "tidal",
-    "amazon": "amazonMusic",
-    "pandora": "pandora",
     "bandcamp": "bandcamp",
 }
 
 
 def _odesli_extras(links):
-    """Canonical {platform: exact_url} for the long-tail platforms carried in a door
-    row's Odesli link map — Tidal / Amazon Music / Pandora / Bandcamp. `links` is the
-    parsed links_json dict OR the raw links_json string; the result is keyed by our
-    canonical names (see _ODESLI_EXTRA_KEYS), omitting any platform absent or not a
+    """Canonical {platform: exact_url} for the long-tail platform(s) carried in a door
+    row's Odesli link map — Bandcamp (Tidal/Amazon/Pandora removed 2026-08-27). `links`
+    is the parsed links_json dict OR the raw links_json string; the result is keyed by
+    our canonical names (see _ODESLI_EXTRA_KEYS), omitting any platform absent or not a
     non-empty string. A pure lookup — no network."""
     if not isinstance(links, dict):
         try:
@@ -125,8 +124,7 @@ def _merge_platforms(base, door):
     return db.confirmed_platforms(
         spotify_url=merged.get("spotify"), apple_url=merged.get("apple"),
         youtube_url=merged.get("youtube"), deezer_url=merged.get("deezer"),
-        tidal_url=merged.get("tidal"), amazon_url=merged.get("amazon"),
-        pandora_url=merged.get("pandora"), bandcamp_url=merged.get("bandcamp"))
+        bandcamp_url=merged.get("bandcamp"))
 
 
 def _platform_filter(albums, platforms):
@@ -147,15 +145,14 @@ def _door_platforms(*, apple=None, spotify=None, youtube=None, links=None):
     """The CONFIRMED platforms the door resolved (exact links only) — what the
     frontend merges onto the album's `platforms` map. Deezer is NOT here: it's an
     availability fact carried on the row, not resolved by the door. The long-tail
-    platforms (Tidal / Amazon Music / Pandora / Bandcamp) are mined from `links` —
-    the parsed Odesli links_json dict OR the raw string — via _odesli_extras, and are
-    permanent like the row's other Odesli links (apple/spotify/youtube are passed
-    explicitly because they come from dedicated columns / have fallback logic)."""
+    platform Bandcamp is mined from `links` — the parsed Odesli links_json dict OR the
+    raw string — via _odesli_extras (apple/spotify/youtube are passed explicitly because
+    they come from dedicated columns / have fallback logic). Tidal / Amazon / Pandora
+    were removed 2026-08-27 (Odesli-only, dead — see _ODESLI_EXTRA_KEYS)."""
     extras = _odesli_extras(links)
     return db.confirmed_platforms(
         apple_url=apple, spotify_url=spotify, youtube_url=youtube,
-        tidal_url=extras.get("tidal"), amazon_url=extras.get("amazon"),
-        pandora_url=extras.get("pandora"), bandcamp_url=extras.get("bandcamp"))
+        bandcamp_url=extras.get("bandcamp"))
 
 
 def _door_unresolved(uid, source, status):

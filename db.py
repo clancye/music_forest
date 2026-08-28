@@ -9,6 +9,7 @@ import sqlite3
 import urllib.parse
 
 import config
+import sqliteconn
 
 
 def _conn():
@@ -18,7 +19,7 @@ def _conn():
     c = sqlite3.connect(config.DB_PATH, timeout=30)
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA busy_timeout=30000")
-    return c
+    return sqliteconn.managed(c)
 
 
 def _listen_links(artist, title):
@@ -51,19 +52,23 @@ def _listen_links(artist, title):
 # right for a card (an un-crawled album is unknown, never "unavailable") but wrong
 # for a panel — a MISSING count is exactly the signal worth seeing. Apple sat at ~12
 # a day for weeks because nothing ever reported the zero.
-PLATFORM_ORDER = ("spotify", "apple", "youtube", "deezer",
-                  "tidal", "amazon", "pandora", "bandcamp")
+PLATFORM_ORDER = ("spotify", "apple", "youtube", "deezer", "bandcamp")
+# Tidal / Amazon Music / Pandora were dropped 2026-08-27: they only ever came from the
+# Odesli (song.link) fan-out, whose keyless API was permanently retired 2026-08-19
+# (401 PUBLIC_API_ACCESS_DEPRECATED). With no source to refresh or confirm them, they
+# can't honestly badge or filter, so they're removed from every surface — the picker,
+# the door badges, the filter, and this counting order. Re-add here (and in
+# reqparams._FILTER_PLATFORM_KEYS, poolshape._ODESLI_EXTRA_KEYS, static/app.js's
+# CONFIRMED_PLATFORMS/FILTERABLE_PLATFORMS) if an Odesli commercial key is ever wired in.
 
 
 def confirmed_platforms(*, deezer_url=None, apple_url=None, spotify_url=None,
-                        youtube_url=None, tidal_url=None, amazon_url=None,
-                        pandora_url=None, bandcamp_url=None):
+                        youtube_url=None, bandcamp_url=None):
     """An ordered {platform: exact_url} map of CONFIRMED-listenable platforms,
     omitting any that aren't known. Keys are the frontend's canonical order.
     NEVER pass a blind search link here — only exact, guaranteed-listenable URLs.
-    `tidal_url` / `amazon_url` / `pandora_url` / `bandcamp_url` come from the Odesli
-    fan-out (cached in door_links.links_json) — permanent, same footing as Deezer,
-    with no external API or TTL."""
+    `bandcamp_url` comes from the MB crosswalk (permanent, no TTL); spotify/apple/
+    youtube from the door. Tidal/Amazon/Pandora were removed (Odesli-only, dead)."""
     out = {}
     if spotify_url:
         out["spotify"] = spotify_url
@@ -73,12 +78,6 @@ def confirmed_platforms(*, deezer_url=None, apple_url=None, spotify_url=None,
         out["youtube"] = youtube_url
     if deezer_url:
         out["deezer"] = deezer_url
-    if tidal_url:
-        out["tidal"] = tidal_url
-    if amazon_url:
-        out["amazon"] = amazon_url
-    if pandora_url:
-        out["pandora"] = pandora_url
     if bandcamp_url:
         out["bandcamp"] = bandcamp_url
     return out
@@ -530,10 +529,11 @@ def mb_credits_for(release_mbids):
     """The room for an MB-only album (F28): the artist-targeted relations of
     its listed releases, unioned in list order, deduped on (artist_mbid, role)
     — first appearance wins, so the canonical (first-listed) release's credits
-    lead. Same row shape as credits_for ({'person_id','name','role'}), so the
-    UI renders one room either way: a crosswalked mbid (person_xref) carries
-    the Discogs person id and is a door; an un-crosswalked name is plain text
-    (the same contract as an unlinked sleeve credit). Roles are MB's typed
+    lead. Row shape is credits_for's ({'person_id','name','role'}) plus `mbid`
+    (the artist_mbid), so the UI renders one room either way AND can open the
+    MB-only person's own door (N4a): a crosswalked mbid (person_xref) carries a
+    Discogs person id, an un-crosswalked one carries only its mbid — both are
+    doors now; a nameless/idless credit stays plain text. Roles are MB's typed
     vocabulary — the caller labels the source honestly. [] when mb_credits is
     absent (a DB predating the F28 ingest) or nothing matches."""
     mbids = [m for m in (release_mbids or []) if m]
@@ -563,6 +563,7 @@ def mb_credits_for(release_mbids):
                 continue
             seen.add(key)
             out.append({"person_id": pids.get(r["artist_mbid"]),
+                        "mbid": r["artist_mbid"],
                         "name": r["name"], "role": r["role"] or ""})
     return out
 
@@ -613,6 +614,67 @@ def mb_albums_by_credit(person_id):
             roles.append(role)
     out = [(uid, ", ".join(roles)) for uid, roles in groups.items()]
     return out, len(out)
+
+
+def mb_albums_by_mbid(artist_mbid):
+    """The MB-ONLY person's door (N4a): every MB pool album this artist_mbid is
+    credited on, keyed DIRECTLY by the mbid (no Discogs crosswalk — this serves the
+    people who have none). Same shape/join as mb_albums_by_credit: ([(uid, roles)],
+    total), the caller resolves uids to pool rows. ([], 0) when the F28 tables are
+    absent or the mbid credits nothing."""
+    if not artist_mbid:
+        return [], 0
+    try:
+        with _conn() as c:
+            rows = c.execute(
+                "SELECT m.uid AS uid, c.role AS role "
+                "FROM mb_credits c "
+                "JOIN mb_release_map m ON m.release_mbid = c.release_mbid "
+                "WHERE c.artist_mbid = ? "
+                "ORDER BY m.uid, m.pos, c.seq", (artist_mbid,)).fetchall()
+    except sqlite3.OperationalError:
+        return [], 0
+    groups = {}
+    for r in rows:
+        roles = groups.setdefault(r["uid"], [])
+        role = (r["role"] or "").strip()
+        if role and role not in roles:
+            roles.append(role)
+    out = [(uid, ", ".join(roles)) for uid, roles in groups.items()]
+    return out, len(out)
+
+
+def person_name_mbid(artist_mbid):
+    """Display name for an MB-only person (N4a): the modal name-as-credited across
+    mb_credits for this artist_mbid (same rule as person_name's MB fallback). None
+    when we hold no MB credits for it."""
+    if not artist_mbid:
+        return None
+    try:
+        with _conn() as c:
+            r = c.execute(
+                "SELECT name FROM mb_credits WHERE artist_mbid = ? "
+                "GROUP BY name ORDER BY COUNT(*) DESC, name LIMIT 1",
+                (artist_mbid,)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return r["name"] if r else None
+
+
+def person_links_mbid(artist_mbid):
+    """Outward doors for an MB-only person (N4a): just the MusicBrainz artist page.
+    The Wikidata crosswalk (qid / wikipedia / wikidata) is Discogs-primary, and an
+    MB-only person has no row there, so those doors stay None — same dict shape as
+    person_links so the route can treat both the same."""
+    if not artist_mbid:
+        return None
+    return {
+        "qid": None,
+        "wikidata_url": None,
+        "mbid": artist_mbid,
+        "musicbrainz_url": f"https://musicbrainz.org/artist/{artist_mbid}",
+        "wikipedia_url": None,
+    }
 
 
 def pressings_for(release_id):
@@ -667,7 +729,7 @@ def _search_conn():
     c = sqlite3.connect(config.SEARCH_DB_PATH, timeout=30)
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA busy_timeout=30000")
-    return c
+    return sqliteconn.managed(c)
 
 
 # FB#57b: `styles` (finer Discogs sub-genres — "Art Rock", "IDM", "Thrash") is already
@@ -736,26 +798,62 @@ def search_albums(q, limit=500, month=None, day=None, field=None):
 
 
 def search_persons(q, limit=8):
-    """Full-text search the credited people (persons_fts in search.db), ranked by
-    relevance. Returns [{'person_id', 'name'}] — the id is the Discogs artist id
-    ('per:<person_id>' in the note namespace), the name the modal name-as-credited.
+    """Full-text search the credited people across BOTH arms — persons_fts (Discogs
+    person_id) and persons_mb_fts (N4a: MusicBrainz artist_mbid, matched on the modal
+    name AND MB's alternate spellings). Returns [{'uid','name','person_id','mbid'}],
+    where `uid` is the note-namespace target: 'per:<person_id>' for a Discogs (or
+    crosswalked MB) person, 'per:mbid:<uuid>' for an MB-only one.
 
-    Degrades to [] when persons_fts isn't built (the aux index is opt-in per
-    tools/build_search_aux.py — an un-built index is 'nothing on file', never an
-    error). Prefix-AND matching, same as album search: 'nigel godr' -> Nigel
-    Godrich."""
+    A crosswalked MB hit (person_id present) collapses onto its Discogs
+    'per:<person_id>' — deduped against the Discogs arm — so an MB spelling just finds
+    the same person and its existing browsable door. Discogs matches come first, then
+    fresh MB matches fill the remaining slots.
+
+    Degrades per-arm: a missing persons_fts OR persons_mb_fts is 'nothing on file',
+    never an error (the aux indexes ship on their own vintage). Prefix-AND matching,
+    same as album search: 'nigel godr' -> Nigel Godrich."""
     fq = _fts_query(q or "")
     if not fq:
         return []
+    lim = int(limit)
+    out, seen_pids = [], set()
     try:
         with _search_conn() as sc:
-            rows = sc.execute(
-                "SELECT rowid AS person_id, name FROM persons_fts "
-                "WHERE persons_fts MATCH ? ORDER BY rank LIMIT ?",
-                (fq, int(limit))).fetchall()
-    except sqlite3.Error:              # missing/absent/corrupt search.db -> [] (see search_albums)
+            try:
+                dg = sc.execute(
+                    "SELECT rowid AS person_id, name FROM persons_fts "
+                    "WHERE persons_fts MATCH ? ORDER BY rank LIMIT ?",
+                    (fq, lim)).fetchall()
+            except sqlite3.Error:      # persons_fts not built on this vintage
+                dg = []
+            for r in dg:
+                pid = r["person_id"]
+                if pid in seen_pids:
+                    continue
+                seen_pids.add(pid)
+                out.append({"uid": f"per:{pid}", "name": r["name"],
+                            "person_id": pid, "mbid": None})
+            try:
+                mb = sc.execute(
+                    "SELECT name, mbid, person_id FROM persons_mb_fts "
+                    "WHERE persons_mb_fts MATCH ? ORDER BY rank LIMIT ?",
+                    (fq, lim)).fetchall()
+            except sqlite3.Error:      # persons_mb_fts not built on this vintage (dark)
+                mb = []
+            for r in mb:
+                pid = r["person_id"]
+                if pid is not None:    # crosswalked -> same person as a Discogs per:<pid>
+                    if pid in seen_pids:
+                        continue
+                    seen_pids.add(pid)
+                    out.append({"uid": f"per:{pid}", "name": r["name"],
+                                "person_id": pid, "mbid": r["mbid"]})
+                else:                  # MB-only -> its own per:mbid: door
+                    out.append({"uid": f"per:mbid:{r['mbid']}", "name": r["name"],
+                                "person_id": None, "mbid": r["mbid"]})
+    except sqlite3.Error:              # missing/corrupt search.db -> [] (see search_albums)
         return []
-    return [{"person_id": r["person_id"], "name": r["name"]} for r in rows]
+    return out[:lim]
 
 
 # Above this many track matches, ORDER BY rank has to bm25-score a huge doclist to find

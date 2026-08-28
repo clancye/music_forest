@@ -22,6 +22,7 @@ from urllib.parse import quote
 
 import config
 import safefetch
+import sqliteconn
 
 WIKI_SUMMARY = "https://en.wikipedia.org/api/rest_v1/page/summary/"
 # Keep the blurb a thread to pull, not a wall of text (Principle 1).
@@ -118,7 +119,7 @@ def _conn():
                source     TEXT,
                status     TEXT,
                fetched_at TEXT)""")
-    return c
+    return sqliteconn.managed(c)
 
 
 def _cached(key):

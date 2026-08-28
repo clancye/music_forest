@@ -16,13 +16,14 @@ import sqlite3
 from pathlib import Path
 
 import config
+import sqliteconn
 
 
 def _conn():
     c = sqlite3.connect(f"file:{Path(config.CATALOG_DB_PATH).resolve()}?mode=ro",
                         uri=True)
     c.row_factory = sqlite3.Row
-    return c
+    return sqliteconn.managed(c)
 
 
 def uid_to_member_ref(uid):

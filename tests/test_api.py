@@ -80,6 +80,21 @@ def test_person_endpoint_validation(client):
     assert data["name"] == "Ghost"
 
 
+def test_person_endpoint_mbid_door(client):
+    # N4a: 'mbid:<uuid>' routes to the MB-only person door. The fixture DB has no
+    # mb_credits, so it's an honest empty door — but a valid 200 with the MB shape.
+    r = client.get("/api/person?id=mbid:some-unknown-mbid&name=Ana")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["id"] == "mbid:some-unknown-mbid"
+    assert data["count"] == 0 and data["albums"] == []
+    assert data["name"] == "Ana"                       # client name fallback
+    assert data["discogs_url"] is None                 # no Discogs entry
+    assert data["musicbrainz_url"].endswith("/artist/some-unknown-mbid")
+    # an empty mbid is still a 400.
+    assert client.get("/api/person?id=mbid:").status_code == 400
+
+
 def test_journal_note_roundtrip(client):
     # add a note...
     r = client.post("/api/journal/note", json={"release_id": 100, "body": "great"})

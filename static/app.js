@@ -5,7 +5,7 @@
 // service-worker cache name — because the worker can swap its cache to a new build
 // in the background while a resumed PWA keeps running old code, which made a stale
 // page wrongly report "up to date". BUMP THIS WITH sw.js VERSION on any shell change.
-window.__MF_BUILD = "v324";
+window.__MF_BUILD = "v326";
 
 // --- tiny helpers -----------------------------------------------------------
 const $ = (sel) => document.querySelector(sel);
@@ -390,9 +390,7 @@ function appDeepLink(key, url) {
   if (key === "deezer"
       && (m = url.match(/deezer\.com\/(?:[a-z]{2}\/)?(album|track|playlist)\/(\d+)/)))
     return `deezer://www.deezer.com/${m[1]}/${m[2]}`;
-  if (key === "tidal"
-      && (m = url.match(/tidal\.com\/(?:browse\/)?(album|track|playlist)\/(\d+)/)))
-    return `tidal://${m[1]}/${m[2]}`;
+  // (Tidal's app-scheme handler was removed 2026-08-27 with the platform itself.)
   // Plain youtube.com watch links: the main YouTube app's registered scheme.
   // music.youtube.com is handled by the Android intent below (YT Music has no
   // public scheme); on iOS its universal link does the handoff from Safari.
@@ -452,14 +450,15 @@ function listenAttrs(key, url) {
 // guessing (that's why the marks UI is retired). Deezer + the exact Apple link
 // are known when a card first renders; Spotify / YouTube Music are filled by the
 // lazy door (fillDoorOnOpen) when you open the album.
+// Tidal / Amazon Music / Pandora were removed 2026-08-27: they only ever came from the
+// Odesli (song.link) fan-out, whose keyless API was permanently retired 2026-08-19, so
+// they can no longer be refreshed or honestly confirmed. Mirrors db.PLATFORM_ORDER /
+// reqparams._FILTER_PLATFORM_KEYS / poolshape._ODESLI_EXTRA_KEYS on the server.
 const CONFIRMED_PLATFORMS = [
   ["spotify", "sp", "Spotify"],
   ["apple", "am", "Apple Music"],
   ["youtube", "yt", "YouTube Music"],
   ["deezer", "dz", "Deezer"],
-  ["tidal", "td", "TIDAL"],
-  ["amazon", "az", "Amazon Music"],
-  ["pandora", "pa", "Pandora"],
   ["bandcamp", "bc", "Bandcamp"],
 ];
 
@@ -527,8 +526,7 @@ function flashListenReflow() {
 // on-demand door + the bounded prewarm, F22), so its filter is fully meaningful for
 // the current day and "unknown" for distant days — same honesty as the others (dig
 // always full, filtered-empty points to dig). Qobuz stays out (no source yet).
-const FILTERABLE_PLATFORMS = ["spotify", "apple", "youtube", "deezer", "tidal",
-  "amazon", "pandora", "bandcamp"];
+const FILTERABLE_PLATFORMS = ["spotify", "apple", "youtube", "deezer", "bandcamp"];
 
 // The confirmable platforms currently selected — the exact filter set sent to the
 // server. Empty => the filter is inert and everything surfaces.
@@ -3364,8 +3362,12 @@ async function noteAttachSearch(q) {
     // artist — same human, two rows reads as the redundancy the feedback flagged. The
     // artist row (the act) wins; credits-only people (producers, players…) still show.
     if (seen.has((p.name || "").trim().toLowerCase())) continue;
-    items.push({ kind: "person", uid: "per:" + p.person_id, label: p.name,
-      ref: { kind: "person", name: p.name, person_id: p.person_id } });
+    // N4a: the server hands back a ready `uid` — 'per:<pid>' for a Discogs (or
+    // crosswalked) person, 'per:mbid:<uuid>' for an MB-only one. Fall back to the
+    // old mint only for a pre-N4a server.
+    items.push({ kind: "person", uid: p.uid || ("per:" + p.person_id), label: p.name,
+      ref: { kind: "person", name: p.name, person_id: p.person_id || null,
+             mbid: p.mbid || null } });
   }
   for (const t of ((tracksR.value && tracksR.value.tracks) || []).slice(0, 5)) {
     if (!t.album_uid || !t.pos) continue;
@@ -3441,10 +3443,13 @@ function noteItemFromAnchor(el) {
              album_artist: a.artist || "", album_title: a.title || "" } };
   }
   if (kind === "person") {
-    const pid = el.dataset.pid, name = el.dataset.name || "";
-    if (!pid) return null;
-    return { kind: "person", uid: "per:" + pid, label: name,
-      ref: { kind: "person", name, person_id: pid } };
+    const doorId = el.dataset.pid, name = el.dataset.name || "";
+    if (!doorId) return null;
+    // N4a: doorId is a Discogs person_id or 'mbid:<uuid>'; uid is 'per:'+doorId.
+    const isMb = String(doorId).indexOf("mbid:") === 0;
+    return { kind: "person", uid: "per:" + doorId, label: name,
+      ref: { kind: "person", name, person_id: isMb ? null : doorId,
+             mbid: isMb ? doorId.slice(5) : null } };
   }
   if (kind === "artist") {
     const name = el.dataset.name || "";
@@ -4615,12 +4620,16 @@ const ROOM_PREVIEW = 12;        // rooms are mostly 1–5 people; 40+ is rare
 function creditLine(cr) {
   const role = cr.role ? `<span class="credit-role">${esc(cr.role)}</span> — ` : "";
   // A linked credit is a door (→ that person's records) AND a note-anchor: its
-  // pencil / a right-click ties a note to the person (v8 per:<pid>). An unlinked
-  // name has no stable id, so it stays plain text — no door, no note (v1 scope).
-  if (cr.person_id) {
+  // pencil / a right-click ties a note to the person. `data-pid` carries the DOOR ID
+  // — a Discogs person_id, or (N4a) 'mbid:<uuid>' for an MB-only person the crosswalk
+  // doesn't reach. Either way the note uid is 'per:'+doorId. A credit with neither id
+  // has no stable identity, so it stays plain text — no door, no note.
+  const doorId = cr.person_id ? String(cr.person_id)
+    : (cr.mbid ? "mbid:" + cr.mbid : null);
+  if (doorId) {
     return `<div class="credit-line note-anchor" data-note-kind="person"
-      data-pid="${cr.person_id}" data-name="${esc(cr.name)}">${role}<button
-        class="credit-door" data-pid="${cr.person_id}" data-name="${esc(cr.name)}"
+      data-pid="${esc(doorId)}" data-name="${esc(cr.name)}">${role}<button
+        class="credit-door" data-pid="${esc(doorId)}" data-name="${esc(cr.name)}"
         title="Every record we have ${esc(cr.name)} credited on">${esc(cr.name)}</button>${
       notePen(cr.name)}</div>`;
   }
@@ -5334,16 +5343,30 @@ function personCard(a) {
   return `<div class="person-hit">${browseCard(a)}${role}</div>`;
 }
 
-async function openPersonPanel(pid, name, opts = {}) {
-  pid = parseInt(pid, 10);
-  if (!pid || pid < 1) return;
+async function openPersonPanel(rawId, name, opts = {}) {
+  // N4a: `rawId` is a Discogs integer person_id OR an 'mbid:<uuid>' door id for an
+  // MB-only person. Normalize to a string doorId (the /api/person?id= value and the
+  // nav/share key) plus a numeric `pid` (null for MB-only, used only to anchor the
+  // fuzzy name-echo to a credit).
+  const idStr = String(rawId == null ? "" : rawId).trim();
+  let doorId, pid = null;
+  if (idStr.indexOf("mbid:") === 0) {
+    if (!idStr.slice(5)) return;
+    doorId = idStr;                              // 'mbid:<uuid>'
+  } else {
+    pid = parseInt(idStr, 10);
+    if (!pid || pid < 1) return;
+    doorId = String(pid);                        // '<person_id>'
+  }
+  const uid = "per:" + doorId;
   name = (name || "").trim();
   if (!opts.noPush) {
-    return pushAndGo(name || `person #${pid}`, { t: "person", id: pid, name },
-      () => openPersonPanel(pid, name, { noPush: true }));
+    return pushAndGo(name || (pid ? `person #${pid}` : "artist"),
+      { t: "person", id: doorId, name },
+      () => openPersonPanel(doorId, name, { noPush: true }));
   }
   closeStoryModal(); closeArtistPanel(); AOTDLabelPanel.close();  // one door at a time
-  personPanelId = pid;
+  personPanelId = doorId;
   personPanelName = name;
   $("#personHead").innerHTML =
     `<h3>${esc(name || "…")}</h3>
@@ -5354,15 +5377,15 @@ async function openPersonPanel(pid, name, opts = {}) {
   $("#personModal").classList.remove("hidden");
   let data;
   try {
-    data = await (await fetch(`/api/person?id=${pid}&name=${
+    data = await (await fetch(`/api/person?id=${encodeURIComponent(doorId)}&name=${
       encodeURIComponent(name)}`)).json();
   } catch (e) {
-    if (personPanelId === pid) $("#personHead").innerHTML =
-      `<h3>${esc(name || `#${pid}`)}</h3>
+    if (personPanelId === doorId) $("#personHead").innerHTML =
+      `<h3>${esc(name || "this person")}</h3>
        <p class="muted">Couldn't load the credits.</p>`;
     return;
   }
-  if (personPanelId !== pid) return;             // a newer panel opened
+  if (personPanelId !== doorId) return;          // a newer panel opened
   const albums = data.albums || [];
   const total = data.count || 0;
   personPanelName = data.name || name;
@@ -5391,7 +5414,7 @@ async function openPersonPanel(pid, name, opts = {}) {
     ? albums.map(personCard).join("")
     : `<div class="empty">No credits on file for ${esc(personPanelName)}.</div>`;
   observeArt($("#personCatalog"), { eager: 24 });
-  fetchPersonWords(pid, personPanelName);   // N1 §4.4 (3a): your words on this person
+  fetchPersonWords(uid, pid, personPanelName);   // N1 §4.4 (3a): your words on this person
 }
 
 function closePersonPanel() {
@@ -5406,14 +5429,14 @@ function closePersonPanel() {
 // token) shows ONLY when the note's album credits this person (`creditedIds`) — so a
 // private name in a note about an unrelated record is never surfaced. Silent when
 // you haven't named them. Mirrors the artist echo (1c), one door over.
-async function fetchPersonWords(pid, name) {
+async function fetchPersonWords(uid, pid, name) {
   try {
     // Two pulls: notes that NAME this person (the fuzzy, catalog-anchored echo),
-    // and notes tied DIRECTLY to the person entity (v8: uid 'per:<pid>', a stable
-    // id — exact, no anchoring needed). The tied notes lead (most direct).
+    // and notes tied DIRECTLY to the person entity (v8: the uid 'per:<pid>' or
+    // 'per:mbid:<uuid>', a stable id — exact, no anchoring needed). Tied notes lead.
     const [data, tied] = await Promise.all([
       readJournal(`/api/journal/person?name=${encodeURIComponent(name)}`),
-      readJournal(`/api/journal/album/${encodeURIComponent("per:" + pid)}`),
+      readJournal(`/api/journal/album/${encodeURIComponent(uid)}`),
     ]);
     if (personPanelName !== name) return;                // panel moved on under us
     const tiedNotes = (tied.notes || []).map((n) => ({ ...n, _tied: true }));
@@ -5424,8 +5447,12 @@ async function fetchPersonWords(pid, name) {
     // panel survey is capped at the newest 500. A 'full' name match needs no anchor;
     // a private name on an unrelated record is never confirmed, so never surfaces.
     const okPartial = new Set();
-    await Promise.all(raw
-      .filter((n) => n.match_kind === "partial" && n.uid)
+    // The partial anchor needs a numeric person_id to compare against a credit. An
+    // MB-only person (pid null) has none, so we skip anchoring — only 'full' name
+    // matches + tied notes surface. (Guarding on `pid != null` also prevents a false
+    // `null === null` match against any un-crosswalked credit on the note's album.)
+    await Promise.all((pid == null ? [] : raw
+      .filter((n) => n.match_kind === "partial" && n.uid))
       .map(async (n) => {
         try {
           const cr = await (await fetch(

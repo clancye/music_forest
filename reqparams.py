@@ -37,8 +37,9 @@ def _md_or_today():
 # The confirmed platform keys the pool can filter on (matches db.confirmed_platforms).
 # Any other token in ?platforms= is ignored, so a stale client can't smuggle an
 # arbitrary key into the SQL seam.
-_FILTER_PLATFORM_KEYS = {"spotify", "apple", "youtube", "deezer", "tidal",
-                         "amazon", "pandora", "bandcamp"}
+_FILTER_PLATFORM_KEYS = {"spotify", "apple", "youtube", "deezer", "bandcamp"}
+# tidal/amazon/pandora removed 2026-08-27 (Odesli-only, dead) — a stale client that
+# still sends them just has those tokens ignored here (everything surfaces, honest).
 
 
 def _platforms_param(dig):

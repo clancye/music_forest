@@ -39,8 +39,7 @@ const keys = (list) => list.map((t) => t[0]);
 // entry, so the no-pref canonical-order check exercises the whole set).
 const all = {
   spotify: "https://sp", apple: "https://am", youtube: "https://yt",
-  deezer: "https://dz", tidal: "https://td", amazon: "https://az",
-  pandora: "https://pa", bandcamp: "https://bc",
+  deezer: "https://dz", bandcamp: "https://bc",
 };
 
 // 1) No pref → canonical CONFIRMED_PLATFORMS order among confirmed platforms.
@@ -64,9 +63,9 @@ const all = {
 // 3) With a pref set, platforms NOT in the set never show (matches the filter),
 //    even when the album is confirmed on them.
 {
-  const { primary, chips } = pickListenPlatforms(all, ["youtube", "tidal"]);
+  const { primary, chips } = pickListenPlatforms(all, ["youtube", "bandcamp"]);
   ok(primary[0] === "youtube", "primary is the top preferred platform");
-  ok(JSON.stringify(keys(chips)) === JSON.stringify(["tidal"]),
+  ok(JSON.stringify(keys(chips)) === JSON.stringify(["bandcamp"]),
      "only preferred platforms appear; spotify/apple/deezer excluded");
 }
 

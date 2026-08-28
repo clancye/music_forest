@@ -111,9 +111,9 @@ def _resolve_with(artist, title, *, itunes_kw, odesli_kw):
     if not hit:
         return {"status": "miss", "artwork_url": None, "itunes_url": None,
                 "links": {}}
-    links = cs.odesli_links(url, **odesli_kw) if url else {}
+    links, lerr = cs.odesli_links(url, **odesli_kw) if url else ({}, False)
     return {"status": "ok", "artwork_url": artwork, "itunes_url": url,
-            "links": links}
+            "links": None if lerr else links}
 
 
 def _default_resolver(artist, title):
@@ -145,25 +145,39 @@ def _resolve_from_apple(apple_url, artwork_url, *, odesli_kw):
     is the only upstream 403-blocked there; Odesli's egress is open and fast). The
     Apple link stays the known-exact one and artwork is the catalog's, so the
     status is always 'ok' (the album IS confirmed on Apple) even if Odesli is
-    rate-limited and returns no extra platforms. Same shape as _resolve_with."""
+    rate-limited and returns no extra platforms. Same shape as _resolve_with.
+
+    An Odesli REQUEST failure returns links=None ('fan-out not resolved') rather than
+    {} ('resolved, nothing to add'), so door_links caches the confirmed Apple link +
+    cover but leaves links_json NULL and the crawler re-tries the fan-out later. The
+    album stays honestly available either way — only the extra platforms wait."""
     cs = _coverage_study()
-    links = cs.odesli_links(apple_url, **odesli_kw) if apple_url else {}
+    links, lerr = cs.odesli_links(apple_url, **odesli_kw) if apple_url else ({}, False)
     return {"status": "ok", "artwork_url": artwork_url, "itunes_url": apple_url,
-            "links": links}
+            "links": None if lerr else links}
 
 
 def _resolve_from_deezer(deezer_url, *, odesli_kw):
     """Door resolve for any AVAILABLE album using its exact Deezer album link as the
-    Odesli seed — the LIVE-on-Render path for MB-only and seedless-Discogs albums
-    (no Apple seed, and iTunes is 403-blocked on Render, but Odesli's egress is
-    open). Odesli fans out to Spotify / Apple / YouTube and returns a cover
-    thumbnail for art-less rows. An Odesli REQUEST failure returns 'err' (door does
-    NOT cache it -> retried), so a transient outage never freezes a Deezer-only
-    result; a successful-but-sparse response is 'ok' (the album IS on Deezer)."""
+    Odesli seed — the path for MB-only and seedless-Discogs albums (no Apple seed,
+    and iTunes is 403-blocked on Render). Odesli fans out to Spotify / Apple / YouTube
+    and returns a cover thumbnail for art-less rows.
+
+    An Odesli REQUEST failure returns a SPARSE 'ok' — NOT 'err' — with links=None
+    (unresolved) and no cover. The album's availability is a Deezer FACT independent
+    of Odesli, so the door still deserves an 'ok' anchor row; links=None marks the
+    fan-out incomplete (see _door_links_incomplete) so it retries if Odesli ever comes
+    back. This is the DECOUPLE (2026-08-26): Odesli retired keyless access on
+    2026-08-19 (permanent 401), which used to make this return 'err' -> door_links
+    cached NOTHING -> the independent Spotify/Apple/YouTube backfills all returned
+    'skip' (they only fill an existing 'ok' row, never create one), so today's whole
+    streaming window went empty. Returning a Deezer-confirmed 'ok' gives those
+    resolvers the anchor they need. Tidal/Pandora/Amazon still wait on the fan-out
+    (Odesli-only), but Deezer is already confirmed and the rest fill live."""
     cs = _coverage_study()
     links, art, err = cs.odesli_door(deezer_url, **odesli_kw)
     if err:
-        return {"status": "err"}
+        return {"status": "ok", "artwork_url": None, "itunes_url": None, "links": None}
     return {"status": "ok", "artwork_url": art, "itunes_url": None, "links": links}
 
 
@@ -216,6 +230,32 @@ def _apply_door_spotify(uid, prow, result):
     return result
 
 
+def _door_links_incomplete(row):
+    """True for a cached 'ok' row whose Odesli fan-out never landed — links_json is
+    NULL, not '{}'. NULL is written only when the fan-out REQUEST failed (see
+    _resolve_from_apple); '{}' means Odesli answered and had nothing to add, which is
+    a real verdict worth keeping forever. Only the crawler acts on this: it re-tries
+    the fan-out on the next lap instead of skipping the row as resolved, so an
+    upstream auth outage costs a retry rather than permanently sparse links."""
+    return row["status"] == "ok" and row["links_json"] is None
+
+
+def _odesli_auth_dead():
+    """True once coverage_study has latched song.link's keyless API as permanently
+    auth-blocked (401 PUBLIC_API_ACCESS_DEPRECATED, 2026-08-19). Reads the latch only
+    if the resolver module is ALREADY loaded — never force-imports it (this runs on
+    the door read/guard path, which must stay cheap and network-free). When dead, the
+    crawler must NOT re-resolve an incomplete row every lap: the fan-out can't land, so
+    re-resolving only re-writes a sparse row and (via INSERT OR REPLACE) would wipe the
+    youtube/apple links the independent backfills just filled — re-spending iTunes
+    quota endlessly. Treating the row as resolved lets those fills accumulate."""
+    cs = _CS[0]
+    if cs is None:
+        return False
+    fn = getattr(cs, "songlink_auth_dead", None)   # test fakes won't define it -> False
+    return bool(fn()) if callable(fn) else False
+
+
 def door_links(uid, *, resolver=None):
     """Lazily resolve + CACHE the door for ONE opened album (by uid), returning the
     cover + per-platform exact links to merge onto the album's story view.
@@ -253,7 +293,9 @@ def door_links(uid, *, resolver=None):
     if prow is None:
         return _door_unresolved(uid, None, "unknown")
     source = prow["source"]
-    if cached is not None and cached["status"] in ("ok", "miss"):
+    if (cached is not None and cached["status"] in ("ok", "miss")
+            and not (crawler_driven and _door_links_incomplete(cached)
+                     and not _odesli_auth_dead())):
         shaped = _door_shape(uid, cached, source)
         return shaped if crawler_driven else _apply_door_spotify(uid, prow, shaped)
 
@@ -276,6 +318,11 @@ def door_links(uid, *, resolver=None):
     if status == "err":
         return _door_unresolved(uid, source, "err")
 
+    # links is None when the Odesli fan-out FAILED (auth/network) as opposed to {}
+    # when it answered with nothing to add. The row is still cached — its Apple/cover
+    # /Deezer facts are real — but links_json stays NULL so _door_links_incomplete
+    # sends the crawler back for the fan-out instead of skipping it as resolved.
+    links_unresolved = res.get("links") is None
     links = res.get("links") or {}
     itunes_url = res.get("itunes_url")
     artwork = res.get("artwork_url")
@@ -290,7 +337,7 @@ def door_links(uid, *, resolver=None):
             "itunes_url, spotify_url, apple_music_url, youtube_url, links_json, "
             "fetched_at) VALUES (?,?,?,?,?,?,?,?,?)",
             (uid, status, artwork, itunes_url, spotify, apple, youtube,
-             json.dumps(links), fetched_at))
+             None if links_unresolved else json.dumps(links), fetched_at))
     shaped = {
         "uid": uid, "status": status, "source": source, "cover": artwork,
         "itunes_url": itunes_url, "apple_music_url": apple,

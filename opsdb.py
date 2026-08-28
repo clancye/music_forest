@@ -32,6 +32,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 import config
+import sqliteconn
 
 _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS spotify_burn ("
@@ -85,7 +86,7 @@ def _conn():
     # WAL: 2 gunicorn workers x 8 threads can all be opening doors at once, and a
     # counter must never be the thing that blocks one.
     c.execute("PRAGMA journal_mode=WAL")
-    return c
+    return sqliteconn.managed(c)
 
 
 def _today(now=None):

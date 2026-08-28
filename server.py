@@ -820,9 +820,11 @@ def _overlay_pool_dates(albums):
 @_LIMIT_CATALOG
 def api_person_search():
     """Search the credited people by name (v8 typed notes: tie a note to a
-    person/producer). Returns {persons: [{person_id, name}]} — each result maps to
-    a 'per:<person_id>' note target and the person door (/api/person?id=). Honest
-    degrade: [] when persons_fts isn't built (the aux index is opt-in)."""
+    person/producer). Returns {persons: [{uid, name, person_id, mbid}]} — `uid` is
+    the ready-made note target and door id: 'per:<person_id>' for a Discogs (or
+    crosswalked MB) person, 'per:mbid:<uuid>' for an MB-only one (N4a). Honest
+    degrade: [] when neither persons index is built (the aux indexes ship on their
+    own vintage)."""
     q = (request.args.get("q") or "").strip()
     if not q:
         return jsonify({"q": q, "persons": []})
@@ -906,6 +908,45 @@ def api_label():
                     "albums": albums, "discogs_url": discogs})
 
 
+def _person_mb_response(mbid):
+    """(N4a) The MB-ONLY person door — someone MusicBrainz credits but Discogs (and
+    so the Wikidata crosswalk) does not, reached by 'per:mbid:<uuid>'. Albums come
+    straight from mb_credits via the mbid (the pool resolves the uids); the only
+    outward door is the MusicBrainz artist page. Same response shape as the Discogs
+    door so the client renders it identically — just discogs_url None and merged_ids
+    1 (no Discogs entry to merge)."""
+    mbid = (mbid or "").strip()
+    if not mbid:
+        return jsonify({"error": "id (a MusicBrainz artist mbid) required"}), 400
+    # count is the true total from the credit data (albums.db); `shown` is what the
+    # pool can actually render — the same count/shown split as the Discogs door.
+    mb_rows, total = db.mb_albums_by_mbid(mbid)
+    albums = []
+    if mb_rows and config.POOL_ENABLED:
+        try:
+            albums = pooldb.albums_by_uids([u for u, _ in mb_rows])
+        except Exception:  # noqa: BLE001 - pool is optional; the door still names the person
+            albums = []
+        if albums:
+            roles = dict(mb_rows)
+            for a in albums:
+                a["credit_roles"] = roles.get(a["uid"], "")
+            albums = sorted(
+                albums,
+                key=lambda a: str(a.get("released") or a.get("year") or ""),
+                reverse=True)[:500]
+    name = db.person_name_mbid(mbid) or (request.args.get("name") or "").strip() \
+        or "Unknown artist"
+    links = db.person_links_mbid(mbid) or {}
+    return jsonify({"id": f"mbid:{mbid}", "name": name, "count": total,
+                    "shown": len(albums), "albums": albums,
+                    "discogs_url": None,
+                    "wikipedia_url": links.get("wikipedia_url"),
+                    "musicbrainz_url": links.get("musicbrainz_url"),
+                    "wikidata_url": links.get("wikidata_url"),
+                    "merged_ids": 1})
+
+
 @bp.route("/api/person")
 @_LIMIT_CATALOG
 def api_person():
@@ -916,8 +957,13 @@ def api_person():
     `albums` the newest-500 survey (the hub-door rule: a mastering engineer's
     thousands of credits stay a window, never a corridor). The display name is
     derived from our own rows (the most frequent name-as-credited); ?name= is
-    only the client's fallback for a person we hold no credits for."""
+    only the client's fallback for a person we hold no credits for.
+
+    N4a: `id` is normally a Discogs artist id, but 'mbid:<uuid>' routes to the
+    MB-only person door (a person the crosswalk doesn't reach)."""
     raw = (request.args.get("id") or "").strip()
+    if raw.startswith("mbid:"):
+        return _person_mb_response(raw[len("mbid:"):])
     if not raw.isdigit() or int(raw) <= 0:
         return jsonify({"error": "id (a Discogs artist id) required"}), 400
     pid = int(raw)
