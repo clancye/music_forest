@@ -5,7 +5,7 @@
 // service-worker cache name — because the worker can swap its cache to a new build
 // in the background while a resumed PWA keeps running old code, which made a stale
 // page wrongly report "up to date". BUMP THIS WITH sw.js VERSION on any shell change.
-window.__MF_BUILD = "v326";
+window.__MF_BUILD = "v337";
 
 // --- tiny helpers -----------------------------------------------------------
 const $ = (sel) => document.querySelector(sel);
@@ -595,23 +595,19 @@ function refreshSurfaces() {
 // --- A8 Phase 2: the opt-in genre filter for Today ---------------------------
 // Session-scoped (a transient "today I want jazz", not a durable device pref like
 // your platforms), applied CLIENT-SIDE: the day payload already carries each
-// record's coarse `bucket` (Phase 1), so filtering + the per-genre counts need no
-// round-trip. "unknown" (records with no genre on file, ~30%) is never a chip —
-// filtering to a genre honestly hides them (the honesty rule). Dig mode ignores the
-// filter, the escape hatch. The chosen set still runs through the balanced deal, so
-// "Jazz + Folk" interleaves rather than all-jazz-then-folk.
-const genreFilter = new Set();
-// FB#57b (Today): the finer typed filters — a term (lowercased) you add with Enter and
-// remove with its chip's ✕, matched against each record's genres + styles ("shoegaze",
-// "hard bop", "darkwave" — tags too fine to be a bucket). They join the bucket chips as
-// first-class filters and OR with them (like the buckets OR with each other), so a
-// record shows if it matches ANY selected filter. Dig still ignores everything.
-const genreTerms = new Set();
-// Buckets the reader has dismissed from the pill row this session (the ✕ on a bucket
-// chip). Session-scoped and reversible ("show all genres"); it declutters the generic
-// pills for someone who'd rather type. Dismissing a bucket that's actively filtering
-// also drops it from the filter, so a hidden pill never keeps filtering invisibly.
-const dismissedBuckets = new Set();
+// record's own tags, so filtering + the per-tag counts need no round-trip. A record
+// with no tags on file can't match a tick, so a tag filter honestly hides it (the
+// honesty rule) — the Genre screen says how many today carry none. Dig mode ignores
+// the filter, the escape hatch. The ticked set still runs through the balanced deal, so
+// "jazz + folk" interleaves rather than all-jazz-then-folk.
+// (Until v336 a second set here filtered by the 13 hidden genre buckets; nothing on
+// screen had set it since v332, and the buckets were retired 2026-10-04.)
+//
+// Owner 2026-09-24: the tags ticked on the Genre screen (#styleBrowse), held as merged
+// tag KEYS (tagKey — "post rock" and "post-rock" are one key, v332). An EXACT match on a
+// record's own tags, not a substring — so the count a row shows is exactly what ticking
+// it yields ("house" is house, not also every tech house and deep house). Dig ignores it.
+const genreTags = new Set();
 // F31 (Today): the era facet — decades ("1980s") the reader has selected. It's a
 // SECOND dimension that composes with the genres above: a record must match a chosen
 // genre AND a chosen era (each dimension OR within itself). Filters the day we already
@@ -621,22 +617,33 @@ const deckEras = new Set();
 // Owner 2026-07-26: the "By date" year span — a start/stop year that composes (AND) with
 // the decade chips, the precise complement to the decade shortcuts. null = that end unbounded.
 let deckYearFrom = null, deckYearTo = null;
-// The canonical chip order (matches pooldb._GENRE_BUCKETS); the chooser then shows
-// only the buckets actually present today, most-common first.
-const GENRE_BUCKET_ORDER = ["electronic", "rock", "hip hop", "pop", "jazz", "folk",
-  "funk / soul", "classical", "reggae", "blues", "latin", "world", "stage & screen"];
 
 function applyGenreFilter(list) {
   if (digMode) return list;                             // dig is ALWAYS unfiltered
-  if (!genreFilter.size && !genreTerms.size) return list;
+  if (!genreTags.size) return list;
   return list.filter((r) => {
-    if (genreFilter.size && genreFilter.has(r.bucket)) return true;
-    if (genreTerms.size) {
-      const hay = ((r.genres || "") + " " + (r.styles || "")).toLowerCase();
-      for (const t of genreTerms) if (hay.includes(t)) return true;
-    }
+    const keys = recordTagKeys(r);         // merged spellings (v332)
+    for (const k of genreTags) if (keys.has(k)) return true;
     return false;
   });
+}
+
+// A record's own tags — its genres (atomic-comma aware, via genresOf), its styles, and
+// its MusicBrainz community tags (`tags`: moods, scenes, places — B2, owner 2026-10-04)
+// — lowercased, as a Set. The one definition both the browse list's counts and the
+// exact-tag filter read, so they can't disagree. Cached per record object.
+const _recordTagCache = new WeakMap();
+function recordTags(r) {
+  let tags = _recordTagCache.get(r);
+  if (!tags) {
+    tags = new Set(genresOf(r).map((g) => g.toLowerCase()));
+    for (const s of `${r.styles || ""},${r.tags || ""}`.split(",")) {
+      const k = s.trim().toLowerCase();
+      if (k) tags.add(k);
+    }
+    _recordTagCache.set(r, tags);
+  }
+  return tags;
 }
 // F31: the full deck filter — genres AND era, composed. The two dimensions AND together
 // (a record must pass both); each is OR within itself. Dig ignores both. This is what
@@ -649,103 +656,11 @@ function applyDeckFilters(list) {
   if (deckYearTo != null) out = out.filter((r) => r.year && r.year <= deckYearTo);
   return out;
 }
-function titleCaseGenre(b) { return b.replace(/\b\w/g, (c) => c.toUpperCase()); }
-
-// Count today's records per bucket, from the full day we already hold — so the chips
-// carry real "here's what today is" numbers even while a filter is active.
-function dayBucketCounts() {
-  const counts = new Map();
-  for (const r of (deckState && deckState.all) || []) {
-    const b = r.bucket || "unknown";
-    counts.set(b, (counts.get(b) || 0) + 1);
-  }
-  return counts;
-}
-
-// FB#57b: how many of today's records a typed term matches (genres + styles) — from the
-// full day we hold, so a term chip carries a count like the buckets, and the composer
-// can preview it before adding. Not the filtered set: it's "how much of today is this".
-function termMatchCount(term) {
-  const t = (term || "").trim().toLowerCase();
-  if (!t || !deckState || !deckState.all) return 0;
-  let n = 0;
-  for (const r of deckState.all) {
-    if (((r.genres || "") + " " + (r.styles || "")).toLowerCase().includes(t)) n++;
-  }
-  return n;
-}
-
-// FB (2026-07-17): the type-ahead vocabulary — the DISTINCT genre + style tags that
-// actually appear in today's records, each with the count the filter would yield if you
-// added it (same includes() match termMatchCount uses, so the number shown is the number
-// you get). Sourced from today only, so it never suggests a tag that matches nothing —
-// the honesty rule, applied to autocomplete. Cached on the deck; a re-derive rebuilds it.
-function genreVocab() {
-  if (!deckState || !deckState.all) return [];
-  if (deckState._vocab) return deckState._vocab;
-  const labels = new Map();                        // key(lower) -> first-seen label
-  for (const r of deckState.all) {
-    for (const part of [r.genres || "", r.styles || ""]) {
-      for (const raw of part.split(",")) {
-        const label = raw.trim();
-        if (label && !labels.has(label.toLowerCase())) labels.set(label.toLowerCase(), label);
-      }
-    }
-  }
-  const vocab = [...labels.entries()]
-    .map(([key, label]) => ({ key, label, n: termMatchCount(key) }))
-    .filter((e) => e.n > 0)
-    .sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
-  deckState._vocab = vocab;
-  return vocab;
-}
-
-// The up-to-8 suggestions for a typed query: tags containing it, prefix-matches first,
-// then by count. Excludes tags already added as a term (no point re-suggesting them).
-function genreSuggestions(q) {
-  const s = (q || "").trim().toLowerCase();
-  if (!s) return [];
-  return genreVocab()
-    .filter((e) => e.key.includes(s) && !genreTerms.has(e.key))
-    .sort((a, b) => (a.key.startsWith(s) ? 0 : 1) - (b.key.startsWith(s) ? 0 : 1)
-      || b.n - a.n || a.label.localeCompare(b.label))
-    .slice(0, 8);
-}
-
-let suggestActive = -1;                             // highlighted suggestion (keyboard)
-function renderGenreSuggest() {
-  const box = document.getElementById("genreSuggest");
-  const inp = document.getElementById("genreText");
-  if (!box || !inp) return;
-  const items = genreSuggestions(inp.value);
-  suggestActive = -1;
-  if (!items.length) { box.hidden = true; box.innerHTML = ""; return; }
-  box.innerHTML = items.map((e) =>
-    `<button type="button" class="genre-sugg" role="option" data-add="${esc(e.label)}"
-       tabindex="-1"><span class="gs-label">${esc(e.label)}</span><span
-       class="gs-n">${e.n.toLocaleString()}</span></button>`).join("");
-  box.hidden = false;
-}
-function hideGenreSuggest() {
-  const box = document.getElementById("genreSuggest");
-  if (box) { box.hidden = true; box.innerHTML = ""; }
-  suggestActive = -1;
-}
-// Move the keyboard highlight through the open suggestion list (wraps at the ends).
-function moveGenreSuggest(delta) {
-  const box = document.getElementById("genreSuggest");
-  if (!box || box.hidden) return;
-  const opts = [...box.querySelectorAll(".genre-sugg")];
-  if (!opts.length) return;
-  suggestActive = (suggestActive + delta + opts.length) % opts.length;
-  opts.forEach((o, i) => o.classList.toggle("active", i === suggestActive));
-  opts[suggestActive].scrollIntoView({ block: "nearest" });
-}
 
 function updateGenreTally() {
   const gt = document.getElementById("genreTally");
   if (gt) {
-    const gn = genreFilter.size + genreTerms.size;
+    const gn = genreTags.size;
     gt.hidden = gn === 0; gt.textContent = " · " + gn;
   }
   const dt = document.getElementById("dateTally");
@@ -755,10 +670,11 @@ function updateGenreTally() {
   }
 }
 
-// Both panels' notes carry the SAME live combined count (genre AND date compose), so
-// whichever panel is open shows the confirmation ("786 records match" vs "none").
+// The Year panel's note carries the live combined count (genre AND date compose), so
+// it confirms what Today holds now ("786 records match" vs "none"). The Genre screen
+// shows the same number on its Show button (renderStyleBrowseTray).
 function setGenrePrefNote() {
-  const active = !!(genreFilter.size || genreTerms.size || deckEras.size
+  const active = !!(genreTags.size || deckEras.size
     || deckYearFrom != null || deckYearTo != null);
   const n = (active && deckState && deckState.all) ? applyDeckFilters(deckState.all).length : 0;
   const matchTxt = n
@@ -770,60 +686,314 @@ function setGenrePrefNote() {
     note.classList.toggle("on", active);
     note.textContent = active ? matchTxt : emptyMsg;
   };
-  setNote("genrePrefNote", "Pick a genre, or add a style, to narrow today.");
   setNote("datePrefNote", "Pick a decade or set a year span to narrow today.");
 }
 
-// FB#57b: while the input has text, the note previews how many records that term would
-// match — so you can decide before adding. An empty box restores the active-filter note.
-function updateGenreTypePreview() {
-  const inp = document.getElementById("genreText");
-  const note = document.getElementById("genrePrefNote");
-  if (!inp || !note) return;
-  const v = inp.value.trim();
-  if (!v) { setGenrePrefNote(); return; }
-  const n = termMatchCount(v);
-  note.classList.toggle("on", n > 0);
-  note.textContent = n
-    ? `${n.toLocaleString()} record${n === 1 ? "" : "s"} tagged “${v}” — Enter to add.`
-    : `No records today tagged “${v}”.`;
-}
-
-// Build the chip row from today's real distribution: only KNOWN buckets present
-// today, most-common first, each carrying its count.
+// Re-sync everything that reads the filter state: the Year panel's decade chips and
+// note, and the tallies on both pills. (Until v328 this also drew the Genre popover's
+// chip row; the Genre screen renders itself on open.)
 function renderGenrePref() {
-  const box = document.getElementById("genreChips");
-  if (!box) return;
-  const counts = dayBucketCounts();
-  const present = GENRE_BUCKET_ORDER
-    .filter((b) => counts.get(b) && !dismissedBuckets.has(b))
-    .sort((a, b) => counts.get(b) - counts.get(a));
-  const bucketChips = present.map((b) => {
-    const on = genreFilter.has(b);
-    const label = titleCaseGenre(b);
-    return `<button type="button" class="genre-chip${on ? " on" : ""}" data-genre="${esc(b)}"
-       aria-pressed="${on}"><span class="gc-dot" aria-hidden="true"></span>${esc(label)}<span class="gc-n">${counts.get(b).toLocaleString()}</span><span
-       class="gc-x gc-dismiss" data-dismiss="${esc(b)}" role="button" tabindex="-1"
-       title="Hide ${esc(label)}" aria-label="Hide the ${esc(label)} genre pill">✕</span></button>`;
-  }).join("");
-  // FB#57b: the typed terms as their own removable chips — the term, its count of
-  // today's records (like the buckets), then a ✕. Tapping the chip removes it.
-  const termChips = [...genreTerms].map((t) => {
-    const n = termMatchCount(t);
-    return `<button type="button" class="genre-chip custom on" data-term="${esc(t)}"
-       aria-label="Remove the ${esc(t)} filter (${n} records)">${esc(t)}<span
-       class="gc-n">${n.toLocaleString()}</span><span class="gc-x" aria-hidden="true">✕</span></button>`;
-  }).join("");
-  // When some generic pills are hidden, a quiet chip brings them all back — dismissing
-  // is session-scoped and reversible, never a one-way trap.
-  const restoreChip = dismissedBuckets.size
-    ? `<button type="button" class="genre-chip genre-restore" data-restore
-         aria-label="Show all genre pills again">+ show all genres</button>`
-    : "";
-  box.innerHTML = bucketChips + termChips + restoreChip;
   renderEraChips();
   setGenrePrefNote();
   updateGenreTally();
+}
+
+// --- The Genre screen (owner 2026-09-24; flat since v332) ----------------------
+// A full-screen list of every tag on today's records, so you can scroll what's here
+// instead of guessing a name to type. Built from the day we already hold (no
+// round-trip), cached on the deck.
+//
+// v332 (owner 2026-10-04): FLAT, no genre groups. The grouped version (v327–v331) sat
+// every style under one of our 13 coarse buckets, which forced the music into boxes we
+// invented — "World" caught only a few keyword hits and "Other styles" was just where
+// the matcher gave up ("I'm nervous about the classification of world and other"). Now
+// each tag is exactly what the records carry, genres included ("rock" is a row like
+// "shoegaze"), A to Z with a letter rail, or rarest first grouped by how rare.
+//
+// Honesty: every count is the number of records today carrying that tag — exactly what
+// a tick yields — and a tag only appears if a record today carries it. Spellings that
+// differ only in spaces / hyphens / punctuation ("post rock" / "post-rock", the two
+// catalogs' habits) MERGE into one row that matches either.
+function tagKey(t) { return String(t || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ""); }
+
+// A record's tag KEYS (merged spellings), cached beside recordTags.
+const _recordTagKeyCache = new WeakMap();
+function recordTagKeys(r) {
+  let keys = _recordTagKeyCache.get(r);
+  if (!keys) {
+    keys = new Set();
+    for (const t of recordTags(r)) { const k = tagKey(t); if (k) keys.add(k); }
+    _recordTagKeyCache.set(r, keys);
+  }
+  return keys;
+}
+
+function styleIndex() {
+  if (!deckState || !deckState.all) return null;
+  if (deckState._styles) return deckState._styles;
+  const count = new Map();                  // key -> records today carrying it
+  const spellings = new Map();              // key -> Map(spelling -> records)
+  let untagged = 0;
+  for (const r of deckState.all) {
+    const tags = recordTags(r);
+    if (!tags.size) { untagged++; continue; }
+    const seen = new Set();
+    for (const t of tags) {
+      const k = tagKey(t);
+      if (!k) continue;
+      if (!spellings.has(k)) spellings.set(k, new Map());
+      const sp = spellings.get(k);
+      sp.set(t, (sp.get(t) || 0) + 1);
+      if (!seen.has(k)) { seen.add(k); count.set(k, (count.get(k) || 0) + 1); }
+    }
+  }
+  // A merged row is labelled with its most common spelling (ties: alphabetical).
+  const tags = [...count.keys()].map((k) => {
+    const sp = [...spellings.get(k).entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    return { key: k, label: sp[0][0], n: count.get(k), spellings: sp.map((x) => x[0]) };
+  });
+  deckState._styles = { tags, count, untagged, total: deckState.all.length };
+  return deckState._styles;
+}
+
+// A ticked tag KEY ("postrock") as its row reads on the Genre screen ("post-rock"), so
+// every place that names a tick — the tray, the filtered-empty state — says what the
+// reader ticked. Falls back to the key if today no longer carries the tag.
+function tagLabel(k) {
+  const idx = styleIndex();
+  const t = idx && idx.tags.find((x) => x.key === k);
+  return t ? t.label : k;
+}
+
+// The list's order, remembered on this device (a per-viewer convenience).
+const SB_ORDER_KEY = "mf-genre-order/v1";
+function sbOrder() {
+  try { return localStorage.getItem(SB_ORDER_KEY) === "rare" ? "rare" : "az"; } catch (e) { return "az"; }
+}
+function setSbOrder(o) { try { localStorage.setItem(SB_ORDER_KEY, o); } catch (e) { /* session only */ } }
+
+const SB_BIG = 100;                         // a tag on this many records reads as broad (bold)
+function sbLetter(label) {
+  const c = label.normalize("NFD").charAt(0).toUpperCase();
+  return /[A-Z]/.test(c) ? c : "#";
+}
+function sbBand(n) {
+  if (n === 1) return "Only 1 record today";
+  if (n === 2) return "2 records";
+  if (n <= 5) return "3–5 records";
+  if (n <= 20) return "6–20 records";
+  if (n <= 100) return "21–100 records";
+  return "More than 100";
+}
+
+// The rows in display order: A–Z by label, or rarest first (then A–Z within a count).
+function sbOrderedTags(idx, order, q) {
+  let tags = idx.tags;
+  if (q) tags = tags.filter((t) => t.spellings.some((sp) => sp.includes(q)));
+  return tags.slice().sort(order === "rare"
+    ? (a, b) => a.n - b.n || a.label.localeCompare(b.label)
+    : (a, b) => a.label.localeCompare(b.label));
+}
+
+function renderStyleBrowse() {
+  const list = document.getElementById("sbList");
+  const letters = document.getElementById("sbLetters");
+  const inp = document.getElementById("sbSearch");
+  const idx = styleIndex();
+  if (!list || !idx) return;
+  const order = sbOrder();
+  const q = inp ? inp.value.trim().toLowerCase() : "";
+  const rows = sbOrderedTags(idx, order, q);
+  const present = new Set();
+  let html = "", cur = null;
+  for (const t of rows) {
+    const sec = order === "rare" ? sbBand(t.n) : sbLetter(t.label);
+    if (sec !== cur) {
+      if (cur !== null) html += `</section>`;
+      html += `<section class="sb-group" data-sec="${esc(sec)}"><h4>${esc(sec)}</h4>`;
+      cur = sec; present.add(sec);
+    }
+    const on = genreTags.has(t.key);
+    // A merged row says which spellings it covers, so the merge is never invisible.
+    const also = t.spellings.length > 1
+      ? ` <span class="sb-also">also “${esc(t.spellings.slice(1).join("”, “"))}”</span>` : "";
+    html += `<button type="button" class="sb-row${on ? " on" : ""}${t.n >= SB_BIG ? " big" : ""}"
+      data-sb-tag="${esc(t.key)}" aria-pressed="${on}"><span class="sb-name">${esc(t.label)}${also}</span><span
+      class="sb-n">${t.n.toLocaleString()}</span><span class="sb-tick" aria-hidden="true">✓</span></button>`;
+  }
+  if (cur !== null) html += `</section>`;
+  if (!rows.length) {
+    html = `<p class="sb-empty muted">Nothing today is tagged “${esc(q)}”. Dig goes through
+      every record, or <button type="button" class="linkish" data-goto-explore>explore the
+      whole catalog →</button></p>`;
+  } else if (idx.untagged) {
+    html += `<p class="sb-honest muted">${idx.untagged.toLocaleString()} of today's
+      ${idx.total.toLocaleString()} records carry no genre or style tags, so nothing here can
+      reach them — dig shows everything.</p>`;
+  }
+  list.innerHTML = html;
+  // The letter rail is A–Z's; rarest first has six bands and its sticky headers.
+  if (letters) {
+    letters.hidden = order !== "az";
+    letters.innerHTML = order !== "az" ? "" : "#ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((L) =>
+      `<button type="button" data-sb-letter="${L}"${present.has(L) ? "" : " disabled"}
+        aria-label="Jump to ${L === "#" ? "numbers and symbols" : L}">${L}</button>`).join("");
+  }
+  const sort = document.getElementById("sbSort");
+  if (sort) {
+    sort.textContent = order === "rare" ? "Rarest first" : "A–Z";
+    sort.setAttribute("aria-label", `Order: ${order === "rare" ? "rarest first" : "A to Z"}. Tap to switch.`);
+  }
+  const intro = document.getElementById("sbIntro");
+  if (intro) intro.textContent = `Every tag on today's records, ${
+    order === "rare" ? "rarest first" : "A to Z"}. Tick any to narrow Today.`;
+  renderStyleBrowseTray();
+}
+
+// The tray under the list: what you've ticked (tap to drop) and the live count of what
+// Today now holds — the same composed filter the deck deals from, so year filters count.
+function renderStyleBrowseTray() {
+  const picked = document.getElementById("sbPicked");
+  const go = document.getElementById("sbGo");
+  const chips = [...genreTags].map((k) =>
+    `<button type="button" class="genre-chip custom on" data-sb-untag="${esc(k)}"
+      aria-label="Remove ${esc(tagLabel(k))}">${esc(tagLabel(k))}<span class="gc-x" aria-hidden="true">✕</span></button>`);
+  if (picked) { picked.innerHTML = chips.join(""); picked.hidden = !chips.length; }
+  if (!go) return;
+  const active = genreTags.size || deckEras.size
+    || deckYearFrom != null || deckYearTo != null;
+  const n = active && deckState && deckState.all ? applyDeckFilters(deckState.all).length : 0;
+  go.textContent = !active ? "Back to today"
+    : n ? `Show ${n.toLocaleString()} record${n === 1 ? "" : "s"}`
+    : "Nothing matches — back to today";
+}
+
+// A tick re-derives the deck behind the sheet (a fresh draw) and redraws the list in
+// place, holding the reader's scroll position.
+function sbApply(fn) {
+  fn();
+  refilterDeck();
+  const list = document.getElementById("sbList");
+  const y = list ? list.scrollTop : 0;
+  renderStyleBrowse();
+  if (list) list.scrollTop = y;
+}
+
+// The phone's back gesture closes the Genre screen, like any other step (owner,
+// 2026-10-04: "when i swipe back on mobile from the genre page it closes the app").
+// The screen isn't a wander step, so it used to add nothing to the history and back
+// left the app. Opening now pushes one history step; the popstate handler closes the
+// screen on it (styleBrowsePopstate); closing from the screen's own Back / Show /
+// Escape takes the step back off, so it never lingers as a dead back-press.
+let _sbHistoryStep = false;   // our step is on top of the history
+let _sbSkipPop = false;       // the next popstate is our own history.back(), not the reader's
+function openStyleBrowse() {
+  const sheet = document.getElementById("styleBrowse");
+  if (!sheet || !styleIndex()) return;
+  const inp = document.getElementById("sbSearch");
+  if (inp) inp.value = "";
+  renderStyleBrowse();
+  sheet.classList.remove("hidden");
+  const list = document.getElementById("sbList");
+  if (list) list.scrollTop = 0;
+  if (!_sbHistoryStep) {
+    try { history.pushState({ aotdSheet: "genre" }, ""); _sbHistoryStep = true; } catch (e) { /* ok */ }
+  }
+}
+// Back, Escape (which clicks Back) and the tray's Show button all land on Today; the
+// ticks already applied live, so closing never has anything to commit.
+function closeStyleBrowse() {
+  const sheet = document.getElementById("styleBrowse");
+  if (sheet) sheet.classList.add("hidden");
+  if (_sbHistoryStep) {
+    _sbHistoryStep = false;
+    _sbSkipPop = true;
+    try { history.back(); } catch (e) { _sbSkipPop = false; }
+  }
+}
+// The popstate side: true when this pop belonged to the Genre screen (the system back
+// closed it, or it's the echo of closeStyleBrowse's own history.back()), so the wander
+// handler stays out of it.
+function styleBrowsePopstate() {
+  if (_sbSkipPop) { _sbSkipPop = false; return true; }
+  const sheet = document.getElementById("styleBrowse");
+  if (sheet && !sheet.classList.contains("hidden")) {
+    _sbHistoryStep = false;
+    sheet.classList.add("hidden");
+    return true;
+  }
+  return false;
+}
+
+function wireStyleBrowse() {
+  const sheet = document.getElementById("styleBrowse");
+  const open = document.getElementById("genreOpen");
+  if (!sheet || !open) return;
+  open.addEventListener("click", openStyleBrowse);
+  document.getElementById("sbBack").addEventListener("click", closeStyleBrowse);
+  document.getElementById("sbGo").addEventListener("click", closeStyleBrowse);
+  const list = document.getElementById("sbList");
+  document.getElementById("sbSort").addEventListener("click", () => {
+    setSbOrder(sbOrder() === "rare" ? "az" : "rare");
+    renderStyleBrowse();
+    list.scrollTop = 0;
+  });
+  const inp = document.getElementById("sbSearch");
+  let timer = null;
+  inp.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { renderStyleBrowse(); list.scrollTop = 0; }, 120);
+  });
+  list.addEventListener("click", (e) => {
+    const row = e.target.closest("[data-sb-tag]");
+    if (row) {
+      const k = row.dataset.sbTag;
+      sbApply(() => { if (!genreTags.delete(k)) genreTags.add(k); });
+      return;
+    }
+    if (e.target.closest("[data-goto-explore]")) closeStyleBrowse();
+  });
+  // The letter rail behaves like a phone's contacts index. The WHOLE rail is the target:
+  // a press lands on the nearest available letter, and dragging scrubs through them.
+  // (The letters are ~14px tall; with only the glyphs tappable, a finger often fell in
+  // the gap between two and nothing happened.) Jumps are instant — a smooth scroll
+  // across ~600 rows took well over a second to arrive, which reads as broken.
+  const letters = document.getElementById("sbLetters");
+  const jumpTo = (L) => {
+    const sec = list.querySelector(`.sb-group[data-sec="${L}"]`);
+    if (sec) list.scrollTop = sec.offsetTop;
+  };
+  const jumpAtY = (y) => {
+    let best = null, bestD = Infinity;
+    for (const b of letters.querySelectorAll("button:not(:disabled)")) {
+      const r = b.getBoundingClientRect();
+      const d = y < r.top ? r.top - y : (y > r.bottom ? y - r.bottom : 0);
+      if (d < bestD) { bestD = d; best = b; }
+    }
+    if (best) jumpTo(best.dataset.sbLetter);
+  };
+  let scrubbing = false;
+  letters.addEventListener("pointerdown", (e) => {
+    e.preventDefault();                   // no focus ring / text selection on a tap
+    scrubbing = true;
+    try { letters.setPointerCapture(e.pointerId); } catch (err) { /* older engines */ }
+    jumpAtY(e.clientY);
+  });
+  letters.addEventListener("pointermove", (e) => { if (scrubbing) jumpAtY(e.clientY); });
+  const stopScrub = () => { scrubbing = false; };
+  letters.addEventListener("pointerup", stopScrub);
+  letters.addEventListener("pointercancel", stopScrub);
+  // Keyboard: Enter / Space on a focused letter arrives as a click with no pointer.
+  letters.addEventListener("click", (e) => {
+    if (e.detail !== 0) return;           // a pointer press was already handled above
+    const b = e.target.closest("[data-sb-letter]");
+    if (b && !b.disabled) jumpTo(b.dataset.sbLetter);
+  });
+  document.getElementById("sbPicked").addEventListener("click", (e) => {
+    const tag = e.target.closest("[data-sb-untag]");
+    if (tag) sbApply(() => genreTags.delete(tag.dataset.sbUntag));
+  });
 }
 
 // F31: today's records by decade, from the full day we hold — so the era chips carry
@@ -863,19 +1033,6 @@ function toggleEra(d) {
   refilterDeck();
 }
 
-// Hide a generic bucket pill for the session; if it was actively filtering, drop it from
-// the filter (and re-derive) so a hidden pill never keeps narrowing invisibly.
-function dismissBucket(b) {
-  dismissedBuckets.add(b);
-  if (genreFilter.delete(b)) refilterDeck();
-  else renderGenrePref();
-}
-function restoreBuckets() {
-  if (!dismissedBuckets.size) return;
-  dismissedBuckets.clear();
-  renderGenrePref();
-}
-
 // A genre toggle re-derives the visible deck from the full day we already hold — no
 // refetch. It's a fresh draw, so it resets to the top with an empty set-aside pile,
 // like the platform filter's refreshSurfaces; kept rows persist server-side.
@@ -884,29 +1041,11 @@ function refilterDeck() {
   deckState.records = dealOrder(applyDeckFilters(deckState.all));
   deckState.idx = 0;
   deckState.aside = [];
-  deckState.kept = new Map();
+  deckState.noted = new Set();
   updateSetAsideBar();
   renderGenrePref();
   if (deckState.records.length) renderDeck();
   else renderGenreFilteredEmpty();
-}
-
-function toggleGenre(b) {
-  if (genreFilter.has(b)) genreFilter.delete(b);
-  else genreFilter.add(b);
-  refilterDeck();
-}
-
-// FB#57b: add / remove a typed finer term. Add is idempotent (a repeat is a no-op);
-// remove is what the term's chip ✕ calls. Both re-derive the deck.
-function addGenreTerm(raw) {
-  const t = (raw || "").trim().toLowerCase();
-  if (!t || genreTerms.has(t)) return;
-  genreTerms.add(t);
-  refilterDeck();
-}
-function removeGenreTerm(t) {
-  if (genreTerms.delete((t || "").toLowerCase())) refilterDeck();
 }
 
 // A genre filter that empties today (but the day itself holds records) points to
@@ -914,9 +1053,7 @@ function removeGenreTerm(t) {
 function renderGenreFilteredEmpty() {
   const wrap = $("#choice");
   if (!wrap) return;
-  const parts = [...genreFilter].map(titleCaseGenre);
-  for (const t of genreTerms) parts.push(`“${t}”`);
-  for (const d of deckEras) parts.push(d);
+  const parts = [...[...genreTags].map(tagLabel), ...deckEras];
   const picks = parts.join(", ");
   wrap.innerHTML = `<div class="empty">
     <p class="empty-lead">Nothing today in ${esc(picks)}.</p>
@@ -927,13 +1064,9 @@ function renderGenreFilteredEmpty() {
 }
 
 function clearGenreFilter() {
-  if (!genreFilter.size && !genreTerms.size && !deckEras.size) return;
-  genreFilter.clear();
-  genreTerms.clear();
+  if (!genreTags.size && !deckEras.size) return;
+  genreTags.clear();
   deckEras.clear();
-  const inp = document.getElementById("genreText");
-  if (inp) inp.value = "";
-  hideGenreSuggest();
   refilterDeck();
 }
 
@@ -983,13 +1116,11 @@ function closePopoverOnOutsideTap(box) {
 }
 
 function wireGenrePref() {
-  const box = document.getElementById("genrePref");
-  const chips = document.getElementById("genreChips");
-  if (!box || !chips) return;
   // FB#105 follow-up (owner): each filter panel gets a ✕. Tap-outside and Escape
   // already closed them; this is about "offering multiple options to close", since
-  // neither of those announces itself. Wired for BOTH panels here — one delegated
-  // handler on the row rather than two lookups, so a third filter would work for free.
+  // neither of those announces itself. One delegated handler on the row, so another
+  // popover filter would work for free. (Only Year is a popover since v328 — Genre
+  // opens its own screen, wired in wireStyleBrowse.)
   // stopPropagation because the row's own tap-outside closer would otherwise see this
   // click, and the <details> would fight itself over which one closed it.
   const row = document.querySelector(".narrow-today");
@@ -1002,19 +1133,7 @@ function wireGenrePref() {
       if (panel) panel.open = false;
     });
   }
-  chips.addEventListener("click", (e) => {
-    // Like the platform list: a toggle re-renders the chips, detaching the clicked
-    // node, so an ancestor click-away closer would read it as "outside". Stop here.
-    e.stopPropagation();
-    const dismiss = e.target.closest("[data-dismiss]");           // the ✕ hides the pill
-    if (dismiss) { dismissBucket(dismiss.dataset.dismiss); return; }
-    if (e.target.closest("[data-restore]")) { restoreBuckets(); return; }
-    const custom = e.target.closest(".genre-chip.custom[data-term]");
-    if (custom) { removeGenreTerm(custom.dataset.term); return; }   // FB#57b: tap to drop
-    const chip = e.target.closest("[data-genre]");
-    if (chip) toggleGenre(chip.dataset.genre);
-  });
-  // F31: the era chips are their own toggle group beside the genres; same fresh-draw.
+  // F31: the era chips are their own toggle group; same fresh-draw as a genre tick.
   const eras = document.getElementById("eraChips");
   if (eras) eras.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1041,64 +1160,14 @@ function wireGenrePref() {
     if (yTo) yTo.value = "";
     readYears();
   });
-  // FB#57b: type a finer term + Enter (or the Add button) to add it as a chip; it then
-  // filters like a bucket. FB (2026-07-17): as you type, a dropdown suggests the genres
-  // and styles actually present today — pick one instead of guessing the spelling.
-  const text = document.getElementById("genreText");
-  const addBtn = document.getElementById("genreAdd");
-  const suggest = document.getElementById("genreSuggest");
-  const addTerm = (val) => {
-    if (!text) return;
-    addGenreTerm(val);
-    text.value = "";
-    hideGenreSuggest();
-    text.focus();
-  };
-  const activeSuggLabel = () => {
-    if (!suggest || suggest.hidden || suggestActive < 0) return null;
-    const opt = suggest.querySelectorAll(".genre-sugg")[suggestActive];
-    return opt ? opt.dataset.add : null;
-  };
-  if (text) {
-    let timer = null;
-    text.addEventListener("click", (e) => e.stopPropagation());
-    text.addEventListener("keydown", (e) => {
-      if (e.key === "ArrowDown") { e.preventDefault(); moveGenreSuggest(1); return; }
-      if (e.key === "ArrowUp") { e.preventDefault(); moveGenreSuggest(-1); return; }
-      if (e.key === "Escape" && suggest && !suggest.hidden) {
-        e.preventDefault(); e.stopPropagation(); hideGenreSuggest(); return;
-      }
-      if (e.key === "Enter") {
-        e.preventDefault();
-        const sel = activeSuggLabel();
-        addTerm(sel != null ? sel : text.value);
-      }
-    });
-    // The dropdown is cheap (cached vocab) so it updates live; the count-note stays
-    // debounced. An empty box hides the dropdown and restores the active-filter note.
-    text.addEventListener("input", () => {
-      renderGenreSuggest();
-      clearTimeout(timer);
-      timer = setTimeout(updateGenreTypePreview, 150);
-    });
-    text.addEventListener("blur", () => setTimeout(hideGenreSuggest, 120));  // let a click land
-  }
-  if (suggest) {
-    suggest.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const opt = e.target.closest(".genre-sugg[data-add]");
-      if (opt) addTerm(opt.dataset.add);
-    });
-    // A mousedown inside the list must not blur-hide it before the click resolves.
-    suggest.addEventListener("mousedown", (e) => e.preventDefault());
-  }
-  if (addBtn) addBtn.addEventListener("click", (e) => { e.stopPropagation(); addTerm(text ? text.value : ""); });
-  // Populate the chips whenever the chooser is opened (the day may have changed).
-  box.addEventListener("toggle", () => { if (box.open) renderGenrePref(); else hideGenreSuggest(); });
-  // Tap outside the open popover to dismiss it — and only dismiss it.
-  closePopoverOnOutsideTap(box);
   const dateBox = document.getElementById("datePref");
-  if (dateBox) closePopoverOnOutsideTap(dateBox);
+  if (dateBox) {
+    // Refresh the decade chips + note whenever the panel opens (the day may have
+    // changed) — the job the Genre popover's open used to do for both panels.
+    dateBox.addEventListener("toggle", () => { if (dateBox.open) renderGenrePref(); });
+    // Tap outside the open popover to dismiss it — and only dismiss it.
+    closePopoverOnOutsideTap(dateBox);
+  }
 }
 
 // Source-aware provenance (P3): the exact Discogs release or MusicBrainz
@@ -1201,9 +1270,13 @@ function listenBlockHtml(a, { compact = false } = {}) {
     // so backups only ever meant "a different service you might prefer" — dropped.
     // Content-sized + left (`listen-solo`), so a single green pill never grows into
     // a full-width primary button.
+    // v9: once you've opened this record today, the chip says it's in your Notebook —
+    // inside the button, so the confirmation never moves the rows below it.
+    const tag = openedToday(albumKey(a))
+      ? `<span class="opened-tag">✓ in Notebook</span>` : "";
     return `<div class="choice-listen"><div class="listen-chips listen-solo">
       <a class="listen-chip primary ${pcls}" href="${esc(purl)}"${
-        listenAttrs(pkey, purl)} target="_blank" rel="noopener">${esc(plabel)}</a>
+        listenAttrs(pkey, purl)} target="_blank" rel="noopener">${esc(plabel)}${tag}</a>
     </div></div>`;
   }
   const primaryBtn = `<a class="listen-primary ${pcls}" href="${esc(purl)}"${
@@ -1430,23 +1503,16 @@ function browseCard(a) {
   return `<div class="card" data-rid="${esc(albumKey(a))}">${cardHit("Open", a)}${coverHtml(a)}${metaHtml(a)}</div>`;
 }
 
-// --- TODAY (the keep-model deck) --------------------------------------------
-// One record at a time from the day's pool. Keep writes a chosen-only choice row
-// (recordChoice(album, null) — not_chosen stays NULL, the "keep" shape the store
-// already supports); Set aside stacks the record in a local, per-day, reopenable
-// pile. Keeping is ADDITIVE — it never settles the day, so the deck just advances
-// and you can keep as many records as you like (tracked in deckState.kept, not a
-// single "one choice per day" id).
+// --- TODAY (the deck) -------------------------------------------------------
+// One record at a time from the day's pool. "✎ Write a note" opens the ordinary
+// note composer (Keep retired at v329 — writing is the act); Skip stacks the record
+// in a local, per-day, reopenable pile.
 
-// The active day's deck, ephemeral and per-day (D2): { key, records, idx, kept,
+// The active day's deck, ephemeral and per-day (D2): { key, records, idx, noted,
 // aside }. Leaving Today and returning restores your place; a date rollover or a
 // filter/dig change (loadDeck(true)) starts fresh. Nothing here is persisted or
 // synced — the set-aside pile lives only in this object, only for today.
 let deckState = null;
-// The album the keep reveal is standing on. Still needed after FB#106c removed the
-// inline why-box: recordKeep's retry path re-records it, and noteAlbumSnapshot reads
-// it so the composer's song pills can name a record the Album door never opened.
-let currentKeepAlbum = null;
 
 // A one-time client shuffle so the day doesn't always lead with the same
 // catalog-ordered record — the draw stays "pure chance" (VISION), just finite now.
@@ -1459,28 +1525,56 @@ function shuffled(list) {
   return a;
 }
 
-// A8 Phase 1 — a genre-BALANCED deal, replacing the plain shuffle. The catalog
-// skews heavily electronic/rock, so a flat shuffle leads Today with a run of the
-// same genre. Instead: group the day by its server-assigned coarse `bucket`,
-// shuffle within each bucket, then deal one bucket per round (round order itself
-// reshuffled each pass) — so the records you meet up front span many genres and no
-// bucket repeats until the others have had a turn. Still "what today gives you":
-// nothing is hidden or ranked, every record stays in the deck; it's dealt for
-// variety, not curated. "unknown"-genre records are their own bucket, so genre-blind
-// albums (~30%, mostly MB) aren't buried. Degrades to a plain shuffle for a
-// single-genre day. Read `bucket` off the record (server owns the taxonomy).
-function balancedOrder(list) {
+// The deal (owner, 2026-10-04; GENRE_BACKFILL_DESIGN.md "Deal balancing"). Today is
+// dealt in turns sized to how much of the day each tag is, softened: a tag's chance at
+// the next slot is (records it has left)^0.85, so the day's big sounds still show up
+// but a little lighter, and a tag that's 0.4% of the day isn't dealt 17x its share.
+// (That was the old deal: 13 hidden genres, one record each per round, which put
+// reggae, funk and celtic all over the top of Today. Retired with those genres.)
+// Plus one rule: never the same tag twice in a row while anything else is left — that
+// is what breaks up runs; sizing turns alone doesn't. Measured over 12 days (35,011
+// records): no genre dealt more than ~2x its share, electronic and rock ~0.9x, the
+// longest one-genre run ~1.7. Nothing is hidden or ranked — every record stays in the
+// deck. A record's tag here is its FIRST tag (merged spellings via tagKey), the one
+// the record leads with; records with no tag yet share "" and may sit together.
+// Re-measure with tools/measure_deal.py when the day's tags change a lot.
+const DEAL_SIZE_POWER = 0.85;
+function dealKey(rec) {
+  const first = genresOf(rec)[0] || (rec.styles || "").split(",")[0] || "";
+  return tagKey(first);
+}
+function balancedOrder(list, rand = Math.random) {
   const groups = new Map();
   for (const rec of list) {
-    const b = rec.bucket || "unknown";
-    if (!groups.has(b)) groups.set(b, []);
-    groups.get(b).push(rec);
+    const k = dealKey(rec);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(rec);
   }
-  let queues = [...groups.values()].map(shuffled);
+  const live = [...groups.entries()].map(([k, recs]) => {
+    const q = shuffled(recs);
+    return { k, q, w: Math.pow(q.length, DEAL_SIZE_POWER) };
+  });
+  let total = live.reduce((t, g) => t + g.w, 0);
   const out = [];
-  while (queues.length) {
-    for (const q of shuffled(queues)) out.push(q.shift());
-    queues = queues.filter((q) => q.length);
+  let last = null;
+  while (live.length) {
+    const blocked = last && last.k !== "" && last.q.length && live.length > 1 ? last : null;
+    let x = rand() * (total - (blocked ? blocked.w : 0));
+    let g = live[live.length - 1] === blocked ? live[live.length - 2] : live[live.length - 1];
+    for (const cand of live) {
+      if (cand === blocked) continue;
+      if (x < cand.w) { g = cand; break; }
+      x -= cand.w;
+    }
+    out.push(g.q.pop());
+    total -= g.w;
+    if (g.q.length) {
+      g.w = Math.pow(g.q.length, DEAL_SIZE_POWER);
+      total += g.w;
+    } else {
+      live.splice(live.indexOf(g), 1);
+    }
+    last = g;
   }
   return out;
 }
@@ -1599,15 +1693,27 @@ function resumeAt(list) {
   return [list[i], ...list.slice(0, i), ...list.slice(i + 1)];
 }
 
+// Owner, on device 2026-10-03: the loading card was laid out differently from the
+// loaded one — no Listen button, no button row — so the Genre / Year / Skipped row sat
+// high and then dropped when the record arrived. So the placeholder is now built from
+// the SAME elements as renderDeck's card (deck-cover, deck-meta, deck-listen's chip,
+// deck-buttons' two buttons), shimmering in place of their content. Every height and
+// margin is inherited from the real rule rather than restated here, which is the only
+// way they can't drift apart again. Keep the two in step if the card's shape changes.
 function deckLoadingHtml() {
-  return `<div class="deck-card skeleton" aria-hidden="true">
-    <div class="skel-cover skel"></div>
-    <div class="meta">
-      <div class="skel-line skel"></div>
-      <div class="skel-line skel short"></div>
-      <div class="skel-line skel shorter"></div>
+  return `<article class="deck-card skeleton" aria-hidden="true">
+    <div class="deck-cover"><div class="cover skel"></div></div>
+    <div class="deck-meta">
+      <p class="deck-title"><span class="skel skel-text" style="width:78%">&nbsp;</span></p>
+      <p class="deck-sub"><span class="skel skel-text" style="width:40%">&nbsp;</span></p>
     </div>
-  </div>`;
+    <div class="deck-listen"><div class="choice-listen"><div class="listen-chips listen-solo">
+      <span class="listen-chip primary skel skel-fill">&nbsp;</span></div></div></div>
+    <div class="deck-buttons">
+      <span class="note-btn skel skel-fill">&nbsp;</span>
+      <span class="set-aside-btn skel skel-fill">&nbsp;</span>
+    </div>
+  </article>`;
 }
 
 // Fetch the day's records (D1: the whole day's AVAILABLE pool via dayEndpoint →
@@ -1640,7 +1746,6 @@ async function loadDeck(force = false) {
     else renderGenreFilteredEmpty();
     return;
   }
-  closeChoiceReveal();
   const wrap = $("#choice");
   if (wrap) wrap.innerHTML = deckLoadingHtml();
   let data;
@@ -1676,7 +1781,7 @@ async function loadDeck(force = false) {
   // state, not the "no records with a known date" empty. deckState.all is empty, so
   // renderDeck falls straight through to deckEndHtml.
   if (rawCount && !records.length) {
-    deckState = { key, all: [], records: [], idx: 0, kept: new Map(), aside: [] };
+    deckState = { key, all: [], records: [], idx: 0, noted: new Set(), aside: [] };
     renderGenrePref();
     renderDeck();
     return;
@@ -1693,8 +1798,6 @@ async function loadDeck(force = false) {
          <button class="linkish" data-goto-explore>Explore the catalog →</button></div>`;
     return;
   }
-  // kept: Map<album key → choice-row id> — the id lets a keep made from Album details
-  // be undone (DELETE the row); size is still the "you kept N" count.
   // Keep the full day (`all`) so the genre filter can re-derive the visible deck
   // without a refetch; `records` is the balanced view of the (optionally) filtered set.
   // resumeAt only on this FRESH-BUILD path: the same-session early return above
@@ -1702,7 +1805,7 @@ async function loadDeck(force = false) {
   // dealOrder call site) is a deliberate "show me something else".
   deckState = { key, all: records,
                 records: resumeAt(dealOrder(applyDeckFilters(records))),
-                idx: 0, kept: new Map(), aside: [] };
+                idx: 0, noted: new Set(), aside: [] };
   renderGenrePref();
   if (deckState.records.length) renderDeck();
   else renderGenreFilteredEmpty();
@@ -1718,22 +1821,6 @@ function enterToday() {
   }
   return loadDeck();
 }
-
-// The keep row currently being annotated. One row PER keep (keeping is additive):
-// reset to null before each keep so recordChoice POSTs a fresh row, then the note
-// composer PATCHed that id. (FB#106c: nothing PATCHes a note onto a choice any more —
-// the reveal writes an ordinary journal note — but the id is still how a keep is
-// identified for undo and for not double-writing an already-kept record.)
-let currentChoiceId = null;
-// The in-flight (or last) /api/choices write. The note editor waits on this so
-// "Save note" can attach to the id once it lands, instead of silently no-opping
-// while the POST is still in flight — or after it failed (2026-07-06: a stale
-// Supabase kind-CHECK constraint 500'd every choice write, and both the missing
-// row and the dead Save button were that failure, swallowed and invisible).
-let recordChoicePromise = null;
-// The in-progress "what does this bring back?" text for the open keep reveal.
-// Module-level so leaving Today (a tab switch, a wander) and coming back restores
-// a half-written note.
 
 // Paint the current record — one at a time — with Keep / Set aside and its Listen
 // door. At the end of the finite deck, a calm "that's every record for today"
@@ -1752,10 +1839,6 @@ function renderDeck() {
   const key = albumKey(a);
   saveAt(key);                 // whatever is on screen IS your place (see AT_KEY)
   a._doorPending = poolOn() && !a._doorFilled;
-  // A record is normally kept-then-advanced, so the deck only shows a "kept" state
-  // when it was kept from Album details (which stays put): acknowledge it, offer undo
-  // and a plain "Next" instead of re-offering Keep / Set aside.
-  const isKept = deckState.kept.has(key);
   // FB#101 (owner): the eyebrow moved UP into the header line, where the tagline
   // used to sit — so the day is framed once, at the top of the page, instead of
   // twice within a screen of itself. See setSubtitleFor.
@@ -1770,13 +1853,14 @@ function renderDeck() {
         </div>
       </div>
       <div id="deckListen" class="deck-listen">${listenBlockHtml(a, { compact: true })}</div>
-      ${isKept ? `<p class="deck-kept-ack">Kept ✓ — in your Notebook</p>` : ``}
+      <!-- v329 (owner 2026-10-03): Keep is retired. Writing a note is how a record
+           becomes yours, and tapping Listen leaves an "opened" entry on its own, so
+           the pair is Write a note + Next (Skip until v331). Write a note sits where
+           Keep was, so a thumb that still reaches for Keep lands on writing, not on
+           moving past the record. -->
       <div class="deck-buttons">
-        ${isKept
-          ? `<button type="button" id="undoKeepBtn" class="set-aside-btn">Undo keep</button>
-             <button type="button" id="deckNextBtn" class="keep-btn">Next →</button>`
-          : `<button type="button" id="keepBtn" class="keep-btn">Keep</button>
-             <button type="button" id="setAsideBtn" class="set-aside-btn">Skip</button>`}
+        <button type="button" id="noteBtn" class="note-btn">✎ Write a note</button>
+        <button type="button" id="setAsideBtn" class="set-aside-btn">Next</button>
       </div>
     </article>`;
   observeArt(wrap, { eager: 2 });
@@ -1791,26 +1875,27 @@ function renderDeck() {
       if (el) el.innerHTML = listenBlockHtml(albumData[key] || a, { compact: true });
     }
   });
-  if (isKept) {
-    $("#undoKeepBtn").addEventListener("click", () => unkeepRecord(key));
-    $("#deckNextBtn").addEventListener("click", advanceDeck);
-  } else {
-    $("#keepBtn").addEventListener("click", keepCurrent);
-    $("#setAsideBtn").addEventListener("click", setAsideCurrent);
-    maybeStartTour();   // the first-run guided tour (once/device)
-  }
+  // The composer is the one choke point for writing (guest cap included); saving a
+  // note on today's record moves the deck on — see afterNoteSaved.
+  $("#noteBtn").addEventListener("click", () => {
+    rememberNames(key, a.artist, a.title);   // saveNote snapshots the name from here
+    openNoteModal(key);
+  });
+  $("#setAsideBtn").addEventListener("click", setAsideCurrent);
+  maybeStartTour();     // the first-run guided tour (once/device)
 }
 
 // End of the finite deck — you've seen every record for today. Calm, and always a
-// door out: what you kept (Notebook), the pile you set aside, or dig for more.
+// door out: what you wrote about (Notebook), the pile you set aside, or dig for more.
+// (v329: counted notes, not keeps — Keep is retired.)
 function deckEndHtml() {
   const aside = (deckState && deckState.aside.length) || 0;
-  const kept = (deckState && deckState.kept.size) || 0;
-  const keptLine = kept
-    ? `<p>You kept ${kept} — <button class="linkish" data-goto-notebook>see them in your Notebook →</button></p>`
-    : `<p>You didn't keep any today — that's fine. Nothing has to be kept.</p>`;
+  const noted = (deckState && deckState.noted && deckState.noted.size) || 0;
+  const keptLine = noted
+    ? `<p>You wrote about ${noted} — <button class="linkish" data-goto-notebook>see them in your Notebook →</button></p>`
+    : `<p>You didn't write about any today — that's fine. Nothing has to be written.</p>`;
   const asideLine = aside
-    ? `<p><button class="linkish" data-open-aside>Look again at the ${aside} you skipped →</button></p>`
+    ? `<p><button class="linkish" data-open-aside>Look again at the ${aside} you've seen →</button></p>`
     : "";
   // A thin platform-filtered day is the #1 way Today dead-ends fast: you filter to
   // a service (Spotify/Apple confirm few records), set the one or two aside, and
@@ -1842,35 +1927,6 @@ function advanceDeck() {
   renderDeck();
 }
 
-// Write a keep (a chosen-only choice row, not_chosen NULL) and track its id in
-// deckState.kept so it can be undone (DELETE the row) and counted. Marks the key
-// kept immediately; the real id fills in once the POST lands. Shared by the deck's
-// Keep and Album details' Keep.
-// A keep goes straight to the network — there's no outbox — so a keep tapped while
-// the origin is unreachable used to depend entirely on the reader noticing a 6-second
-// toast. Two ways that loses real work: a RELEASE swaps Render's instance and the
-// origin 502s for ~27 s (measured 2026-07-18), and a phone drops signal for about as
-// long. Worse, markMet() has already run by then, so once the toast fades the record
-// won't be dealt again today either — the keep is gone with no second chance.
-//
-// So retry quietly first, on the failures that PROVE the write never reached the app
-// (see `neverReached` in recordChoice — a 500 is excluded, since /api/choices has no
-// idempotency key and the row may already exist). These delays cover the measured
-// release window, and it stays a rescue, not a sync engine.
-const KEEP_RETRY_DELAYS = [3000, 8000, 20000];
-
-// Whether a failed write PROVABLY never reached the app — the only case where
-// re-POSTing is safe, because /api/choices has no idempotency key and every POST
-// inserts a new row.
-//   502/503/504  Render's gateway answering while it swaps instances on a release;
-//                the request never got to the app, so a retry can't double-write.
-//   500          the app DID process it and may have committed before failing.
-//                Retrying that is how you'd get two copies of one keep.
-// (A rejected fetch never completed either; recordChoice tags those directly.)
-function writeNeverReachedApp(status) {
-  return status >= 502 && status <= 504;
-}
-
 // B35: did this failure mean "you're signed out" rather than "the save broke"?
 // A 401 is the whole answer — store-bridge now returns one for a sync 401 that
 // even a token refresh couldn't rescue (instead of flattening it into a 500), and
@@ -1881,114 +1937,19 @@ function sessionExpiredFrom(resp) {
   return !!(resp && resp.status === 401);
 }
 
-// Plain words for it, from the reader's side, no jargon (BRAND.md). Two of them,
-// because the safe advice differs: a failed KEEP has nothing typed to lose, so
-// "reload" is a real fix. A failed NOTE has the reader's own words sitting in the
-// box, and a reload would throw them away to fix a sign-in — so that path never
-// offers one. (We can't stash the draft either: notes are E2EE, and parking
-// plaintext in localStorage to survive a reload would break that promise for the
-// sake of convenience.)
-const SESSION_EXPIRED_MSG = "Your sign-in expired — reload to save this";
+// Plain words for it, from the reader's side, no jargon (BRAND.md). A failed NOTE
+// has the reader's own words sitting in the box, and a reload would throw them away
+// to fix a sign-in — so this never offers one. (We can't stash the draft either:
+// notes are E2EE, and parking plaintext in localStorage to survive a reload would
+// break that promise for the sake of convenience.)
 const SESSION_EXPIRED_NOTE_MSG =
   "Your sign-in expired. Your note is still here — copy it, then reload to sign back in.";
 
-// Resolves true on success, else false. `_lastKeepExpired` carries WHY the last
-// failure happened out to recordKeep, which owns the message — kept beside the
-// loop rather than returned as a pair so the call site stays a plain boolean.
-let _lastKeepExpired = false;
-async function keepWriteWithRetry(a) {
-  _lastKeepExpired = false;
-  for (let i = 0; ; i++) {
-    try {
-      await recordChoice(a, null, { quiet: true });
-      return true;
-    } catch (e) {
-      // The note editor may have landed the row while we were waiting (it re-records
-      // when currentChoiceId is null) — then there's nothing left to retry.
-      if (currentChoiceId != null) return true;
-      if (e && e.sessionExpired) _lastKeepExpired = true;
-      if (!e || !e.neverReached || i >= KEEP_RETRY_DELAYS.length) return false;
-      await new Promise((r) => setTimeout(r, KEEP_RETRY_DELAYS[i]));
-    }
-  }
-}
-
-async function recordKeep(a, key) {
-  key = key || albumKey(a);
-  markMet(key);                                               // don't re-serve today
-  // Track it wherever it belongs: the day-deck's map when the record is part of today,
-  // otherwise the session map (FB#87 — a keep from Explore has no deck to live in).
-  // Only a record the deck is actually dealing belongs in deckState.kept — the
-  // end-of-deck line counts it ("You kept N today"), so a record kept from Explore
-  // must not inflate it.
-  const kept = (deckState && Array.isArray(deckState.records) &&
-    deckState.records.some((r) => albumKey(r) === key))
-    ? deckState.kept : keptOutsideDeck;
-  kept.set(key, kept.get(key) || null);                       // kept now (count)
-  if (!await keepWriteWithRetry(a)) {
-    // Out of retries. Hand the record BACK to the day: markMet above would otherwise
-    // keep it out of the deck for the rest of today even though nothing was saved,
-    // which turns a failed write into a record the reader can never reach again. Now
-    // the worst case is meeting it a second time — recoverable, and honest.
-    unmarkMet(key);
-    kept.delete(key);
-    updateSetAsideBar();
-    // B35: an expired sign-in isn't a broken save, and "Retry" is the wrong offer —
-    // it will fail the same way until the page reloads and re-mints the token. Name
-    // the cause and make the button do the thing that actually works.
-    if (_lastKeepExpired) {
-      showToast(SESSION_EXPIRED_MSG, "Reload", () => location.reload());
-      return;
-    }
-    // A record kept from Explore was never "in today's records" — say what's true of it.
-    showToast(kept === keptOutsideDeck
-      ? "Couldn't save that keep — nothing was written"
-      : "Couldn't save that keep — it's back in today's records", "Retry",
-      () => recordKeep(a, key));
-    return;
-  }
-  // Sequential keeps only: currentChoiceId is this row's id. Don't clobber an id
-  // we already have (a rapid interleave would mis-track, but we never undo those).
-  if (kept.get(key) == null && currentChoiceId != null) {
-    kept.set(key, currentChoiceId);
-  }
-  rememberKept(key, kept.get(key));   // the durable answer, without a re-fetch
-}
-
-// Keep → write the row, then advance and open the keep reveal to (optionally) write
-// what it brings back. Keeping is additive (D3): the deck never settles. We advance
-// BEFORE opening the reveal so dismissing it any way lands on the next record and
-// can never double-keep the same one. If the record was already kept from Album
-// details, reuse that row (don't double-write) so the note attaches to it.
-function keepCurrent() {
-  if (!deckState || deckState.idx >= deckState.records.length) return;
-  const a = deckState.records[deckState.idx];
-  const key = albumKey(a);
-  currentKeepAlbum = a;
-  if (deckState.kept.has(key)) {
-    currentChoiceId = deckState.kept.get(key);   // already kept — annotate that row
-  } else {
-    currentChoiceId = null;
-    recordKeep(a, key);                  // chosen-only: not_chosen stays NULL
-    maybeSeedChoiceWander(a);            // the kept album heads the Trail
-  }
-  advanceDeck();                         // keeping is additive — move on immediately
-  renderKeepReveal(a);                   // ...and open the (annotation-only) keep reveal
-  openChoiceReveal();
-}
-
-// Records kept from Album details while OUTSIDE today's deck (FB#87 — found in Explore,
-// reached from a thread, opened from the Notebook). deckState.kept can't hold these: it
-// is the day-deck's own state, rebuilt per day and absent entirely outside Today. Session
-// -scoped on purpose — it exists so the bar can say "Kept ✓" and offer undo while the
-// record is on screen; the durable record is the Notebook row itself.
-const keptOutsideDeck = new Map();   // album key -> choice id (null until the id lands)
-
 // Every record you have EVER kept: uid -> choice id, from /api/choices/kept (FB#87 —
-// "it seems silly to add it twice"). Loaded once, lazily, the first time a door opens,
-// then maintained in place on each keep/undo so it never needs re-fetching. null until
-// it lands; a door that opens first shows what this session knows and corrects itself
-// when the answer arrives.
+// "it seems silly to add it twice"). Keep retired at v329, so this only ever names
+// records kept before then — Album details still says "Kept ✓" for them. Loaded once,
+// lazily, the first time a door opens. null until it lands; a door that opens first
+// shows what this session knows and corrects itself when the answer arrives.
 let keptIndex = null;
 let keptIndexPromise = null;
 
@@ -1997,63 +1958,14 @@ function loadKeptIndex() {
   keptIndexPromise = fetch("/api/choices/kept")
     .then((r) => (r.ok ? r.json() : { kept: {} }))
     .then((d) => { keptIndex = new Map(Object.entries(d.kept || {})); return keptIndex; })
-    // Best-effort: a failed lookup must never block keeping. An empty index just means
-    // the bar offers Keep, which is the old behaviour, not a broken one.
+    // Best-effort: a failed lookup must never block the door. An empty index just means
+    // no "Kept ✓" line, which is an omission, not a broken bar.
     .catch(() => { keptIndex = new Map(); return keptIndex; });
   return keptIndexPromise;
 }
 
 function isKeptRecord(key) {
-  if (deckState && deckState.kept.has(key)) return true;
-  if (keptOutsideDeck.has(key)) return true;
   return !!(keptIndex && keptIndex.has(key));
-}
-// Was this keep made in THIS session? Only then is "undo" the honest word — walking back
-// something you kept weeks ago isn't an undo, and silently deleting an old Notebook entry
-// from a door is not a thing a door should do. Those say "Kept ✓" and stop there; the
-// Notebook is where you remove a record you've lived with.
-function keptThisSession(key) {
-  return !!((deckState && deckState.kept.has(key)) || keptOutsideDeck.has(key));
-}
-function rememberKept(key, id) {
-  if (!key) return;
-  if (!keptIndex) keptIndex = new Map();
-  keptIndex.set(key, id != null ? id : null);
-}
-function forgetKept(key) {
-  if (keptIndex) keptIndex.delete(key);
-}
-
-// Keep from Album details (request 1, widened by FB#87): write the keep and track it, but
-// STAY on the story — the bar re-renders to a "Kept ✓ / undo" acknowledgment. When the
-// record IS the current deck record, re-render the deck behind the modal so it reflects
-// the kept state once the story closes.
-async function keepFromStory(a) {
-  const key = albumKey(a);
-  if (!key || isKeptRecord(key)) return;
-  currentKeepAlbum = a;
-  currentChoiceId = null;
-  await recordKeep(a, key);
-  maybeSeedChoiceWander(a);
-  if (deckState) renderDeck();
-}
-
-// Undo a keep — delete its choice row and untrack it. From the deck's kept state or
-// Album details' "undo". Optimistic: untrack + repaint first, then DELETE.
-async function unkeepRecord(key) {
-  if (!key) return;
-  // The keep lives in the deck's map or the session one (FB#87) — undo has to reach both.
-  const kept = (deckState && deckState.kept.has(key)) ? deckState.kept : keptOutsideDeck;
-  if (!kept.has(key)) return;
-  const id = kept.get(key);
-  kept.delete(key);
-  forgetKept(key);
-  unmarkMet(key);                        // an undone keep can be met again today
-  if (deckState) renderDeck();
-  if (id != null) {
-    try { await fetch(`/api/choices/${id}`, { method: "DELETE" }); }
-    catch (e) { /* best-effort; the row can also be removed from the Notebook */ }
-  }
 }
 
 // Set aside → stack the record in the local, per-day pile (D2) and move on. A door,
@@ -2067,183 +1979,17 @@ function setAsideCurrent() {
   advanceDeck();
 }
 
-// The keep moment: a single opened record with its Listen door and a way to write.
-// FB#106c: "✎ Write a note" opens the ordinary note composer now, so what you write
-// here is a real journal note (taggable to a song, editable) rather than a reason
-// hung on the choice row. No "other record" — a keep has no not-chosen (D4).
-// The deck has already advanced by the time this opens, so this reveal is purely
-// annotation: dismissing it any way just returns you to the (next) record.
-//   1. Identity: a small art thumb + artist — title + the browse meta line. It is
-//      NOT a door into Album details — a nested full modal opened from here looped
-//      first-run testers between the reveal and the story (2026-07-15, owner). The
-//      artist / genre / label threads in the meta line stay their own pull-doors; the
-//      record's full story stays one tap away from the deck card itself.
-//   2. Listen (#choiceListen): the compact one-pill row (listening is secondary to
-//      the keep you've just made).
-//   3. The note: a "✎ Take a note" button opens the composer inline (shares the
-//      note-modal chrome), saving to choices.note.
-//   4. "Back to today's records" closes the reveal.
-function renderKeepReveal(a) {
-  const key = albumKey(a);
-  a._doorPending = poolOn() && !a._doorFilled;
-  $("#pick").innerHTML = `
-    <div class="choice-identity">
-      <div class="choice-thumb">${coverHtml(a, { fix: false })}</div>
-      <div class="choice-id-text">
-        <h2 class="choice-chose">You kept…</h2>
-        <p class="choice-title">${artistLink(a.artist)} — <b>${esc(a.title)}</b></p>
-        <p class="choice-sub">${metaSub(a)}</p>
-      </div>
-    </div>
-    <div id="choiceListen">${listenBlockHtml(a, { compact: true })}</div>
-    <div class="why">
-      <button type="button" id="chooseWhyToggle" class="why-open-btn">✎ Write a note</button>
-    </div>
-    <div class="keep-done">
-      <button type="button" id="keepDone" class="commit-btn">Back to today's records</button>
-    </div>`;
-  // Eager-load the cover rather than relying on IntersectionObserver, which is
-  // unreliable inside a modal that was display:none at observe time.
-  observeArt($("#pick"), { eager: 4 });
-
-  // Fan out the confirmed door and repaint just the Listen row once it settles —
-  // never leave the spinner spinning.
-  resolveDoor(key).then(() => {
-    a._doorPending = false;
-    const el = $("#choiceListen");
-    if (el) el.innerHTML = listenBlockHtml(albumData[key] || a, { compact: true });
-  });
-
-  // FB#106c (owner's call, 2026-08-06): "✎ Write a note" here opens the SAME composer
-  // as everywhere else in the app, instead of the inline box this screen used to carry.
-  //
-  // Why the swap rather than adding song pills to the old box: that box wrote
-  // `choice.note` — a reason hung on the kept row via PATCH /api/choices/<id>. A choice
-  // row has no uid and no `ref`, so there was nothing on it a song could be tied to; the
-  // reader asking to "tag a specific song here" was asking this screen to write the kind
-  // of thing the composer writes. Now it does, and everything that follows from being a
-  // real note follows too: it can be pointed at a song (the pills arrive from the record
-  // itself since the sourcing fix above), edited, deleted, and it shows up in Your notes
-  // and the Notebook trail like any other.
-  //
-  // Existing `choice.note` text is untouched and still renders in the trail — this
-  // changes only what NEW writing from this screen becomes.
-  $("#chooseWhyToggle").addEventListener("click", () => {
-    const uid = albumKey(a);
-    if (uid) openNoteModal(uid);
-  });
-
-  // "Back to today's records" just closes — the deck already advanced on keep.
-  $("#keepDone").addEventListener("click", closeChoiceReveal);
-}
-
 // Reorder-only pref change: the SET (what surfaces) is unchanged, so we don't
-// refetch/re-draw — we just restack the listen order on whatever's on screen: the
-// open keep reveal's compact row and/or the deck card's listen block. (A membership
-// change goes through refreshSurfaces instead, which redraws from the new pool.)
+// refetch/re-draw — we just restack the listen order on the deck card's listen
+// block. (A membership change goes through refreshSurfaces instead, which redraws
+// from the new pool.)
 function repaintChoiceListen() {
-  const rv = document.getElementById("choiceListen");
-  if (rv && currentKeepAlbum &&
-      !$("#choiceRevealModal").classList.contains("hidden")) {
-    const k = albumKey(currentKeepAlbum);
-    rv.innerHTML = listenBlockHtml(albumData[k] || currentKeepAlbum, { compact: true });
-  }
   const dk = document.getElementById("deckListen");
   if (dk && deckState && deckState.idx < deckState.records.length) {
     const a = deckState.records[deckState.idx];
     dk.innerHTML = listenBlockHtml(albumData[albumKey(a)] || a, { compact: true });
   }
 }
-
-// E2: the keep reveal is a door (the artist-panel pattern), not a panel below the
-// deck. open/close only toggle the overlay — renderKeepReveal already built the
-// content and wired it, so re-opening keeps the why-box and its pending text.
-function openChoiceReveal() {
-  const m = $("#choiceRevealModal");
-  if (!m) return;
-  m.classList.remove("hidden");
-  // Move focus into the door (a11y) but never into the textarea — keeping an album
-  // must not pop the mobile keyboard (the same papercut renderKeepReveal guards).
-  const close = $("#choiceRevealClose");
-  if (close) close.focus({ preventScroll: true });
-}
-function closeChoiceReveal() {
-  const m = $("#choiceRevealModal");
-  if (m) m.classList.add("hidden");
-}
-
-// Record a keep as a chosen-only choice row (not_chosen null). Kept general — it
-// still accepts not_chosen and PATCHes when currentChoiceId is already set, which
-// the note composer's re-record fallback relies on.
-async function recordChoice(chosen, not_chosen, opts = {}) {
-  // Identity travels as uid; chosen_id/not_chosen_id ride along as Discogs provenance
-  // (NULL for an MB-only pool album) so the server/store can still snapshot the
-  // album and the forest (albums.db) keeps its release_id seeds.
-  const body = {
-    chosen_uid: albumKey(chosen),
-    not_chosen_uid: not_chosen ? albumKey(not_chosen) : null,
-    chosen_id: chosen.release_id != null ? chosen.release_id : null,
-    not_chosen_id: not_chosen && not_chosen.release_id != null ? not_chosen.release_id : null,
-    day: mdParam(),
-  };
-  // Expose the write as a promise the reason editor can await, and treat a non-2xx
-  // response as a failure (a store-bridge/server error resolves with an error body,
-  // it doesn't throw — so `r.ok` is the honest signal, not the fetch rejecting).
-  recordChoicePromise = (async () => {
-    if (currentChoiceId == null) {
-      let r;
-      try {
-        r = await fetch("/api/choices", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-      } catch (netErr) {
-        netErr.neverReached = true;      // the request never completed — safe to re-POST
-        throw netErr;
-      }
-      if (!r.ok) {
-        const err = new Error("POST /api/choices → " + r.status);
-        err.neverReached = writeNeverReachedApp(r.status);
-        // B35: the bridge answers 401 for a sync failure it couldn't refresh away.
-        // Carry it up so the toast can name the cause; a retry can't fix a dead
-        // session, so neverReached stays false and the retry loop doesn't spin.
-        err.sessionExpired = sessionExpiredFrom(r);
-        throw err;
-      }
-      const data = await r.json().catch(() => ({}));
-      if (data.id == null) throw new Error("POST /api/choices returned no id");
-      currentChoiceId = data.id;
-    } else {
-      const r = await fetch(`/api/choices/${currentChoiceId}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chosen_uid: body.chosen_uid, not_chosen_uid: body.not_chosen_uid,
-          chosen_id: body.chosen_id, not_chosen_id: body.not_chosen_id,
-        }),
-      });
-      if (!r.ok) throw new Error(`PATCH /api/choices/${currentChoiceId} → ` + r.status);
-    }
-  })();
-  try {
-    await recordChoicePromise;
-  } catch (e) {
-    // A silently-lost keep is worse than a visible error. Surface it and offer a
-    // retry; currentChoiceId stays null so the retry re-POSTs a fresh row. (Callers
-    // fire-and-forget, so this catch also keeps the rejection from going unhandled.)
-    // `opts.quiet`: the caller is running its own retry loop (recordKeep) and owns
-    // the message, so don't toast once per attempt.
-    if (opts.quiet) throw e;
-    showToast("Couldn't save your keep — tap to retry", "Retry",
-      () => recordChoice(chosen, not_chosen));
-  }
-}
-
-// FB#106c (2026-08-06): `refreshChooseWhyState` and `saveChoiceReason` lived here and
-// are gone with the inline why-box they served. That box wrote `choice.note` via
-// PATCH /api/choices/<id>; the keep reveal now opens the ordinary note composer, so new
-// writing from that screen is a real journal note. The READ path is untouched — a
-// choice that already carries a note still renders it in the trail — and
-// `PATCH /api/choices/<id>` still exists for `recordChoice`'s own use.
 
 // --- SET-ASIDE PILE (D2) ----------------------------------------------------
 // The records you skipped today, stacked in a reopenable pile. Local, per-day and
@@ -2289,7 +2035,7 @@ function renderAsideList() {
   const list = $("#setAsideList");
   if (!list || !deckState) return;
   if (!deckState.aside.length) {
-    list.innerHTML = `<p class="empty">Nothing skipped.</p>`;
+    list.innerHTML = `<p class="empty">Nothing here yet.</p>`;
     return;
   }
   list.innerHTML = deckState.aside.map((a) => {
@@ -2355,7 +2101,9 @@ function genresOf(a) {
 function stylesOf(a) {
   const genres = new Set(genresOf(a).map((g) => g.toLowerCase()));
   const seen = new Set();
-  return (a.styles || "").split(",").map((t) => t.trim()).filter(Boolean)
+  // B2: MusicBrainz community tags ride after the record's own styles (the server has
+  // already dropped any that just respell a genre or style it carries).
+  return `${a.styles || ""},${a.tags || ""}`.split(",").map((t) => t.trim()).filter(Boolean)
     .filter((t) => {
       const k = t.toLowerCase();
       if (genres.has(k) || seen.has(k)) return false;
@@ -3175,13 +2923,11 @@ function noteTrackItemFor(albumUid, t) {
            album_artist: a.artist || "", album_title: a.title || "" } };
 }
 
-// Whatever we know about this record right now. The door's cache first, then the name
-// cache, then the record the keep reveal is standing on — which is the one the Album
-// door has never opened, and exactly the case FB#106c is about.
+// Whatever we know about this record right now: the door's cache first, then the
+// name cache.
 function noteAlbumSnapshot(uid) {
   return albumData[uid]
     || albumIndex[uid]
-    || (currentKeepAlbum && albumKey(currentKeepAlbum) === uid ? currentKeepAlbum : null)
     || {};
 }
 
@@ -3530,7 +3276,9 @@ async function saveNote() {
     }
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || "failed");
+    const savedFor = noteTarget;        // closeNoteModal clears it
     closeNoteModal();
+    if (!editing) afterNoteSaved(savedFor);
     refreshJournalAndModal();           // reloads the shelf + the open story door
     // F26: a guest's reflection is kept — but only on this device (the buffer).
     // Say so plainly, and hold the door to making it permanent. A toast after
@@ -3540,6 +3288,21 @@ async function saveNote() {
         "Start →", () => { if (window.AOTDAuth) AOTDAuth.showGate("note"); });
     }
   } catch (e) { $("#noteStatus").textContent = `Could not save: ${e.message}`; }
+}
+
+// v329: writing a note took over the job Keep did. A NEW note on the record Today is
+// showing — written from the card's ✎ button, from Album details, from anywhere — means
+// you've made that record yours, so the deck moves on, exactly as a keep did: it isn't
+// re-served today (markMet), the end-of-day line counts it, and the card behind an open
+// Album details advances so closing it lands on the next record. Editing a note, or a
+// note about any other record, leaves the deck where it is.
+function afterNoteSaved(uid) {
+  if (!uid || !deckState || deckState.idx >= deckState.records.length) return;
+  if (albumKey(deckState.records[deckState.idx]) !== uid) return;
+  markMet(uid);
+  (deckState.noted || (deckState.noted = new Set())).add(uid);
+  advanceDeck();
+  if (storyRid === uid) renderStoryDeckActions(uid);
 }
 
 // Soft-delete (D3): the note vanishes immediately but is recoverable from the
@@ -3616,7 +3379,10 @@ async function deleteSelectedTrail() {
     let anyFailed = false;
     for (const it of items) {
       try {
-        const url = it.kind === "note" ? `/api/journal/note/${it.id}` : `/api/choices/${it.id}`;
+        // Each kind deletes through its own route — an opened row sent to
+        // /api/choices would delete a kept record with the same id, or nothing.
+        const url = it.kind === "note" ? `/api/journal/note/${it.id}`
+          : it.kind === "opened" ? `/api/opened/${it.id}` : `/api/choices/${it.id}`;
         const r = await fetch(url, { method: "DELETE" });
         if (!r.ok) anyFailed = true;
       } catch (e) { anyFailed = true; }
@@ -3778,15 +3544,19 @@ async function loadTrail(force = false) {
   }
   const p = (async () => {
     try {
-      const [journal, choicesResp] = await Promise.all([
+      const [journal, choicesResp, openedResp] = await Promise.all([
         readJournal("/api/journal" + (q ? `?q=${encodeURIComponent(q)}` : "")),
         readJournal("/api/choices"),
+        // v9: opened entries. Unlike notes, a failed read here degrades to "none
+        // shown" rather than "couldn't load": an open is a trace of a tap, not
+        // writing, so it must never be the reason the notebook won't open.
+        readJournal("/api/opened").catch(() => ({ opened: [] })),
       ]);
       // A newer search (or reload) started after us — discard this response so a
       // slow fetch can't clobber fresher results (e.g. clearing the box).
       if (seq !== _trailSeq) return;
       _trailUnreadable = +journal.unreadable || 0;
-      const entries = buildTrailEntries(journal, choicesResp, q);
+      const entries = buildTrailEntries(journal, choicesResp, q, openedResp);
       // Resolve albums the trail needs but the feed didn't hydrate (it only hydrates
       // by numeric release_id): a track note's album cover (FB#56), and an album note
       // whose stored snapshot has no name — MB-only ('m:') albums have a null
@@ -3815,7 +3585,16 @@ async function loadTrail(force = false) {
 // Flatten the grouped notes feed + the choices feed into dated entries. A free note
 // arrives in the null-uid group (uid/artist/title null) → a free noticing. Notes are
 // already server-filtered by ?q=; choices are filtered here by the same query.
-function buildTrailEntries(journal, choicesResp, q) {
+// v9: opened entries join too. An open of a record you also WROTE about that same local
+// day doesn't get a row of its own — it rides on that note as an "Opened in ___" line,
+// so the day reads as one thing you did, not two. Same-day duplicates (a tap on two
+// devices) fold to the earliest. Filtered by ?q= on the client, like choices.
+function localDayOf(iso) {
+  const d = new Date(iso || "");
+  if (isNaN(d)) return "";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function buildTrailEntries(journal, choicesResp, q, openedResp) {
   const entries = [];
   for (const g of (journal.albums || [])) {
     for (const n of (g.notes || [])) {
@@ -3835,6 +3614,26 @@ function buildTrailEntries(journal, choicesResp, q) {
       if (!hay.includes(ql)) continue;
     }
     entries.push({ kind: "choice", at: c.chosen_at || "", id: c.id, choice: c });
+  }
+  const noteByDay = new Map();          // "uid|local day" -> the first note entry
+  for (const e of entries) {
+    if (e.kind !== "note" || !e.uid) continue;
+    const k = e.uid + "|" + localDayOf(e.at);
+    if (!noteByDay.has(k)) noteByDay.set(k, e);
+  }
+  const seenOpen = new Set();
+  const opened = ((openedResp && openedResp.opened) || []).slice()
+    .sort((a, b) => String(a.opened_at || "").localeCompare(String(b.opened_at || "")));
+  for (const o of opened) {               // oldest first, so the earliest wins a fold
+    const k = o.uid + "|" + o.day;
+    if (!o.uid || seenOpen.has(k)) continue;
+    seenOpen.add(k);
+    const note = noteByDay.get(k);
+    if (note) { note.openedIn = o.service; continue; }
+    if (ql && ![o.artist, o.title].filter(Boolean).join(" ").toLowerCase().includes(ql)) continue;
+    entries.push({ kind: "opened", at: o.opened_at || "", id: o.id, uid: o.uid,
+      artist: o.artist || "", title: o.title || "", cover: o.cover || null,
+      service: o.service, day: o.day });
   }
   // Newest first; the day stamp is a plain string so a lexical sort is chronological.
   entries.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
@@ -3910,8 +3709,35 @@ function trailNoteEntry(e) {
       <div class="te-head">${head}</div>
       <div class="te-note">${renderMarkdown(e.body)}</div>
       ${track}
+      ${e.openedIn ? `<div class="te-opened">Opened in ${esc(_platLabel[e.openedIn] || e.openedIn)}</div>` : ""}
     </div>
   </button>`;
+}
+
+// v9: an opened record — quieter than a note (smaller cover, one muted line), since
+// it's a trace of reaching for a record, not something you wrote. Tapping it opens
+// Album details, like a kept record; long-press removes it like anything else here.
+function trailOpenedEntry(e) {
+  const label = _platLabel[e.service] || e.service || "";
+  return `<button type="button" class="trail-entry trail-opened" data-uid="${esc(e.uid || "")}"
+      title="Open ${esc([e.artist, e.title].filter(Boolean).join(" — "))}">
+    <div class="te-thumb">${coverHtml({ uid: e.uid, artist: e.artist, title: e.title,
+      cover: e.cover }, { fix: false })}</div>
+    <div class="te-body">
+      <div class="te-head">${trailTitleHead(e.artist, e.title)}</div>
+      <div class="te-opened">Opened in ${esc(label)}</div>
+    </div>
+  </button>`;
+}
+
+// v9: "Show opened" — whether opened entries are drawn. Remembered on this device
+// (owner's call), and only a convenience, so storage failing just means "shown".
+const SHOW_OPENED_KEY = "mf-notebook-show-opened/v1";
+function showOpened() {
+  try { return localStorage.getItem(SHOW_OPENED_KEY) !== "0"; } catch (e) { return true; }
+}
+function setShowOpened(on) {
+  try { localStorage.setItem(SHOW_OPENED_KEY, on ? "1" : "0"); } catch (e) { /* session only */ }
 }
 
 // B23 guard: a robust "artist — title" head. The em-dash separator shows ONLY when
@@ -4052,17 +3878,35 @@ function renderTrail(entries) {
     box.innerHTML = q
       ? `<div class="empty">Nothing in your notebook matches “${esc(q)}”.</div>`
       : `<div class="empty trail-empty">Your field notebook is empty.<br>
-          Write down what you notice, or keep a record — it takes root here.
+          Write down what you notice — it takes root here. Records you open with
+          Listen show up here too.
           <span class="te-empty-hint muted">Tap ✎ Write a note below to start.</span></div>`;
     return;
   }
   // FB#94: are we looking at matches rather than the whole notebook? Read from the
   // box (not the entries) so an empty-but-active search is still "searching".
   const searching = !!($("#journalSearch") && $("#journalSearch").value.trim());
-  let html = "", lastDay = null;
+  // v9: the toggle shows only when there's something for it to act on.
+  const hideOpened = !showOpened();
+  const anyOpened = entries.some((e) => e.kind === "opened");
+  const tog = $("#openedToggle");
+  if (tog) {
+    tog.hidden = !anyOpened;
+    tog.classList.toggle("on", !hideOpened);
+    tog.setAttribute("aria-pressed", String(!hideOpened));
+  }
+  // A hidden open still counts toward its day's "N opened hidden" line, so nothing
+  // seems to vanish — the count is written once each day's entries are done.
+  let html = "", lastDay = null, hiddenInDay = 0;
+  const flushHidden = () => {
+    if (hiddenInDay) html += `<p class="trail-hidden-opened">${hiddenInDay} opened record${
+      hiddenInDay === 1 ? "" : "s"} hidden</p>`;
+    hiddenInDay = 0;
+  };
   for (const e of entries) {
     const day = (e.at || "").slice(0, 10);
     if (day !== lastDay) {
+      flushHidden();
       // FB#91: the machine-readable day rides along so the date rail can group by
       // month without re-parsing the localized label it shows a person.
       // FB#94: while a search is filtering the trail, the day is a DOOR — tap it to
@@ -4076,7 +3920,9 @@ function renderTrail(entries) {
         : `<div class="trail-day" data-day="${esc(day)}">${esc(trailDayLabel(e.at))}</div>`;
       lastDay = day;
     }
-    const entryHtml = e.kind === "note" ? trailNoteEntry(e) : trailChoiceEntry(e);
+    if (e.kind === "opened" && hideOpened) { hiddenInDay++; continue; }
+    const entryHtml = e.kind === "note" ? trailNoteEntry(e)
+      : e.kind === "opened" ? trailOpenedEntry(e) : trailChoiceEntry(e);
     // #48 (v2): no per-entry ✕ — deletion is via the opened note's Delete button, or
     // long-press → selection mode (multi-delete). The row carries its identity for
     // that mode; the check badge is a sibling of the entry button (a button can't
@@ -4084,6 +3930,7 @@ function renderTrail(entries) {
     html += `<div class="trail-row" data-kind="${esc(e.kind)}" data-id="${esc(String(e.id))}">`
       + `${entryHtml}<span class="te-check" aria-hidden="true"></span></div>`;
   }
+  flushHidden();
   box.innerHTML = html;
   observeArt(box);
   if (_trailSelecting) syncTrailSelectionUI();   // keep highlights across a re-render
@@ -5096,17 +4943,12 @@ function closeStoryModal() {
   storyRid = null;
 }
 
-// Request 1: Album details opened for the CURRENT Today record gets Keep / Set aside
-// right here. Keep stays put and acknowledges (undoable); Set aside closes and moves
-// the deck on. Hidden everywhere else (a browse card, a Notebook entry, a wandered
-// album) — those aren't the record you're deciding on today.
-// FB#87: "I want to be able to keep this record. I found it through the explore page."
-// Album details offers Keep for ANY record now, not only the current Today one — VISION
-// P3 is explicit that keeping stays easy, and a record you went digging for is exactly
-// one that stayed with you. **Skip stays deck-only**: skipping is how you move past a
-// record the day dealt you, so it's meaningless on one you went looking for (and the
-// Skipped list is today's, per BRAND). So: deck record → Keep + Skip; anything else →
-// Keep alone.
+// The acts row inside Album details. v329 (owner 2026-10-03): Keep is retired, so
+// every record gets ✎ Write a note — saving one on today's record moves the deck on
+// (afterNoteSaved), the way Keep did. **Skip stays deck-only** (FB#87): skipping is how
+// you move past a record the day dealt you, so it's meaningless on one you went looking
+// for, and the Skipped list is today's. A record kept before v329 still says so, in
+// the past tense and with no undo — those keeps are history in your Notebook now.
 function renderStoryDeckActions(rid) {
   const bar = $("#storyDeckActions");
   if (!bar) return;
@@ -5115,15 +4957,12 @@ function renderStoryDeckActions(rid) {
     deckState.idx < deckState.records.length &&
     albumKey(deckState.records[deckState.idx]) === rid;
   bar.classList.remove("hidden");
-  bar.innerHTML = isKeptRecord(rid)
-    ? `<p class="deck-kept-ack">Kept ✓ — in your Notebook${
-         keptThisSession(rid)
-           ? ` <button type="button" class="linkish" data-story-unkeep>undo</button>`
-           : ``}</p>`
-    : `<div class="deck-buttons">
-         <button type="button" class="keep-btn" data-story-keep>Keep</button>
+  bar.innerHTML = (isKeptRecord(rid)
+      ? `<p class="deck-kept-ack">Kept ✓ — in your Notebook</p>` : ``)
+    + `<div class="deck-buttons">
+         <button type="button" class="note-btn" data-story-note>✎ Write a note</button>
          ${isDeckRecord
-           ? `<button type="button" class="set-aside-btn" data-story-setaside>Skip</button>`
+           ? `<button type="button" class="set-aside-btn" data-story-setaside>Next</button>`
            : ``}
        </div>`;
   // First door of the session: the durable answer isn't loaded yet. Fetch it and
@@ -5267,9 +5106,17 @@ async function openArtistPanel(name, opts = {}) {
   const dg = data.discogs_url
     ? ` · <a href="${esc(data.discogs_url)}" target="_blank"
         rel="noopener">Discogs ↗</a>` : "";
+  // B2 (owner, 2026-10-04): MusicBrainz's genres for the ARTIST appear here and only
+  // here — plain text, not doors or filters, since an artist's range isn't any one
+  // album's. The server sends none when the name is ambiguous.
+  const ag = (data.artist_genres || []).filter(Boolean);
+  const agLine = ag.length
+    ? `<p class="muted artist-genres">Genres on MusicBrainz: ${ag.map(esc).join(" · ")}</p>`
+    : "";
   $("#artistHead").innerHTML =
     `<h3>${esc(name)}</h3>
      <p class="muted">${n} album${n !== 1 ? "s" : ""} on file${dg}</p>
+     ${agLine}
      ${shareBtnHtml("data-share-artist", "this artist")}`;
   $("#artistCatalog").innerHTML = n
     ? albums.map(browseCard).join("")
@@ -5850,8 +5697,9 @@ function applyNav(nav) {
   else if (nav.t === "catalog") searchCatalog(nav.field, nav.term, { noPush: true });
   else if (nav.t === "decade") searchDecade(nav.decade, { noPush: true });
   else if (nav.t === "journalday") goToJournalDay(nav.day, { noPush: true });
-  // A keep-seeded node (H1.B1): the deck is session state we can't replay later, so
-  // returning to it just lands back on Today (its snapshot restores the actual deck
+  // A keep-seeded node (H1.B1, from before Keep retired at v329 — a restored trail can
+  // still hold one): the deck is session state we can't replay later, so returning
+  // to it just lands back on Today (its snapshot restores the actual deck
   // view when one exists; this is the no-snapshot fallback).
   else if (nav.t === "pick") { showMode("decide"); enterToday(); }
 }
@@ -5901,48 +5749,6 @@ function pushAndGo(label, nav, navFn) {
   // some later interaction happened to re-render. Found 2026-08-07 while restoring a
   // wander across a reload, which lands in exactly the same spot.
   renderBreadcrumb();
-}
-
-// H1.B1: a Choose pick seeds a wander so the Trail (⤳) reflects it. Without this
-// a pick is neither a wander node nor a session-history entry, so after only
-// picking the Trail panel looked empty — which a new user reads as "nothing
-// happened." We mirror the pushAndGo root convention: the "Choose" anchor is the
-// pinned root and the picked album is the first step off it, so the breadcrumb +
-// the wander map show "Choose › <album>", and any door you then pull branches
-// from the pick. We never disturb an active wander; re-choosing before you've
-// wandered anywhere just re-points the head.
-function maybeSeedChoiceWander(a) {
-  const title = (a && a.title) ? a.title : "your choice";
-  const rid = albumKey(a);
-  if (wanderCursor < 0) {
-    const root = {
-      id: ++_wanderSeq, parent: -1, label: rootLabel(), nav: null, snap: snapshotView(),
-    };
-    const pick = {
-      id: ++_wanderSeq, parent: 0, label: title,
-      nav: { t: "pick", rid }, snap: snapshotView(), _choiceSeed: true,
-    };
-    wanderTree = [root, pick];
-    wanderCursor = 1;
-    wanderFrontier = 1;
-    renderBreadcrumb();
-  } else {
-    // Re-chosen (switched sides, or a fresh choice). Re-point the existing choice
-    // seed to the new album so the Trail's head matches your current pick — even
-    // if you'd already pulled a thread *from* the pick (which pushes a wander node,
-    // so the tree is longer than 2). We only relabel the seed node in place; we
-    // never restructure the tree or move where you're standing, so an active
-    // wander branch is left intact.
-    const seed = wanderTree.find((n) => n && n._choiceSeed);
-    if (seed) {
-      seed.label = title;
-      seed.nav = { t: "pick", rid };
-      // Refresh its snapshot only when you're actually standing on the pick
-      // (otherwise leave the ancestor node's saved view untouched).
-      if (wanderTree[wanderCursor] === seed) seed.snap = snapshotView();
-      renderBreadcrumb();
-    }
-  }
 }
 
 // The path from the root to any node (array of node indices, [0] = root).
@@ -6347,9 +6153,9 @@ function trailThumbHtml(nav) {
   // was `loading="lazy"`, and openWanderMap builds this markup BEFORE it takes
   // .hidden off the modal: a lazy <img> inserted into a display:none subtree
   // issues no request at all, so the fetch could not even begin until the modal
-  // was shown and laid out, and then ran at low priority. Same trap the keep
-  // reveal hit (see the eager note in renderKeepReveal) — that one is worked
-  // around with observeArt({eager}), which these <img>s never touch.
+  // was shown and laid out, and then ran at low priority. (The retired keep reveal
+  // hit the same trap and worked around it with observeArt({eager}), which these
+  // <img>s never touch.)
   // Eager is right here regardless of the ordering: a trail is bounded by how
   // far you have wandered, and these are 30-40px thumbs of images the session
   // has already downloaded.
@@ -6439,9 +6245,6 @@ function setSubtitleFor(mode) {
 
 function showMode(mode) {
   if (mode === "choices") mode = "journal";   // legacy: Choices folded into the trail
-  // E2: the keep reveal is a fixed overlay, not inside #decide — so a tab switch
-  // must close it explicitly. Without this it would float over Explore/Notebook.
-  closeChoiceReveal();
   _mode = mode;
   // N3: Explore is its own top tab now, so each tab lights only its own mode.
   document.querySelectorAll(".tab").forEach((t) =>
@@ -6493,8 +6296,9 @@ function closeAllDoors() {
   // one left open on Today was still open on the next tab. Collapse them on a tab
   // switch so each view opens tidy. (FB#97 retired the why-doors this also swept;
   // the header's narrowing controls are what's left.)
-  document.querySelectorAll("#listenPref, #genrePref, #datePref")
+  document.querySelectorAll("#listenPref, #datePref")
     .forEach((d) => d.removeAttribute("open"));
+  closeStyleBrowse();              // the Genre screen is a door too (v328)
 }
 
 function setMode(mode) {
@@ -6619,6 +6423,79 @@ function wireListenCount() {
         + encodeURIComponent(a.dataset.listen) + "&tier=" + clientMode());
     } catch (err) { /* a counter never breaks a listen */ }
   });
+}
+
+// --- Opened (v9, owner 2026-10-03) ---------------------------------------------
+// Keep was retired: writing a note is how a record becomes yours, and tapping Listen
+// leaves a quiet "Opened in Spotify" entry in the Notebook on its own. It records the
+// TAP — never "listened", which the app can't know (the honesty rule). One entry per
+// record per local day, whichever service and however many taps. Unlike the anonymous
+// count above, this is the reader's OWN history: it goes to their journal (encrypted
+// for an account, on-device for a guest, journal.db for the local build), never to us.
+const _openedToday = new Set();      // uids opened on _openedDay
+let _openedDay = null;
+function openedToday(uid) {
+  const day = todayFull();
+  if (_openedDay !== day) { _openedToday.clear(); _openedDay = day; }
+  return !!uid && _openedToday.has(uid);
+}
+
+// The record a Listen anchor belongs to: today's card, an Explore/browse card, or the
+// record Album details is showing. null when it can't be told (then nothing is written).
+function uidForListen(anchor) {
+  if (anchor.closest("#storyHead") && storyRid) return storyRid;
+  const host = anchor.closest(".deck-card[data-uid], .card[data-rid]");
+  return host ? (host.dataset.uid || host.dataset.rid || null) : null;
+}
+
+// Repaint just today's Listen row so its "✓ in Notebook" tag tracks the truth.
+function repaintDeckListen() {
+  const el = document.getElementById("deckListen");
+  if (!el || !deckState || deckState.idx >= deckState.records.length) return;
+  const a = deckState.records[deckState.idx];
+  el.innerHTML = listenBlockHtml(albumData[albumKey(a)] || a, { compact: true });
+}
+
+async function recordOpened(uid, service) {
+  if (!uid || openedToday(uid)) return;     // already in today's Notebook
+  _openedToday.add(uid);
+  repaintDeckListen();
+  const a = albumData[uid] || albumIndex[uid] || {};
+  let ok = false;
+  try {
+    const r = await fetch("/api/opened", {
+      method: "POST", keepalive: true,      // the tap is usually leaving the page
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uid, service, day: todayFull(),
+        artist: a.artist || "", title: a.title || "" }),
+    });
+    ok = r.ok && !!(await r.json()).ok;
+  } catch (e) { /* offline: an account's store keeps the row pending and replays it */ }
+  if (!ok) { _openedToday.delete(uid); repaintDeckListen(); }   // the tag never lies
+}
+
+function wireOpenedTap() {
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest && e.target.closest("a[data-listen]");
+    if (!a) return;
+    const uid = uidForListen(a);
+    if (uid) recordOpened(uid, a.dataset.listen);
+  });
+}
+
+// Re-learn which records were opened today from the journal itself — at boot, on
+// unlock (an account's store is empty until then) and after a sync brings in a tap
+// from another device — so the tag survives a reload and agrees across devices.
+async function loadOpenedToday() {
+  try {
+    const r = await fetch("/api/opened");
+    if (!r.ok) return;
+    const d = await r.json();
+    const day = todayFull();
+    openedToday(null);                      // roll the day over if it changed
+    for (const o of (d.opened || [])) if (o.day === day && o.uid) _openedToday.add(o.uid);
+    repaintDeckListen();
+  } catch (e) { /* the tag is a courtesy; the Notebook is the record */ }
 }
 
 // #5: keep external links from swallowing the installed app. In a standalone PWA
@@ -7092,6 +6969,7 @@ function init() {
   wireDialogA11y();
   wireListenPref();
   wireGenrePref();
+  wireStyleBrowse();
   wireRememberDoor();
   document.querySelectorAll(".tab").forEach((t) =>
     t.addEventListener("click", () => {
@@ -7117,6 +6995,8 @@ function init() {
   window.addEventListener("scroll", onScrollSyncRail, { passive: true });
   window.addEventListener("resize", syncDateRail, { passive: true });
   wireListenCount();               // anonymous listen-tap count (svc + tier only)
+  wireOpenedTap();                 // v9: the reader's own "opened" Notebook entry
+  loadOpenedToday();
   wireExternalLinksStandalone();   // #5: keep the installed app from being replaced
   wireCopySearch();                // copy an "artist — title" search string (F#10)
   // Tiny build readout in the footer so "which version am I on?" is answerable at
@@ -7545,8 +7425,15 @@ function init() {
       }
       openTrailNote(noteEl); return;
     }
-    const choiceEl = e.target.closest(".trail-entry.trail-choice");
+    const choiceEl = e.target.closest(".trail-entry.trail-choice, .trail-entry.trail-opened");
     if (choiceEl && choiceEl.dataset.uid) openStoryModal(choiceEl.dataset.uid);
+  });
+  // v9: "Show opened" — flip, remember, redraw from the store (cheap; no network for
+  // an account or a guest).
+  const openedTog = $("#openedToggle");
+  if (openedTog) openedTog.addEventListener("click", () => {
+    setShowOpened(!showOpened());
+    loadTrail(true);
   });
   // #48 (v2): long-press an entry to enter selection mode; a bar deletes the batch.
   wireTrailLongPress($("#trail"));
@@ -7573,10 +7460,6 @@ function init() {
   $("#storyClose").addEventListener("click", closeStoryModal);
   $("#storyModal").addEventListener("click", (e) => {
     if (e.target.id === "storyModal") closeStoryModal();
-  });
-  // FB#40: take a note on the whole record (the composer, tied to the album).
-  $("#storyNoteBtn").addEventListener("click", () => {
-    if (storyRid) openNoteModal(storyRid);
   });
   // FB#41: lock the page behind any open modal. A modal shows/hides by toggling
   // `.hidden`, so we watch every modal's class and reflect "any open" onto <body>
@@ -7621,8 +7504,8 @@ function init() {
   }, { passive: true });
   $("#storyModal").addEventListener("touchend", cancelLongPress);
   $("#storyModal").addEventListener("touchcancel", cancelLongPress);
-  // Request 1: the Keep / Set aside / undo bar inside Album details (only present for
-  // the current Today record — renderStoryDeckActions gates it).
+  // The acts row inside Album details: ✎ Write a note on every record, Skip only on
+  // today's (renderStoryDeckActions). Keep + its undo were retired at v329.
   $("#storyDeckActions").addEventListener("click", (e) => {
     const rid = storyRid;
     if (!rid) return;
@@ -7633,14 +7516,13 @@ function init() {
     const isDeckRecord = deckRec && albumKey(deckRec) === rid;
     const a = isDeckRecord ? deckRec : albumData[rid];
     if (!a) return;
-    if (e.target.closest("[data-story-keep]")) {
-      keepFromStory(a).then(() => renderStoryDeckActions(rid));
+    if (e.target.closest("[data-story-note]")) {
+      rememberNames(rid, a.artist, a.title);   // saveNote snapshots the name from here
+      openNoteModal(rid);
     } else if (e.target.closest("[data-story-setaside]")) {
       if (!isDeckRecord) return;         // Skip only ever applies to today's record
       closeStoryModal();
       setAsideCurrent();
-    } else if (e.target.closest("[data-story-unkeep]")) {
-      unkeepRecord(rid).then(() => renderStoryDeckActions(rid));
     }
   });
   // Your notes door (N1 Step 1).
@@ -7674,28 +7556,16 @@ function init() {
   // the wander rather than ejecting you from the app — the stack owns back-
   // navigation until it's empty (then back behaves normally).
   window.addEventListener("popstate", () => {
+    if (styleBrowsePopstate()) return;      // back closes the Genre screen first
     if (wanderCursor > 0) {
       gotoNode(wanderTree[wanderCursor].parent, { fromHistory: true });
     }
   });
-  // E2: the pick reveal door — ✕ and an overlay (backdrop) click both close it.
-  $("#choiceRevealClose").addEventListener("click", closeChoiceReveal);
-  $("#choiceRevealModal").addEventListener("click", (e) => {
-    if (e.target.id === "choiceRevealModal") closeChoiceReveal();
-  });
-  // Esc closes the map; and (E2) the pick reveal, but only when nothing deeper is
-  // stacked over it (a story/artist/label/note pulled *from* the reveal owns Esc
-  // first — closing those is their ✕). Other modals keep their own affordances.
+  // Esc closes the map. Other modals keep their own affordances.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if (_trailSelecting) { exitTrailSelection(); return; }   // #48 (v2): Esc leaves selection
     if (!$("#wanderMapModal").classList.contains("hidden")) { closeWanderMap(); return; }
-    const deeperOpen = ["storyModal", "artistModal", "labelModal",
-      "personModal", "noteModal"]
-      .some((id) => !$("#" + id).classList.contains("hidden"));
-    if (!deeperOpen && !$("#choiceRevealModal").classList.contains("hidden")) {
-      closeChoiceReveal();
-    }
   });
   $("#artClose").addEventListener("click", closeArtModal);
   $("#artModal").addEventListener("click", (e) => {
@@ -7792,7 +7662,7 @@ function maybeStartTour() {
   if (!ob || !ob.shouldShowTour || !ob.shouldShowTour()) return;
   setTimeout(() => {
     if (document.querySelector(".modal:not(.hidden)")) return;   // a flow owns the screen
-    if (!document.getElementById("keepBtn")
+    if (!document.getElementById("noteBtn")
         || !document.getElementById("setAsideBtn")) return;
     if (ob.showTourOffer) ob.showTourOffer();
     else ob.maybeStartTour();          // an older onboarding.js still just starts it
@@ -7804,11 +7674,12 @@ function maybeStartTour() {
 // the already-rendered deck (no re-render, so the deck's own maybeStartTour won't
 // re-fire) — so kick the tour here when the journal unlocks. Guarded by shouldShowTour,
 // so a returning unlock (flag still set) is a no-op.
-document.addEventListener("aotd:unlocked", () => maybeStartTour());
+document.addEventListener("aotd:unlocked", () => { maybeStartTour(); loadOpenedToday(); });
 // FB#107: a background reconcile brought in changes (e.g. a write from another
 // device) after the Notebook already rendered from the local cache — re-render it,
 // but only if it's the view on screen (a no-op cost otherwise).
 document.addEventListener("aotd:journal-updated", () => {
+  loadOpenedToday();
   if (currentMode() === "journal") loadTrail(true);
 });
 // FB#107: reconnecting flushes the offline-write outbox — replay any notes written

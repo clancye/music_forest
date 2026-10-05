@@ -28,14 +28,16 @@
   // The E2EE row kinds. "choice" was "pick" before v7; legacy "pick" server rows
   // are re-keyed onto "choice" at unlock (_migrateChoiceKind), and the server
   // keeps accepting "pick" only so those old rows can be tombstoned.
-  const KINDS = ["note", "choice", "trail", "mark"];
+  // "opened" (v9, 2026-10-03): a Listen tap — needs Supabase migration 0010.
+  const KINDS = ["note", "choice", "trail", "mark", "opened"];
   // Matches journal.py's EXPORT_VERSION so a file produced here imports there and
   // vice-versa (BETA_PLAN.md §8). v6 (P3 M2): every row is keyed on a source-
   // agnostic uid ('d:<release_id>' for Discogs, 'm:<album_id>' for MB-only);
   // release_id is denormalized provenance only. v7: `picks`/winner_*/loser_*
   // renamed to `choices`/chosen_*/not_chosen_* (import maps the old names). v8: a
   // note's uid may name a typed entity (art:/per:/trk:) carrying a `ref` snapshot.
-  const EXPORT_VERSION = 8;
+  // v9: an `opened` array — Listen taps, one per record per local day.
+  const EXPORT_VERSION = 9;
 
   // --- universal album identity (P3 M2), mirroring app.js + journal.py --------
   // A row's identity is its uid; a legacy row (release_id only, no uid) folds onto
@@ -372,7 +374,8 @@
   // The in-memory store + encrypt-on-write engine (browser)
   // ===========================================================================
   function createStore({ crypto, sync, cache, userId, onChange }) {
-    const state = { note: new Map(), choice: new Map(), trail: new Map(), mark: new Map() };
+    const state = { note: new Map(), choice: new Map(), trail: new Map(), mark: new Map(),
+                    opened: new Map() };
     // FB#107: an optional per-user IndexedDB cache of ENCRYPTED rows (journal-cache.js).
     // Absent → the store behaves exactly as before (full pull at unlock, nothing local).
     const _hasCache = !!(cache && userId);
@@ -455,6 +458,7 @@
     const notes = () => arr("note");
     const choices = () => arr("choice");
     const trails = () => arr("trail");
+    const openedRows = () => arr("opened");
 
     /** Decrypt one ciphertext row into {kind, client_id, obj}, or null if it won't
         open under this key (counted in _unreadable, never fatal — one bad row must
@@ -602,7 +606,7 @@
 
     function summary() {
       return { notes: state.note.size, choices: state.choice.size, trails: state.trail.size,
-               marks: state.mark.size, unreadable: _unreadable };
+               marks: state.mark.size, opened: state.opened.size, unreadable: _unreadable };
     }
 
     // v7: the second client-side kind migration. Before v7 a recorded choice was
@@ -1002,6 +1006,41 @@
       return Object.assign({}, marks);
     }
 
+    // --- opened (v9): a Listen tap, one row per record per local day ---------
+    // Mirrors journal.py add_opened/opened_feed/delete_opened. The client_id is a
+    // RANDOM id, deliberately not derived from (uid, day): client_ids are stored in
+    // the clear server-side, so a derived one would tell the server which record you
+    // opened and when. Dedup is in memory instead; a same-day duplicate made on two
+    // devices is folded when the Notebook builds its trail (buildTrailEntries).
+    const OPENED_SERVICES = new Set(["spotify", "apple", "youtube", "deezer", "bandcamp"]);
+    const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+    const _openedInFlight = new Map();   // "uid|day" -> the pending _putRow promise
+    function _openedFor(uid, day) {
+      for (const o of state.opened.values()) if (o.uid === uid && o.day === day) return o;
+      return null;
+    }
+    async function addOpened({ uid, service, day, artist, title, release_id }) {
+      const svc = String(service || "").trim().toLowerCase();
+      if (!uid || !OPENED_SERVICES.has(svc) || !DAY_RE.test(day || "")) return null;
+      const have = _openedFor(uid, day);
+      if (have) return have;               // one per record per day, whatever the service
+      // A double tap lands both calls here before the first row reaches state (the
+      // encrypt is awaited first), so share the in-flight write instead of racing it.
+      const k = uid + "|" + day;
+      if (_openedInFlight.has(k)) return _openedInFlight.get(k);
+      const p = _putRow("opened", crypto.newClientId(), {
+        uid, day, service: svc, release_id: release_id != null ? release_id : null,
+        artist: artist || null, title: title || null, opened_at: nowIso(),
+      }).finally(() => _openedInFlight.delete(k));
+      _openedInFlight.set(k, p);
+      return p;
+    }
+    const deleteOpened = (clientId) => _deleteRow("opened", clientId);
+    function openedFeed() {
+      return openedRows().slice().sort((a, b) =>
+        String(b.opened_at || "").localeCompare(String(a.opened_at || "")));
+    }
+
     // --- export the decrypted journal to a portable plaintext file (§8) ------
     // The mirror of importExport: serialize the in-memory journal to the same
     // EXPORT_VERSION-5 "journal-export" shape journal.py produces, so it round-
@@ -1040,6 +1079,7 @@
         choices: choices().map(strip),
         trails: trails().map(strip),
         platform_marks,
+        opened: openedRows().map(strip),
       };
     }
 
@@ -1054,7 +1094,7 @@
         throw new Error("not an Album-of-the-Day journal export");
       }
       const r = { notes: 0, notes_skipped: 0, choices: 0, choices_skipped: 0,
-        trails: 0, trails_skipped: 0, marks: 0 };
+        trails: 0, trails_skipped: 0, marks: 0, opened: 0, opened_skipped: 0 };
       // Dedup on the source-agnostic uid (a ≤v5 export has no uid, so fold onto
       // 'd:'+release_id — the same keys journal.import_data uses).
       const noteKeys = new Set(notes().map((n) => `${albumKeyOf(n)}|${n.created_at}|${n.body}`));
@@ -1149,6 +1189,20 @@
         });
         r.marks++; if (onProgress) onProgress(r);
       }
+
+      // Opened (v9): one per (uid, day), preserving the original tap time.
+      for (const o of (payload.opened || [])) {
+        const svc = String(o.service || "").trim().toLowerCase();
+        if (!o.uid || !OPENED_SERVICES.has(svc) || !DAY_RE.test(o.day || "")
+            || _openedFor(o.uid, o.day)) { r.opened_skipped++; continue; }
+        await _putRow("opened", crypto.newClientId(), {
+          uid: o.uid, day: o.day, service: svc,
+          release_id: o.release_id != null ? o.release_id : null,
+          artist: o.artist || null, title: o.title || null,
+          opened_at: o.opened_at || nowIso(),
+        });
+        r.opened++; if (onProgress) onProgress(r);
+      }
       return r;
     }
 
@@ -1160,6 +1214,7 @@
       notesForPerson,
       addChoice, updateChoice, deleteChoice, choicesFeed,
       addTrail, renameTrail, deleteTrail, trailsFeed,
+      addOpened, deleteOpened, openedFeed,
       getMarks, setMark, importExport, exportData,
       feed: (q) => feed(notes(), q),
       counts: () => counts(notes()),

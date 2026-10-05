@@ -270,6 +270,31 @@
       return J({ choices: out, stats: s.choicesStats() });
     }
 
+    // --- opened (v9): a Listen tap, kept in the encrypted journal ---
+    // Intercepted here (and in guestHandle) so it can never fall through to the
+    // server's local journal.db — that path is the single-user local build's only.
+    if (path === "/api/opened" && method === "POST") {
+      const b = readBody(init);
+      const uid = b.uid != null ? canonUid(b.uid) : null;
+      const stored = await s.addOpened({ uid, service: b.service, day: b.day,
+        artist: b.artist, title: b.title, release_id: ridFromUid(uid) });
+      if (!stored) return J({ ok: false, error: "uid, a known service and a day are required" }, 400);
+      return J({ ok: true, id: sid(stored.id), opened: Object.assign({}, stored, { id: sid(stored.id) }) });
+    }
+    if (path === "/api/opened" && method === "GET") {
+      const rows = s.openedFeed();
+      const map = await albumsFor(rows.map((o) => o.uid));
+      return J({ opened: rows.map((o) => {
+        const album = map[String(o.uid)] || null;
+        return Object.assign({}, o, { id: sid(o.id), cover: album ? album.cover : null });
+      }) });
+    }
+    m = path.match(/^\/api\/opened\/([^/]+)$/);
+    if (m && method === "DELETE") {
+      await s.deleteOpened(cid(m[1]));
+      return J({ ok: true });
+    }
+
     // --- trails ---
     if (path === "/api/trails" && method === "GET") {
       return J({ trails: s.trailsFeed().map((t) => Object.assign({}, t, { id: sid(t.id) })) });
@@ -468,6 +493,30 @@
       return J({ uid, release_id: ridFromUid(uid), choices: [],
         notes: rows.map((n) => Object.assign({}, n, { id: sid(n.client_id) })) });
     }
+    // opened (v9) — buffered on the device like notes, outside the note cap, and
+    // carried into the encrypted journal by migrateGuest on the first unlock.
+    if (path === "/api/opened" && method === "POST") {
+      const b = readBody(init);
+      const uid = b.uid != null ? canonUid(b.uid) : null;
+      const entry = (buf && buf.recordOpened) ? buf.recordOpened({ uid, service: b.service,
+        day: b.day, artist: b.artist, title: b.title, release_id: ridFromUid(uid) }) : null;
+      if (!entry) return J({ ok: false });
+      return J({ ok: true, id: sid(entry.client_id),
+        opened: Object.assign({}, entry, { id: sid(entry.client_id) }) });
+    }
+    if (path === "/api/opened" && method === "GET") {
+      const rows = (buf && buf.openedAll) ? buf.openedAll().slice().reverse() : [];
+      const map = await albumsFor(rows.map((o) => o.uid));
+      return J({ opened: rows.map((o) => {
+        const album = map[String(o.uid)] || null;
+        return Object.assign({}, o, { id: sid(o.client_id), cover: album ? album.cover : null });
+      }) });
+    }
+    const om = path.match(/^\/api\/opened\/([^/]+)$/);
+    if (om && method === "DELETE") {
+      if (buf && buf.removeOpened) buf.removeOpened(cid(om[1]));
+      return J({ ok: true });
+    }
     // marks (the pick panel's Listen row asks for these) — none for a guest.
     if (/^\/api\/album\/[^/]+\/marks$/.test(path)) {
       return method === "GET" ? J({ marks: [] }) : J({ ok: true, marks: [] });
@@ -579,7 +628,8 @@
         // load first — the tab keeps its normal loading state instead of flashing a
         // false-empty shelf; a load failure rejects and surfaces as the 500 below,
         // which the caller renders as "couldn't load" (never a lie that it's empty).
-        if (method === "GET" && path.startsWith("/api/journal") &&
+        // v9: /api/opened is a journal read too (the Notebook + today's tag).
+        if (method === "GET" && (path.startsWith("/api/journal") || path === "/api/opened") &&
             store() && !store().ready()) {
           await store().whenReady();
         }

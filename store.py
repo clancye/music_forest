@@ -45,7 +45,8 @@ import sqliteconn
 # "choice" was "pick" before v7. Legacy "pick" is still accepted so a migrated
 # client can tombstone its old pick-kind rows after re-keying them to "choice"
 # (journal-store.js::_migrateChoiceKind); nothing writes new "pick" rows.
-KINDS = ("note", "choice", "trail", "mark", "pick")
+# "opened" (v9, 2026-10-03): a Listen tap. Postgres needs migration 0010 for it.
+KINDS = ("note", "choice", "trail", "mark", "pick", "opened")
 
 
 class StoreError(Exception):

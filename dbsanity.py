@@ -27,7 +27,8 @@ raises — it reports `unknown`, which is NOT treated as a stub (a fresh host le
 lacks catalog.sqlite; only a file that EXISTS and is below its floor is a stub).
 
 Floors: config.POOL_MIN_ROWS / CATALOG_MIN_ENTITIES / ALBUMS_MIN_ROWS / AVAIL_MIN_ROWS
-(the last floors live.sqlite's availability — BE2a; all env-overridable).
+(live.sqlite's availability — BE2a) / MB_TAGS_MIN_ROWS (mb_tags.sqlite); all
+env-overridable.
 """
 import argparse
 import sqlite3
@@ -50,6 +51,9 @@ def _specs():
         # on `availability` (its ~1.97M-row anchor). Absent file => `unknown`, never a stub
         # (a pre-migration host has no live.sqlite; a legit partial isn't blocked).
         "live":    (config.LIVE_DB_PATH,    "availability", config.AVAIL_MIN_ROWS),
+        # The MB tags side file (B2). Absent on a host that hasn't been shipped one yet
+        # reads `unknown`, never a stub.
+        "mbtags":  (config.MB_TAGS_DB_PATH, "album_tags",   config.MB_TAGS_MIN_ROWS),
     }
 
 
@@ -115,7 +119,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Data-magnitude stub check. Exit 1 if any "
                                              "checked dataset is a stub, else 0.")
     ap.add_argument("--check", default="",
-                    help="comma-separated subset (pool,catalog,albums,live); default all")
+                    help="comma-separated subset (pool,catalog,albums,live,mbtags); default all")
     ap.add_argument("--quiet", action="store_true",
                     help="print only when a stub is found")
     args = ap.parse_args(argv)

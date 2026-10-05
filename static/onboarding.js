@@ -112,7 +112,7 @@
       // The two narrowing controls beside platforms (owner 2026-07-26) — grouped here so
       // the three header filters are learned together, before the deck steps.
       { sel: "#genrePref",
-        text: "Tap “Genre” to narrow today to the sounds you're after — jazz, electronic, blues — or type any style. Each shows how many of today's records match." },
+        text: "Tap “Genre” to see every genre and style in today's records, with how many of each, and tick any to narrow today." },
       { sel: "#datePref",
         text: "“Year” narrows today to a decade, a span of years you type in, or the records released on one specific calendar day." },
       // The album door, and the two things people miss inside it (owner, from a live
@@ -137,7 +137,7 @@
       { sel: "#deckListen",
         text: "Tap Listen to play the record where you already listen — it opens in a new tab, so you never lose your place here." },
       { sel: "#setAsideBtn",
-        text: "Want to see a different one? Skip the current one — it goes to a list you can reopen any time. Nothing's lost." },
+        text: "Want to see a different one? Tap Next — this one goes to Seen, a list you can reopen any time. Nothing's lost." },
       // The delete gesture rides HERE, on Keep, rather than on the Notebook step:
       // "keep" is the word that sounds permanent, so the reassurance belongs in the
       // same breath as the commitment. (Neither step has Notebook rows on screen —
@@ -147,10 +147,14 @@
       // 2026-07-16 — right-click did NOTHING until wireTrailLongPress gained a
       // contextmenu handler in the same change. If that is ever removed, this
       // sentence becomes a lie: keep them together.
-      { sel: "#keepBtn",
-        text: "Keep the ones that stay with you — they go to your Notebook. Right-click (or press and hold) anything there to delete it." },
+      // v329: Keep retired — this step points at ✎ Write a note, which took its place.
+      // Two facts a newcomer needs and wouldn't guess: writing is what makes a record
+      // yours, and Listen leaves a trace on its own. The delete reassurance stays here
+      // for the reason above — it's the step that puts things in the Notebook.
+      { sel: "#noteBtn",
+        text: "Write a note about anything that stays with you — it goes to your Notebook. Records you open with Listen are noted there on their own. Right-click (or press and hold) anything there to delete it." },
       { sel: '.tab[data-mode="journal"]',
-        text: "Your kept records and everything you write live here, in your Notebook — private to you." },
+        text: "Everything you write, and the records you open, live here in your Notebook — private to you." },
       // Owner's words, 2026-07-16 (the long version was doing the talking for him).
       // SIGNED WITH A PLAIN HYPHEN, on his instruction 2026-08-08 — reversing the
       // call made here on 2026-07-16, which "corrected" the "-Clancy" he originally
@@ -808,6 +812,11 @@
   // FB#109: the second bridge offer, for the Keep/Skip swap. Its own flag — a reader
   // who met the nav offer must still be able to meet this one, and vice versa.
   const SWAP_OFFER_KEY = "aotd.offer.keepskipswap.v1";
+  // v329: the third, for Keep being retired (Write a note took its place; Listen now
+  // leaves an "opened" entry). Its own flag for the same reason as the two above.
+  const KEEP_RETIRED_OFFER_KEY = "aotd.offer.keepretired.v1";
+  // v331: the fourth, for Skip → Next and Skipped → Seen.
+  const NEXT_SEEN_OFFER_KEY = "aotd.offer.nextseen.v1";
 
   // `opts` = {key, text}, defaulting to the FB#105 nav-move pair. Two bridge offers
   // now exist, and a reader whose last run predates BOTH is eligible for both — so
@@ -982,6 +991,8 @@
     showTourOffer, closeTourOffer, startTourOnDemand,   // FB#99
     showChangeOffer, CHANGE_OFFER_KEY,                  // FB#105
     SWAP_OFFER_KEY,                                     // FB#109
+    KEEP_RETIRED_OFFER_KEY,                             // v329
+    NEXT_SEEN_OFFER_KEY,                                // v331
     showHint, closeHint, hintSeen, resetHint,
   };
 });

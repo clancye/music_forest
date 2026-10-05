@@ -60,7 +60,8 @@ _DOOR_SCHEMA = (
 # 'name' (the guarded fuzzy name-match, 2b), or NULL (the door/Odesli seed path or the
 # art-cache fold). It exists so the fuzzy name-match badges are auditable and reversible
 # in one query (UPDATE … SET apple_music_url=NULL, apple_source=NULL WHERE apple_source='name').
-_DOOR_ADDED_COLUMNS = (("spotify_fetched_at", "TEXT"), ("apple_source", "TEXT"))
+_DOOR_ADDED_COLUMNS = (("spotify_fetched_at", "TEXT"), ("apple_source", "TEXT"),
+                       ("spotify_miss_at", "TEXT"))
 
 _DOOR_POOL_SELECT = (
     "SELECT p.uid, p.source, p.artist, p.title, p.release_ids, "
@@ -470,6 +471,9 @@ def backfill_spotify(uid, *, resolver=None, ttl_days=None, now=None):
                 an already-absent link stays absent          -> 'evicted' / 'miss'
       - err  -> transient; the row is left as-is (the read rule still hides a stale
                 link, the sweep still deletes a truly-aged one)     -> 'err'
+    A miss is remembered (spotify_miss_at) for config.SPOTIFY_MISS_DAYS: within that
+    window a row with no link isn't searched again              -> 'known-miss'
+    (owner, 2026-10-04). A hit clears it.
     With NO resolver available (no creds / a lapsed app) a stale link is deleted so
     it can't linger past its window -> 'evicted'; an absent one -> 'absent'. This is
     what makes termination cleanup automatic once spotify_album() no-ops.
@@ -481,10 +485,13 @@ def backfill_spotify(uid, *, resolver=None, ttl_days=None, now=None):
         _ensure_door_table(c)
         prow = c.execute(_DOOR_POOL_SELECT, (uid,)).fetchone()
         cached = c.execute(_DOOR_CACHE_SELECT, (uid,)).fetchone()
+        miss = c.execute(f"SELECT spotify_miss_at FROM {LIVE}door_links WHERE uid = ?",
+                         (uid,)).fetchone()
     if prow is None or cached is None or cached["status"] != "ok":
         return "skip"
     existing = cached["spotify_url"]
     stamp = cached["spotify_fetched_at"]
+    miss_at = miss["spotify_miss_at"] if miss is not None else None
     # An UNSTAMPED spotify_url came from Odesli (song.link), NOT the Spotify Platform,
     # so it's on the same footing as the row's Tidal/Deezer links — permanent, and
     # NOT subject to the Spotify Developer Terms TTL. Only OUR directly-resolved links
@@ -493,6 +500,11 @@ def backfill_spotify(uid, *, resolver=None, ttl_days=None, now=None):
         return "have"
     if existing and _spotify_fresh(stamp, ttl_days=ttl_days, now=now_dt):
         return "have"
+    # A recent "not found" is remembered (config.SPOTIFY_MISS_DAYS): asking again
+    # would spend a search on the same answer. Only when there's no link to refresh.
+    if not existing and _spotify_fresh(miss_at, ttl_days=config.SPOTIFY_MISS_DAYS,
+                                       now=now_dt):
+        return "known-miss"
     resolver = resolver or _spotify_resolver()
     if resolver is None:
         if existing:                       # stale + can't refresh -> drop, don't linger
@@ -516,12 +528,14 @@ def backfill_spotify(uid, *, resolver=None, ttl_days=None, now=None):
     if err:
         return "err"                       # transient: leave the row as-is
     if not hit or not url:
-        if existing:                       # confirmed no-match now -> drop the stale link
-            with _conn() as c:
-                _ensure_door_table(c)
+        stamp_miss = now_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        with _conn() as c:
+            _ensure_door_table(c)
+            if existing:                   # confirmed no-match now -> drop the stale link
                 _clear_spotify(c, uid, cached["links_json"])
-            return "evicted"
-        return "miss"
+            c.execute(f"UPDATE {LIVE}door_links SET spotify_miss_at = ? WHERE uid = ?",
+                      (stamp_miss, uid))
+        return "evicted" if existing else "miss"
     links = _links_without_spotify(cached["links_json"])
     links["spotify"] = url
     stamp = now_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -529,7 +543,8 @@ def backfill_spotify(uid, *, resolver=None, ttl_days=None, now=None):
         _ensure_door_table(c)
         c.execute(
             f"UPDATE {LIVE}door_links SET spotify_url = ?, spotify_fetched_at = ?, "
-            "links_json = ? WHERE uid = ?", (url, stamp, json.dumps(links), uid))
+            "links_json = ?, spotify_miss_at = NULL WHERE uid = ?",
+            (url, stamp, json.dumps(links), uid))
     return "filled"
 
 

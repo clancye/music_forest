@@ -137,7 +137,7 @@
     // replay. Replaying is safe on THIS transport specifically: every /api/sync
     // write is idempotent — rows upsert on (user_id, kind, client_id), key/row
     // deletes are no-ops the second time — unlike /api/choices, which has no
-    // idempotency key (see writeNeverReachedApp in app.js). Once only: if the
+    // idempotency key and inserts a row per POST. Once only: if the
     // fresh token is refused too, the session is gone, not slow.
     if (resp.status === 401) {
       const fresh = await refreshToken();

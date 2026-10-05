@@ -54,7 +54,11 @@ from genres import split_genres as _split_genres
 # `ref` is NULL for an album or free note (they hydrate from the catalog / carry
 # nothing). An older (≤v7) app refuses a v8 export via the version guard rather than
 # silently dropping the ref; a v8 app reading a ≤v7 export just sees ref=NULL.
-EXPORT_VERSION = 8
+# v9 (owner 2026-10-03, Keep retired): the `opened` table — you tapped Listen on a
+# record. One row per (uid, day), naming the service you opened it in. It records the
+# TAP, never a claim that you listened (the honesty rule). A v9 export carries an
+# `opened` array; a v9 app reading a ≤v8 export simply has none.
+EXPORT_VERSION = 9
 
 # PRAGMA user_version tracks the one-time table-rebuilding migrations so they run
 # once, not on every connection. 0 = pre-uid (or never opened); 1 = the uid re-key
@@ -149,6 +153,24 @@ CREATE TABLE IF NOT EXISTS platform_marks (
     updated_at  TEXT NOT NULL,
     PRIMARY KEY (uid, service)
 );
+
+-- Opened (v9, owner 2026-10-03): you tapped Listen on a record. Keep was retired the
+-- same day — writing a note is how a record becomes yours — and this is the quiet
+-- trace of reaching for one. It records the TAP and the service, never "listened":
+-- the app can't know that, so it doesn't say it. One row per record per reader-local
+-- calendar day (`day`, YYYY-MM-DD, sent by the client), however many times you tap.
+-- Plain user history: removable like a note, never mined, never resurfaced at you.
+CREATE TABLE IF NOT EXISTS opened (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid         TEXT NOT NULL,       -- source-agnostic album identity (d:/m:/…)
+    day         TEXT NOT NULL,       -- the reader's local day, YYYY-MM-DD
+    service     TEXT NOT NULL,       -- spotify/apple/youtube/deezer/bandcamp
+    release_id  INTEGER,             -- denormalized Discogs provenance (NULL=MB-only)
+    artist      TEXT,
+    title       TEXT,
+    opened_at   TEXT NOT NULL,       -- ISO timestamp (UTC) of the first tap that day
+    UNIQUE (uid, day)
+);
 """
 
 # Indexes are kept SEPARATE from the table DDL and created only AFTER _migrate
@@ -166,11 +188,15 @@ CREATE INDEX IF NOT EXISTS idx_choices_time      ON choices (chosen_at);
 CREATE INDEX IF NOT EXISTS idx_choices_chosen    ON choices (chosen_id);
 CREATE INDEX IF NOT EXISTS idx_choices_chosen_uid ON choices (chosen_uid);
 CREATE INDEX IF NOT EXISTS idx_trails_time       ON trails (created_at);
+CREATE INDEX IF NOT EXISTS idx_opened_time       ON opened (opened_at);
 """
 
 # The streaming services a mark can be made against, mirroring the Listen door.
 MARK_SERVICES = {"bandcamp", "youtube", "apple", "spotify", "qobuz"}
 MARK_STATES = {"here", "not_here"}
+# The services a Listen tap can open (static/app.js CONFIRMED_PLATFORMS).
+OPENED_SERVICES = {"spotify", "apple", "youtube", "deezer", "bandcamp"}
+_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _now():
@@ -1281,6 +1307,47 @@ def backup(keep=None):
 
 # --- export / import (D2) ---------------------------------------------------
 
+# --- Opened (v9) ----------------------------------------------------------------
+
+def add_opened(uid, service, day, artist=None, title=None, release_id=None):
+    """Record that you opened `uid` in `service` on your local `day` (YYYY-MM-DD).
+    Idempotent per (uid, day): a second tap that day — in the same service or another
+    — keeps the first row, so the Notebook shows one entry. Returns that row's dict,
+    or None when the input can't be recorded honestly (no record, unknown service,
+    malformed day)."""
+    svc = (service or "").strip().lower()
+    if not uid or svc not in OPENED_SERVICES or not _DAY_RE.match(day or ""):
+        return None
+    with _conn() as c:
+        c.execute(
+            """INSERT OR IGNORE INTO opened
+               (uid, day, service, release_id, artist, title, opened_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (uid, day, svc, release_id, artist or None, title or None, _now()))
+        c.commit()
+        r = c.execute("SELECT * FROM opened WHERE uid=? AND day=?",
+                      (uid, day)).fetchone()
+    return dict(r) if r else None
+
+
+def opened_feed(limit=5000):
+    """Every opened row, newest first."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM opened ORDER BY opened_at DESC, id DESC LIMIT ?",
+            (limit,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_opened(opened_id):
+    """Remove one opened row (a hard delete — it's a trace, not writing). True if
+    a row went."""
+    with _conn() as c:
+        cur = c.execute("DELETE FROM opened WHERE id=?", (opened_id,))
+        c.commit()
+        return cur.rowcount > 0
+
+
 def export_data():
     """A portable, self-contained dump of the journal as a plain dict (JSON-
     serializable). Includes notes and any legacy listens so nothing is lost on a
@@ -1297,6 +1364,8 @@ def export_data():
             "SELECT * FROM trails ORDER BY id")]
         marks = [dict(r) for r in c.execute(
             "SELECT * FROM platform_marks ORDER BY release_id, service")]
+        opened = [dict(r) for r in c.execute(
+            "SELECT * FROM opened ORDER BY id")]
     return {
         "app": "album-of-the-day",
         "kind": "journal-export",
@@ -1307,6 +1376,7 @@ def export_data():
         "choices": choices,
         "trails": trails,
         "platform_marks": marks,
+        "opened": opened,
     }
 
 
@@ -1332,10 +1402,12 @@ def import_data(payload, mode="merge"):
         choices = payload.get("picks") or []
     trails = payload.get("trails") or []
     marks = payload.get("platform_marks") or []
+    opened = payload.get("opened") or []       # v9; absent from older exports
     added = skipped = choices_added = choices_skipped = 0
     listens_added = listens_skipped = 0
     trails_added = trails_skipped = 0
     marks_added = marks_skipped = 0
+    opened_added = opened_skipped = 0
     with _conn() as c:
         if mode == "replace":
             c.execute("DELETE FROM notes")
@@ -1343,6 +1415,7 @@ def import_data(payload, mode="merge"):
             c.execute("DELETE FROM choices")
             c.execute("DELETE FROM trails")
             c.execute("DELETE FROM platform_marks")
+            c.execute("DELETE FROM opened")
         existing = set()
         for r in c.execute("SELECT uid, created_at, body FROM notes"):
             existing.add((r["uid"], r["created_at"], r["body"]))
@@ -1506,10 +1579,35 @@ def import_data(payload, mode="merge"):
                  m.get("updated_at") or _now()))
             seen_m.add((uid, svc))
             marks_added += 1
+
+        # Opened (v9). One row per (uid, day), like the live table's UNIQUE; merge
+        # keeps an existing row, replace already cleared the table above.
+        seen_o = set()
+        for r in c.execute("SELECT uid, day FROM opened"):
+            seen_o.add((r["uid"], r["day"]))
+        for o in opened:
+            uid, day = o.get("uid"), o.get("day")
+            svc = (o.get("service") or "").strip().lower()
+            if (not uid or svc not in OPENED_SERVICES
+                    or not _DAY_RE.match(day or "")):
+                opened_skipped += 1
+                continue
+            if (uid, day) in seen_o:
+                opened_skipped += 1
+                continue
+            c.execute(
+                """INSERT INTO opened
+                   (uid, day, service, release_id, artist, title, opened_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (uid, day, svc, o.get("release_id"), o.get("artist"),
+                 o.get("title"), o.get("opened_at") or _now()))
+            seen_o.add((uid, day))
+            opened_added += 1
         c.commit()
     return {"added": added, "skipped": skipped,
             "listens_added": listens_added, "listens_skipped": listens_skipped,
             "choices_added": choices_added, "choices_skipped": choices_skipped,
             "trails_added": trails_added, "trails_skipped": trails_skipped,
             "marks_added": marks_added, "marks_skipped": marks_skipped,
+            "opened_added": opened_added, "opened_skipped": opened_skipped,
             "mode": mode}

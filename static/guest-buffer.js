@@ -39,6 +39,12 @@
   const CAP = 50;
   const NOTES_KEY = "aotd.guest.notes.v1";
   const NOTES_CAP = 20;
+  // v9 (owner 2026-10-03): Listen taps, one per record per local day. Its own key, so
+  // it never counts toward the note cap (GUEST_NOTE_CAP counts notesCount only), and a
+  // ring cap so a long guest run can't grow localStorage without bound.
+  const OPENED_KEY = "aotd.guest.opened.v1";
+  const OPENED_CAP = 200;
+  const OPENED_SERVICES = ["spotify", "apple", "youtube", "deezer", "bandcamp"];
 
   // A Storage-shaped in-memory fallback so the buffer is total: it never throws
   // when the real storage is missing or blocked. Only the one KEY is tracked.
@@ -247,9 +253,57 @@
 
     function clearNotes() { try { storage.removeItem(NOTES_KEY); } catch (e) { /* ignore */ } }
 
+    // --- opened (v9): a Listen tap, one per record per local day --------------
+    // Same total grammar: corrupt JSON reads as empty, a blocked write is best-effort.
+    function loadOpened() {
+      try {
+        const raw = storage.getItem(OPENED_KEY);
+        if (!raw) return [];
+        const arr = JSON.parse(raw);
+        return Array.isArray(arr) ? arr : [];
+      } catch (e) { return []; }
+    }
+    function saveOpened(list) {
+      try { storage.setItem(OPENED_KEY, JSON.stringify(list)); } catch (e) { /* best-effort */ }
+    }
+    function openedAll() { return loadOpened(); }
+    // Record a tap. Returns the stored entry — the EXISTING one when this record was
+    // already opened today, so a second tap (any service) adds nothing — or null when
+    // there's nothing honest to record (no record, unknown service, malformed day).
+    function recordOpened(o) {
+      o = o || {};
+      const uid = o.uid != null && String(o.uid).trim() ? String(o.uid).trim() : null;
+      const service = String(o.service || "").trim().toLowerCase();
+      const day = String(o.day || "");
+      if (!uid || OPENED_SERVICES.indexOf(service) < 0 || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+      const list = loadOpened();
+      const have = list.find((e) => e.uid === uid && e.day === day);
+      if (have) return have;
+      const entry = {
+        client_id: newId(), uid, day, service,
+        release_id: o.release_id != null ? o.release_id : null,
+        artist: (typeof o.artist === "string" && o.artist.trim()) ? o.artist.trim() : null,
+        title: (typeof o.title === "string" && o.title.trim()) ? o.title.trim() : null,
+        opened_at: now(),
+      };
+      list.push(entry);
+      while (list.length > OPENED_CAP) list.shift();
+      saveOpened(list);
+      return entry;
+    }
+    function removeOpened(clientId) {
+      const list = loadOpened();
+      const next = list.filter((e) => e.client_id !== clientId);
+      if (next.length === list.length) return false;
+      saveOpened(next);
+      return true;
+    }
+    function clearOpened() { try { storage.removeItem(OPENED_KEY); } catch (e) { /* ignore */ } }
+
     return { record, patch, remove, get, all, count, clear,
       recordNote, patchNote, removeNote, notesForUid, notesAll, notesCount,
-      clearNotes, KEY, CAP, NOTES_KEY, NOTES_CAP };
+      clearNotes, recordOpened, removeOpened, openedAll, clearOpened,
+      KEY, CAP, NOTES_KEY, NOTES_CAP, OPENED_KEY, OPENED_CAP };
   }
 
   // ===========================================================================
@@ -341,11 +395,19 @@
   // body + created_at to be valid — a free noticing (null uid) is a first-class
   // note (#58), so it migrates too; importExport dedups by `${uid}|${created_at}|${body}`
   // with a null uid just like the store's own free notes. Pure.
-  function buildGuestExport(choiceEntries, noteEntries, albumsById) {
+  function buildGuestExport(choiceEntries, noteEntries, albumsById, openedEntries) {
     const out = buildChoicesExport(choiceEntries, albumsById);
     out.notes = (noteEntries || [])
       .filter((e) => e && e.body && e.created_at)
       .map((e) => noteRow(e, albumsById));
+    // v9: Listen taps ride along as-is (they carry their own names; no hydration).
+    // importExport dedups them per (uid, day). Absent → no `opened` key at all, so a
+    // guest who never tapped Listen produces exactly the pre-v9 payload.
+    const opened = (openedEntries || []).filter((e) => e && e.uid && e.day && e.service)
+      .map((e) => ({ uid: e.uid, day: e.day, service: e.service,
+        release_id: e.release_id != null ? e.release_id : null,
+        artist: e.artist || null, title: e.title || null, opened_at: e.opened_at }));
+    if (opened.length) out.opened = opened;
     return out;
   }
 
@@ -398,7 +460,8 @@
     if (!buf || !store || typeof store.importExport !== "function") return none;
     const choiceEntries = buf.all();
     const noteEntries = typeof buf.notesAll === "function" ? buf.notesAll() : [];
-    if (!choiceEntries.length && !noteEntries.length) return none;
+    const openedEntries = typeof buf.openedAll === "function" ? buf.openedAll() : [];
+    if (!choiceEntries.length && !noteEntries.length && !openedEntries.length) return none;
 
     const ids = [];
     for (const e of choiceEntries) {
@@ -409,14 +472,15 @@
       if (e.release_id != null) ids.push(e.release_id);
     }
     const albumsById = (albumsFor ? await albumsFor(ids) : {}) || {};
-    const payload = buildGuestExport(choiceEntries, noteEntries, albumsById);
+    const payload = buildGuestExport(choiceEntries, noteEntries, albumsById, openedEntries);
 
-    // Throws => both buffers stay fully intact for a later retry.
+    // Throws => every buffer stays fully intact for a later retry.
     const result = await store.importExport(payload);
     buf.clear();
     if (typeof buf.clearNotes === "function") buf.clearNotes();
+    if (typeof buf.clearOpened === "function") buf.clearOpened();
     return {
-      entries: choiceEntries.length + noteEntries.length,
+      entries: choiceEntries.length + noteEntries.length + openedEntries.length,
       migrated: result.choices, skipped: result.choices_skipped,
       migrated_notes: result.notes, skipped_notes: result.notes_skipped,
       result,
@@ -424,5 +488,5 @@
   }
 
   return { create, cleanReasons, buildChoicesExport, buildGuestExport,
-    migrateChoices, migrateGuest, KEY, CAP, NOTES_KEY, NOTES_CAP };
+    migrateChoices, migrateGuest, KEY, CAP, NOTES_KEY, NOTES_CAP, OPENED_KEY, OPENED_CAP };
 });

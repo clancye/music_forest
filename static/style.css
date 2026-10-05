@@ -626,8 +626,16 @@ body.guest .guest-notebook-note { display: block; }
   content: "\25B6\FE0E"; font-size: 10px; margin-right: 9px; opacity: .9;
 }
 
-/* Keep + Skip: equal 50/50 halves, a matched pair of quiet outlined pills — Keep
-   the affirmative (sage hairline + bright text), Skip the quieter (neutral hairline,
+/* v329: "✓ in Notebook" — today's Listen chip, once you've opened the record today.
+   Inside the button so the confirmation can't shift the rows beneath it. */
+.listen-chip .opened-tag {
+  margin-left: var(--sp-10); padding: 2px 7px; border-radius: 6px;
+  font-family: var(--font-mono, ui-monospace, monospace); font-size: 10.5px;
+  font-weight: 600; letter-spacing: .03em; background: rgba(11, 20, 16, .16);
+}
+
+/* Write a note + Skip (v329; was Keep + Skip): equal 50/50 halves, a matched pair of
+   quiet outlined pills — Write a note the affirmative (sage hairline + bright text), Skip the quieter (neutral hairline,
    muted text). The sage FILL is reserved for the Listen action (and its copy-to-search
    fallback), so a green button always reads "play / listen," never "decide."
    (2026-07-15; was a green-fill Keep that clashed with the green Listen button.) */
@@ -732,17 +740,17 @@ body.guest .guest-notebook-note { display: block; }
   .mf-hint { animation: mfHintIn .25s ease both; }
   @keyframes mfHintIn { from { opacity: 0; transform: translateY(4px); } }
 }
-.keep-btn, .set-aside-btn {
+.note-btn, .set-aside-btn {
   flex: 1 1 0; min-width: 0; box-sizing: border-box; cursor: pointer;
   padding: var(--sp-12) var(--sp-16); border-radius: 12px;
   font-size: 15px; font-weight: 700; font-family: var(--font-serif);
   transition: filter .15s ease, box-shadow .15s ease,
               border-color .15s ease, color .15s ease;
 }
-.keep-btn {
+.note-btn {
   background: transparent; color: var(--text); border: 1px solid var(--accent-2);
 }
-.keep-btn:hover, .keep-btn:focus-visible {
+.note-btn:hover, .note-btn:focus-visible {
   color: var(--accent-2); border-color: var(--accent-2); outline: none;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-2) 16%, transparent);
 }
@@ -784,12 +792,21 @@ body.guest .guest-notebook-note { display: block; }
 .deck-end-filter b { color: var(--text); font-weight: 600; }
 
 /* The deck skeleton (loadDeck): one card-shaped placeholder occupying the deck
-   column, shimmering to signal "working" so the layout can't collapse mid-load. */
-.deck-card.skeleton { cursor: default; text-align: left; }
-.skel-cover { aspect-ratio: 1/1; width: 100%; border-radius: 14px; }
-.skel-line { height: 12px; border-radius: 6px; margin: var(--sp-8) 0; }
-.skel-line.short { width: 70%; }
-.skel-line.shorter { width: 45%; }
+   column, shimmering to signal "working" so the layout can't collapse mid-load.
+   Built from the real card's own elements (deckLoadingHtml) so it occupies exactly
+   the loaded card's box; these rules only turn their content into shimmer. */
+.deck-card.skeleton { cursor: default; }
+.deck-card.skeleton .skel-text { display: inline-block; border-radius: 6px; line-height: 1; }
+.deck-card.skeleton .skel-fill { color: transparent; border-color: transparent; }
+/* The Listen chip's own rule (.deck-listen .listen-chips.listen-solo .listen-chip.primary)
+   outranks a plain .skel, so the placeholder repeats the shimmer at that depth — else it
+   paints as a live green ▶ button with no record behind it. */
+.deck-card.skeleton .deck-listen .listen-chips.listen-solo .listen-chip.primary.skel {
+  background: linear-gradient(100deg,
+    var(--panel-2) 30%, var(--line) 50%, var(--panel-2) 70%);
+  background-size: 220% 100%; color: transparent; border-color: transparent;
+}
+.deck-card.skeleton .deck-listen .listen-chips.listen-solo .listen-chip.primary::before { content: none; }
 .skel {
   background: linear-gradient(100deg,
     var(--panel-2) 30%, var(--line) 50%, var(--panel-2) 70%);
@@ -818,15 +835,19 @@ body.guest .guest-notebook-note { display: block; }
    pill stayed reachable while Today scrolled, and Today no longer scrolls. As a
    sibling of the pills it kept colliding with, it cannot overlap them on any screen.
    The lift stays — it still reads as a raised, tappable pile, not a filter. */
+/* Owner, on device 2026-10-04: the pill sat a little taller than Genre / Year beside it.
+   It carried its own padding (10/16) and a 20px count badge; it now takes the same
+   8/14 padding and 15px type as those pills, and the badge fits inside that line
+   height (17px), so all three stand the same height in the row. */
 .set-aside-bar {
   display: inline-flex; align-items: center; gap: var(--sp-8);
-  padding: var(--sp-10) var(--sp-16); border-radius: 999px; cursor: pointer;
+  padding: var(--sp-8) var(--sp-14); border-radius: 999px; cursor: pointer;
   background: var(--panel-2); color: var(--text);
   border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(0,0,0,.34);
-  font-size: 14px;
+  font-size: 15px; line-height: normal;
 }
 .set-aside-bar.hidden { display: none; }
-/* Nothing skipped yet. The pill holds its place so the first Skip can't reflow the row
+/* Nothing seen yet. The pill holds its place so the first Next can't reflow the row
    under your thumb (owner), but it must not look tappable when there's nothing behind
    it: quieter, no lift, no pointer, and out of the tab order (set in JS alongside
    aria-disabled). It keeps its label and its 0 — a visible count reading zero is an
@@ -845,7 +866,7 @@ body.guest .guest-notebook-note { display: block; }
 }
 .sab-label { color: var(--muted); }
 .sab-count {
-  min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
+  min-width: 17px; height: 17px; padding: 0 5px; border-radius: 999px; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--accent); color: var(--on-accent); font-weight: 700; font-size: 12px;
 }
@@ -895,33 +916,14 @@ body.guest .guest-notebook-note { display: block; }
   padding: 9px var(--sp-16); cursor: pointer; font-size: 14px;
 }
 .ghost:hover { color: var(--text); border-color: var(--accent-2); }
-/* E2: #pick now lives inside #choiceRevealModal's box, which supplies the panel
-   chrome (background, border, padding, shadow). So the .pick element itself is
-   just the centered content column — no second card around it, no outer margin. */
-.pick {
-  margin: 0; text-align: center;
-  animation: pop .25s ease;
-}
 @keyframes pop { from { transform: scale(.96); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 /* ACC1 (reduced-motion): the `pop` scale-in entrance stops under Reduce Motion
-   everywhere it's used — the reveal card, toasts, the onboarding card — matching
-   `.deck-open`, which is already gated near its own rule. */
+   everywhere it's used — toasts, the onboarding card — matching `.deck-open`,
+   which is already gated near its own rule. */
 @media (prefers-reduced-motion: reduce) {
-  .pick, .toast, .onboard-card { animation: none; }
+  .toast, .onboard-card { animation: none; }
 }
 
-/* E2: the pick reveal sits a hair *below* the standard .modal z-index (50) so a
-   story / artist / label / note door pulled from inside the reveal stacks on top
-   of it rather than behind it. The box is sized between the default and the wide
-   panels — roomy enough for the cover + the "road not taken" card. The ✕ gets a
-   little breathing room from the heading. */
-#choiceRevealModal { z-index: 48; }
-.modal-box-choice { width: min(620px, 100%); }
-.modal-box-choice .pick > h2:first-child { padding-right: var(--sp-28); }
-/* B15: the Choose pick panel's metadata line — the same doors as a browse card's
-   .sub (released · country · genres · label · decade), centered to the panel. */
-.choice-sub { color: var(--muted); font-size: 13px; }
-.choice-sub .dot { opacity: .5; }
 
 /* COVERS */
 .cover {
@@ -1141,13 +1143,17 @@ body.is-decide .genre-pref { display: block; }
    platforms chooser and had to stay out of the masthead's way; under the record they
    are two of the three controls on the screen, and 13px read as fine print next to
    Keep and Skip. */
-.genre-pref > summary {
+.genre-pref > summary,
+.genre-pref > .genre-pref-pill {      /* v328: Genre is a button (it opens a screen) */
   list-style: none; cursor: pointer; font-size: 15px; color: var(--muted);
   padding: var(--sp-8) var(--sp-14); border: 1px solid var(--line); border-radius: 999px;
   white-space: nowrap;
 }
+.genre-pref > .genre-pref-pill { font-family: inherit; line-height: inherit; background: transparent; }
+.genre-pref > .genre-pref-pill:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
 .genre-pref > summary::-webkit-details-marker { display: none; }
-.genre-pref > summary:hover { color: var(--text); border-color: var(--accent); }
+.genre-pref > summary:hover,
+.genre-pref > .genre-pref-pill:hover { color: var(--text); border-color: var(--accent); }
 .genre-pref[open] > summary { color: var(--text); border-color: var(--accent); }
 .genre-tally { font-variant-numeric: tabular-nums; color: var(--accent-2); font-weight: 600; }
 /* FB#105 follow-up (owner): a ✕ in the corner of each filter panel. Not because the
@@ -1223,63 +1229,117 @@ body.is-decide .genre-pref { display: block; }
   margin: var(--sp-2) 0 0; font-size: 12.5px; line-height: 1.4; color: var(--muted);
   min-height: 1em;
 }
-/* FB#57b: the free-typed finer filter, under the bucket chips. */
-/* FB#57b: type a finer style + Enter / Add → it drops into the chip list. */
-.genre-add-row { display: flex; gap: var(--sp-8); margin-top: var(--sp-8); align-items: stretch; }
-.genre-text {
-  flex: 1 1 auto; min-width: 0; box-sizing: border-box;
-  background: var(--panel); color: var(--text);
-  border: 1px solid var(--line); border-radius: 8px;
-  padding: var(--sp-8) var(--sp-12); font: inherit; font-size: 13px;
-}
-.genre-text::placeholder { color: var(--muted); }
-.genre-text:focus { outline: none; border-color: var(--accent-2); }
-.genre-add {
-  flex: 0 0 auto; border-radius: 8px; padding: var(--sp-8) var(--sp-16);
-  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
-  background: var(--living-soft); color: var(--text); border: 1px solid var(--living);
-}
-.genre-add:hover { border-color: var(--accent-2);
-  background: color-mix(in srgb, var(--living) 22%, transparent); }
-/* A typed-term chip is always "on"; its ✕ is the easy remove (tap anywhere on it). */
+/* A removable chip (the Genre screen's tray) is always "on"; its ✕ is the easy
+   remove (tap anywhere on it). */
 .genre-chip.custom .gc-x { font-size: 11px; color: var(--accent-2); opacity: .85; }
 .genre-chip.custom:hover { border-color: var(--danger); }
 .genre-chip.custom:hover .gc-x { color: var(--danger-text); opacity: 1; }
-/* Bucket ✕: the quiet dismiss on a generic pill. Faint until the chip is hovered, then
-   it reads as danger so a tap on it is clearly "remove this pill," not "toggle." */
-.genre-chip .gc-dismiss {
-  font-size: 10.5px; margin-left: 1px; color: var(--muted); opacity: .55;
-  border-radius: 50%; padding: 0 2px; line-height: 1;
-  transition: color .12s ease, opacity .12s ease;
+/* The Genre screen: a full-height sheet over Today (a `.modal`, so the shared
+   dialog layer handles focus/Escape). Full-bleed on a phone, a centred column wider up.
+   It owns its safe-area insets (FB#96) rather than inheriting .modal's padding, so the
+   Back button clears a notch and the Show button clears the home indicator. */
+.modal.style-browse { padding: 0; z-index: 55; background: rgba(0,0,0,.6); }
+.modal-box.sb-box {
+  width: min(560px, 100%); height: 100%; max-height: none; margin: 0 auto; padding: 0;
+  border-radius: 0; border-width: 0 1px; background: var(--bg); overflow: hidden;
+  display: flex; flex-direction: column; position: relative;
 }
-.genre-chip:hover .gc-dismiss { opacity: .9; }
-.genre-chip .gc-dismiss:hover { color: var(--danger-text); opacity: 1; }
-/* The reversible "bring the hidden pills back" chip — dashed + muted so it reads as a
-   utility, not a genre. */
-.genre-chip.genre-restore {
-  border-style: dashed; color: var(--muted); font-size: 12.5px;
+.sb-head {
+  flex: none; border-bottom: 1px solid var(--line);
+  padding: max(var(--sp-12), var(--safe-top)) max(var(--sp-16), var(--safe-right))
+           var(--sp-8) max(var(--sp-16), var(--safe-left));
 }
-.genre-chip.genre-restore:hover { color: var(--text); border-color: var(--accent-2); }
-/* Type-ahead dropdown of today's genres/styles. In-flow (pushes the note down) so it
-   never clips inside the popover; scrolls if the list is long. */
-.genre-suggest {
-  display: flex; flex-direction: column; margin-top: var(--sp-8);
-  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-  overflow: hidden auto; max-height: 216px;
+.sb-top { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-8); }
+.sb-top h3 { margin: 0; font-family: var(--font-serif); font-weight: 500; font-size: 20px; }
+.modal-close.sb-back {
+  position: static; width: auto; height: 36px; padding: 0 var(--sp-6) 0 0;
+  font-size: 15px; color: var(--accent-2); border-radius: 8px;
 }
-.genre-suggest[hidden] { display: none; }
-.genre-sugg {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  font: inherit; font-size: 13px; text-align: left; color: var(--text); cursor: pointer;
-  background: none; border: 0; border-bottom: 1px solid var(--line);
-  padding: 8px 11px;
+.sb-sort {
+  font: inherit; font-size: 13px; color: var(--muted); cursor: pointer;
+  background: none; border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px;
 }
-.genre-sugg:last-child { border-bottom: 0; }
-.genre-sugg:hover, .genre-sugg.active { background: var(--living-soft); }
-.genre-sugg .gs-n {
-  font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; flex: 0 0 auto;
+.sb-sort:hover { color: var(--text); border-color: var(--accent-2); }
+.sb-intro { margin: var(--sp-6) 0 var(--sp-8); font-size: 13px; line-height: 1.4; }
+.sb-search {
+  width: 100%; box-sizing: border-box; font: inherit; font-size: 16px; color: var(--text);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: var(--sp-8) var(--sp-12);
 }
-.genre-sugg:hover .gs-n, .genre-sugg.active .gs-n { color: var(--accent-2); }
+.sb-search::placeholder { color: var(--muted); }
+.sb-search:focus { outline: none; border-color: var(--accent-2); }
+/* v332: the list and its A–Z letter rail sit side by side; the rail is hidden in
+   rarest-first order. */
+.sb-body { flex: 1; display: flex; min-height: 0; }
+.sb-letters {
+  flex: none; width: 24px; display: flex; flex-direction: column; justify-content: center;
+  align-items: center; padding: var(--sp-4) 0 calc(110px + var(--safe-bottom));
+  margin-right: var(--safe-right);
+}
+.sb-letters[hidden] { display: none; }
+/* The rail owns its drag (scrubbing letters), so the browser mustn't pan on it. */
+.sb-letters { touch-action: none; user-select: none; -webkit-user-select: none; cursor: pointer; }
+.sb-letters button {
+  font: inherit; font-family: var(--font-mono, ui-monospace, monospace); font-size: 10.5px;
+  line-height: 1.35; color: var(--accent-2); background: none; border: 0; padding: 0 5px;
+  cursor: pointer;
+}
+.sb-letters button:disabled { color: var(--panel-2); cursor: default; }
+.sb-letters button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+.sb-list {
+  flex: 1; overflow-y: auto; overscroll-behavior: contain; position: relative;
+  padding-bottom: calc(120px + var(--safe-bottom));
+}
+/* Section headers: a letter (A–Z) or a rarity band ("Only 1 record today"). Quiet mono
+   caps — they're signposts in a long list, not categories. */
+.sb-group h4 {
+  position: sticky; top: 0; z-index: 1; margin: 0;
+  padding: var(--sp-8) var(--sp-16) var(--sp-6) max(var(--sp-16), var(--safe-left));
+  background: color-mix(in srgb, var(--bg) 96%, transparent);
+  border-bottom: 1px solid var(--panel-2);
+  font-family: var(--font-mono, ui-monospace, monospace); font-size: 11.5px; font-weight: 500;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--accent-2);
+}
+.sb-row {
+  display: flex; align-items: center; gap: var(--sp-12); width: 100%; cursor: pointer;
+  font: inherit; font-size: 15.5px; text-align: left; color: var(--text);
+  background: none; border: 0; border-bottom: 1px solid var(--panel);
+  padding: 11px max(var(--sp-16), var(--safe-right)) 11px max(var(--sp-16), var(--safe-left));
+}
+.sb-row:hover { background: var(--panel); }
+.sb-row:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
+.sb-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+/* A broad tag ("rock", "electronic") is just a row, set bold so it's easy to find. */
+.sb-row.big .sb-name { font-weight: 600; }
+/* A merged row names the other spellings it covers, so the merge is never invisible. */
+.sb-also { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); font-weight: 400; }
+.sb-n { min-width: 28px; text-align: right; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sb-tick {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--line);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; color: transparent;
+}
+.sb-row.on .sb-tick { background: var(--living); border-color: var(--living); color: var(--on-living); }
+.sb-row.on .sb-n { color: var(--accent-2); }
+.sb-honest, .sb-empty { margin: 0; padding: var(--sp-16); font-size: 13px; line-height: 1.5; }
+.sb-tray {
+  position: absolute; z-index: 3; left: 0; right: 0; bottom: 0;
+  display: flex; flex-direction: column; gap: var(--sp-8);
+  padding: var(--sp-16) max(var(--sp-16), var(--safe-right))
+           max(var(--sp-16), var(--safe-bottom)) max(var(--sp-16), var(--safe-left));
+  background: linear-gradient(transparent, var(--bg) 24%);
+}
+.sb-picked { display: flex; gap: var(--sp-6); overflow-x: auto; scrollbar-width: none; }
+.sb-picked[hidden] { display: none; }
+.sb-picked::-webkit-scrollbar { display: none; }
+.sb-picked .genre-chip { flex: none; font-size: 12.5px; padding: 4px 9px; }
+.sb-go {
+  font: inherit; font-size: 16px; font-weight: 600; cursor: pointer;
+  padding: 13px; border-radius: 999px; border: 0;
+  background: var(--living); color: var(--on-living);
+}
+.sb-go:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+
 /* The note carries the live match count; lift it out of muted when a filter is on so
    the confirmation ("786 records match …") actually reads as confirmation. */
 .genre-pref-note.on { color: var(--accent-2); font-weight: 600; }
@@ -2332,55 +2392,6 @@ body.modal-open { overflow: hidden; }
   .wb-back:hover { border-color: var(--accent-2); }
 }
 
-/* --- Pick reasons (G5) ----------------------------------------------------- */
-/* Free-text "why this one" capture under the chosen album, and in the edit
-   modal — no imposed vocabulary, just your own words (VISION.md). */
-.why {
-  margin-top: var(--sp-16); padding-top: var(--sp-16); border-top: 1px solid var(--line);
-  text-align: left;
-}
-/* The "why" leads the pick now, but collapsed behind this button so choosing
-   never forces the keyboard open. A warm ochre wash makes it the inviting first
-   move; tapping it reveals the editor. */
-.why-open-btn {
-  width: 100%; text-align: center; cursor: pointer;
-  background: color-mix(in srgb, var(--accent) 10%, var(--panel-2));
-  color: var(--accent-2);
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--line));
-  border-radius: 10px; padding: var(--sp-12) var(--sp-14);
-  font-size: 14px; font-weight: 600; font-family: var(--font-serif);
-  transition: background .15s ease, color .15s ease, border-color .15s ease;
-}
-.why-open-btn:hover {
-  background: color-mix(in srgb, var(--accent) 16%, var(--panel-2));
-  color: var(--accent); border-color: var(--accent);
-}
-/* Pick page (Direction B): identity → primary listen → one Reflect door → the
-   other one. The identity row is a small art thumb beside the artist — title +
-   meta, so the primary "Listen on ___" button sits near the top of the screen
-   instead of below a full-bleed cover. */
-.choice-identity {
-  display: flex; align-items: center; gap: var(--sp-12); text-align: left;
-  margin-bottom: var(--sp-14);
-}
-.choice-thumb { flex: 0 0 auto; }
-/* Real art: a small square thumbnail (not full-bleed). */
-.choice-identity .cover {
-  width: 56px; height: 56px; aspect-ratio: 1/1; padding: 0;
-  border-radius: 10px; overflow: hidden; font-size: 0;
-}
-/* Placeholder (no art): shrink harder and drop the "artist — title" text — an
-   art-less pick shouldn't eat ~40% of a phone screen; the identity text is right
-   beside it anyway. */
-.choice-identity .cover.placeholder {
-  width: 40px; height: 40px; background-size: 60%;
-}
-.choice-identity .cover.placeholder.no-art::after { content: none; }
-.choice-id-text { min-width: 0; }
-.choice-chose { margin: 0 0 2px; font-size: 15px; }
-.choice-title { color: var(--muted); margin: 0 0 3px; }
-.choice-identity .choice-sub { margin: 0; }
-
 /* The primary listen action: one solid, full-width button naming your #1
    confirmed platform. This is the page's main affordance now. */
 .choice-listen { margin: var(--sp-14) 0; text-align: left; }
@@ -2394,23 +2405,6 @@ body.modal-open { overflow: hidden; }
 }
 .listen-primary:hover, .listen-primary:focus-visible {
   filter: brightness(1.06); outline: none;
-}
-/* The keep reveal's "Back to today's records" button (repurposed from the old
-   commit block): a sage serif primary, full-width, closing the annotation door.
-   Sage (--accent), not the living green of Listen, so the two don't read as one
-   button; a soft ring lifts it. */
-.keep-done { margin: var(--sp-16) 0 var(--sp-8); text-align: center; }
-.commit-btn {
-  display: block; width: 100%; box-sizing: border-box; cursor: pointer;
-  text-align: center; padding: var(--sp-14) var(--sp-16); border-radius: 12px;
-  font-size: 15px; font-weight: 700; font-family: var(--font-serif);
-  background: var(--accent); color: var(--on-accent); border: 1px solid var(--accent);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent);
-  transition: filter .15s ease, box-shadow .15s ease;
-}
-.commit-btn:hover, .commit-btn:focus-visible {
-  filter: brightness(1.06); outline: none;
-  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 /* Secondary platforms: the rest of your confirmed services as quiet chips, in
    priority order — one tap, no door to open first. */
@@ -2492,33 +2486,6 @@ body.modal-open { overflow: hidden; }
   background: transparent; border-color: var(--living); color: var(--living);
 }
 
-/* N1 1d/N2 — the reveal de-scattered: the retired "Reflect" stone is gone. The "why"
-   sits directly under Listen (its own border-top divider), one-tap to open; the two
-   named doors (Your notes / Album details) follow with room to breathe. */
-#pick .jactions { margin-top: var(--sp-14); }
-.why textarea, #choiceModalNote {
-  width: 100%; box-sizing: border-box; resize: vertical;
-}
-.why-actions { display: flex; align-items: center; gap: var(--sp-10); margin-top: var(--sp-10); }
-.why-actions button {
-  background: var(--accent); color: var(--on-accent); border: 0; border-radius: 10px;
-  padding: var(--sp-8) var(--sp-16); cursor: pointer; font-weight: 600;
-  transition: background .15s ease, color .15s ease;
-}
-/* U11: the "why" box shows its save state. While it differs from what's on disk
-   (`.dirty`) the textarea lifts (accent ring) and the button stays a solid
-   accent "Save" — "you have unsaved changes". Once it matches (`.clean`) the box
-   settles: the ring drops and the button relaxes to a calm sage "Saved ✓", so
-   the saved state is visible without re-reading the status line. */
-.why textarea { transition: border-color .15s ease, box-shadow .15s ease; }
-.why.dirty textarea {
-  border-color: var(--accent-2);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-2) 22%, transparent);
-}
-.why.clean .why-actions button {
-  background: var(--living-soft); color: var(--living);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--living) 45%, transparent);
-}
 .danger { color: var(--danger-text); border-color: var(--danger) !important; }
 .danger:hover { color: #fff; background: var(--danger); }
 
@@ -2825,17 +2792,6 @@ button.press-row:hover, button.press-row:focus-visible {
 }
 @media (hover: none) { .nt-pill { min-height: 40px; } }
 
-/* FB#40: a plain "take a note" button on every album view — quiet, full-width,
-   below the Keep / Set aside row. */
-.story-note-btn {
-  display: block; width: 100%; margin: var(--sp-10) 0 0;
-  padding: var(--sp-8) var(--sp-12); border: 1px solid var(--line);
-  border-radius: 9px; background: transparent; color: var(--accent-2);
-  font-size: 14px; cursor: pointer; transition: border-color .12s ease, background .12s ease;
-}
-.story-note-btn:hover { border-color: var(--accent-2); background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.story-note-btn:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
-@media (prefers-reduced-motion: reduce) { .story-note-btn { transition: none; } }
 
 /* FB#37: track-level search in Explore — a compact "Songs" group above the album
    grid, each row a door to that song's album. */
@@ -3323,6 +3279,39 @@ body:has(.modal:not(.hidden):not(#feedbackModal)) .acct-menu { display: none; }
 .te-openable .te-thumb:hover { border-color: var(--accent-2); }
 .te-openable .te-head:hover .te-title,
 .te-openable .te-head:hover .te-album { text-decoration: underline; text-underline-offset: 2px; }
+/* v9: opened records — a trace of reaching for a record, so quieter than what you
+   wrote: a smaller cover, muted names, one mono line naming the service. */
+.trail-opened { padding-top: var(--sp-8); padding-bottom: var(--sp-8); opacity: .82; }
+.trail-opened .te-thumb { width: 30px; height: 30px; border-radius: 5px; }
+.trail-opened .te-album, .trail-opened .te-title { font-size: 14px; color: var(--muted); }
+.trail-opened .te-title { color: var(--text); font-weight: 500; }
+.trail-opened .te-head { margin-bottom: 2px; }
+.te-opened {
+  font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px;
+  letter-spacing: .03em; color: var(--muted); margin-top: var(--sp-4);
+}
+.trail-hidden-opened { margin: var(--sp-6) var(--sp-8); font-size: 12.5px; color: var(--muted); font-style: italic; }
+.trail-tools { max-width: 760px; margin: 0 auto; display: flex; justify-content: flex-end; }
+.opened-toggle {
+  display: inline-flex; align-items: center; gap: var(--sp-8); cursor: pointer;
+  font: inherit; font-size: 13px; color: var(--muted); background: none;
+  border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px;
+}
+.opened-toggle[hidden] { display: none; }
+.opened-toggle:hover { color: var(--text); border-color: var(--accent-2); }
+.opened-toggle:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.opened-toggle.on { color: var(--text); border-color: var(--accent); }
+.ot-switch {
+  position: relative; width: 28px; height: 16px; border-radius: 999px;
+  background: var(--panel-2); border: 1px solid var(--line); flex: none;
+}
+.ot-switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px;
+  border-radius: 50%; background: var(--muted); transition: left .15s ease;
+}
+.opened-toggle.on .ot-switch { background: var(--living-soft); border-color: var(--living); }
+.opened-toggle.on .ot-switch::after { left: 14px; background: var(--living); }
+@media (prefers-reduced-motion: reduce) { .ot-switch::after { transition: none; } }
 .te-chip {
   font-family: var(--font-mono, ui-monospace, monospace); font-size: 9.5px;
   letter-spacing: .06em; text-transform: uppercase; padding: 2px 7px; border-radius: 5px;

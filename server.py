@@ -456,35 +456,68 @@ def _record_og_tags(album, share_url):
     return "\n".join(tags)
 
 
-def _shell_html():
+def _read_shell():
     """static/index.html, cached in-process and re-read when it changes on disk (one
-    stat per shell request, only on the ?album path)."""
+    stat per shell request)."""
     st = _SHELL_PATH.stat()
     stamp = (st.st_mtime_ns, st.st_size)
-    if getattr(_shell_html, "_stamp", None) != stamp:
-        _shell_html._text = _SHELL_PATH.read_text(encoding="utf-8")
-        _shell_html._stamp = stamp
-    return _shell_html._text
+    if getattr(_read_shell, "_stamp", None) != stamp:
+        _read_shell._text = _SHELL_PATH.read_text(encoding="utf-8")
+        _read_shell._stamp = stamp
+    return _read_shell._text
+
+
+def _shell_html():
+    """The shell the ?album path rewrites (a seam: tests swap it out)."""
+    return _read_shell()
+
+
+# Versioned shell assets (v334). The service worker serves navigations network-first
+# but same-origin assets cache-first, so before this the first open after a deploy
+# paired the NEW page with the PREVIOUS build's cached app.js/style.css — and when a
+# build removed an element the old script wired at startup, init() threw and Today
+# came up blank (prod, v332). Stamping every same-origin script/stylesheet URL with
+# the build version makes new markup name URLs no older cache holds, so the worker
+# misses and fetches the matching file; sw.js precaches the same `?v=VERSION` URLs
+# for offline. BUILD_VERSION is read from sw.js, so the paired bump stays the only
+# knob. Icons and the manifest stay unversioned: they can't break init, and a
+# manifest URL change can unsettle an installed PWA's identity.
+_ASSET_URL_RE = re.compile(r'((?:src|href)=")(/static/[^"?#]+\.(?:js|css))(")')
+
+
+def _stamp_assets(text):
+    v = quote(BUILD_VERSION, safe="")
+    return _ASSET_URL_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}?v={v}{m.group(3)}", text)
+
+
+def _plain_shell():
+    """The app shell as written, asset URLs stamped. Revalidated on every load
+    (no-cache + ETag, what send_from_directory used to give it): a stale shell is
+    exactly the mismatch the stamp exists to prevent."""
+    resp = current_app.response_class(_stamp_assets(_read_shell()), mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-cache"
+    resp.add_etag()
+    return resp.make_conditional(request)
 
 
 @bp.route("/")
 def index():
     uid = _canon_uid(request.args.get("album"))
     if not uid:
-        return send_from_directory("static", "index.html")
+        return _plain_shell()
     try:
         album = _album_for_uid(uid)
         if not album:
-            return send_from_directory("static", "index.html")
+            return _plain_shell()
         share_url = _abs_url("/?album=" + quote(uid, safe=""))
         html_text, n = _OG_BLOCK_RE.subn(
             lambda _m: _record_og_tags(album, share_url), _shell_html(), count=1)
         if not n:                      # markers gone -> serve the file as written
-            return send_from_directory("static", "index.html")
+            return _plain_shell()
     except Exception:  # noqa: BLE001 - a preview is polish; never fail the app shell
         log.exception("share_preview_failed")
-        return send_from_directory("static", "index.html")
-    resp = current_app.response_class(html_text, mimetype="text/html")
+        return _plain_shell()
+    resp = current_app.response_class(_stamp_assets(html_text), mimetype="text/html")
     # Crawlers refetch per platform; let them (and any CDN) hold it briefly, but keep
     # it short so a re-crawl picks up corrected catalog data the same day.
     resp.headers["Cache-Control"] = "public, max-age=300"
@@ -498,7 +531,7 @@ def admin():
     via /api/admin/whoami). The old standalone admin page was retired — one console,
     reachable from the ☰ menu in-app and here on desktop. Carries no privilege of its
     own; the operator gate on /api/admin/* + Supabase app_admins RLS grant read-all."""
-    return send_from_directory("static", "index.html")
+    return _plain_shell()
 
 
 @bp.route("/architecture")
@@ -888,8 +921,16 @@ def api_artist():
                 reverse=True)[:500]
     discogs = ("https://www.discogs.com/search/?type=artist&q="
                + quote_plus(name))
+    # B2 (owner, 2026-10-04): MusicBrainz's genres for this ARTIST live here and only
+    # here — never on a card or in the Genre list, since an artist's range isn't any
+    # one album's. Empty when the name is ambiguous or MB has none. Best-effort.
+    try:
+        artist_genres = pooldb.artist_mb_genres(name)
+    except Exception:  # noqa: BLE001 - a side file must never break the panel
+        artist_genres = []
     return jsonify({"name": name, "count": len(albums),
-                    "albums": albums, "discogs_url": discogs})
+                    "albums": albums, "discogs_url": discogs,
+                    "artist_genres": artist_genres})
 
 
 @bp.route("/api/label")
@@ -1492,6 +1533,40 @@ def api_choices_feed():
     return jsonify({"choices": choices, "stats": journal.choices_stats()})
 
 
+# --- Opened (v9, owner 2026-10-03) ------------------------------------------------
+# A Listen tap leaves an "opened" entry in the Notebook — the tap, never a claim you
+# listened. Local single-user mode only: signed-in and guest readers are intercepted by
+# static/store-bridge.js and kept in their encrypted / on-device stores, like notes.
+
+@bp.route("/api/opened", methods=["POST"])
+def api_opened_add():
+    data = request.get_json(silent=True) or {}
+    row = journal.add_opened(
+        data.get("uid"), data.get("service"), data.get("day"),
+        artist=data.get("artist"), title=data.get("title"),
+        release_id=data.get("release_id"))
+    if row is None:
+        return jsonify({"ok": False, "error": "uid, a known service and a "
+                        "YYYY-MM-DD day are required"}), 400
+    return jsonify({"ok": True, "id": row["id"], "opened": row})
+
+
+@bp.route("/api/opened")
+def api_opened_feed():
+    """Every opened row, newest first, each with its album's cover when the catalog
+    can resolve it (an opened row stores only the names, like a choice)."""
+    rows = journal.opened_feed()
+    for o in rows:
+        album = _album_for_uid(o.get("uid")) or {}
+        o["cover"] = album.get("cover")
+    return jsonify({"opened": rows})
+
+
+@bp.route("/api/opened/<int:opened_id>", methods=["DELETE"])
+def api_opened_delete(opened_id):
+    return jsonify({"ok": journal.delete_opened(opened_id)})
+
+
 def _clean_reasons(reasons):
     """Normalize an incoming reasons value to a de-duped list of short strings."""
     if not isinstance(reasons, list):
@@ -1869,7 +1944,7 @@ def api_sync_keys_put():
 @bp.route("/api/sync/rows")
 @_LIMIT_SYNC
 def api_sync_rows_get():
-    """Fetch the caller's encrypted rows. Optional ?kind=note|choice|trail|mark to
+    """Fetch the caller's encrypted rows. Optional ?kind=note|choice|trail|mark|opened to
     scope to one type, and ?since=<iso-timestamp> for a delta pull (rows changed
     after the cursor, tombstones included). Returns a `server_time` the client
     can use as the next `since`."""

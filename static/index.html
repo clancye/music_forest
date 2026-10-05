@@ -152,7 +152,7 @@
      landmark, so a screen-reader user can skip the header + nav straight to it.
      Wraps every view (Choose / Explore / Browse / your journal). -->
 <main id="main">
-<!-- TODAY: the day's records, one at a time — keep or skip -->
+<!-- TODAY: the day's records, one at a time — write a note, or Next -->
 <section id="decide" class="view">
   <!-- ACC1 C [1.3.1]: an invisible per-view <h2> gives the outline a rung between
        the site <h1> and each section's <h3>s, so headings can be skimmed by voice. -->
@@ -177,34 +177,21 @@
     <!-- A8 Phase 2: the opt-in genre filter for Today. The balanced draw (Phase 1)
          already varies the deck for everyone; this is the deliberate "just show me
          X" control. Client-side only — the day payload already carries each record's
-         coarse `bucket`, so the chips + per-genre counts (rendered by renderGenrePref)
-         and the filtering need no round-trip. Today-only (CSS keys off body.is-decide);
-         dig mode ignores it (honesty rule). "unknown"-genre records are never a chip —
-         filtering to a genre honestly hides them. -->
+         own tags, so the per-tag counts and the filtering need no round-trip.
+         Today-only (CSS keys off body.is-decide); dig mode ignores it (honesty rule).
+         A record with no tags can't match a tick — filtering honestly hides it. -->
     <!-- Owner 2026-07-26: "Narrow today" split into two plainly-named controls, since the
-         single label read as unclear. "By genre" = the buckets + typed styles; "By year" =
+         single label read as unclear. "By genre" = the genre + style list; "By year" =
          the F31 decade chips + a year range + a door to Explore's exact-day searcher (F33).
          Same client-side filter model (dig ignores both; unknown genre / no-year → no chip). -->
-    <details class="genre-pref" id="genrePref">
-      <summary title="Show only certain genres">Genre<span class="genre-tally" id="genreTally" hidden></span></summary>
-      <div class="genre-pref-box">
-        <button type="button" class="pref-close" data-pref-close
-          title="Close" aria-label="Close">✕</button>
-        <p class="genre-pref-lead">Show me</p>
-        <div class="genre-chips" id="genreChips" role="group" aria-label="Filter today by genre"></div>
-        <!-- FB#57b: type a finer tag ("shoegaze", "hard bop") + Enter / Add to drop it
-             into the chip list above; it filters against each record's genres + styles. -->
-        <div class="genre-add-row">
-          <input type="search" id="genreText" class="genre-text" autocomplete="off"
-            placeholder="add a style — shoegaze, hard bop…"
-            aria-label="Add a genre or style filter, then press Enter">
-          <button type="button" id="genreAdd" class="genre-add">Add</button>
-        </div>
-        <div id="genreSuggest" class="genre-suggest" role="listbox"
-             aria-label="Matching genres and styles" hidden></div>
-        <p class="genre-pref-note" id="genrePrefNote" aria-live="polite"></p>
-      </div>
-    </details>
+    <!-- Owner 2026-09-24: Genre opens the full-screen genre + style list (#styleBrowse)
+         directly. It replaced the chips popover (bucket chips, the typed style box and
+         its suggestions) at v328 — the list's "All" per genre is the old chip, its find
+         box the old typed box. A plain button, not a <details>: there's no popover. -->
+    <div class="genre-pref" id="genrePref">
+      <button type="button" class="genre-pref-pill" id="genreOpen"
+        title="Show only certain genres or styles">Genre<span class="genre-tally" id="genreTally" hidden></span></button>
+    </div>
     <details class="genre-pref" id="datePref">
       <summary title="Filter today by decade, a year range, or reach a specific day">Year<span class="genre-tally" id="dateTally" hidden></span></summary>
       <div class="genre-pref-box">
@@ -250,9 +237,14 @@
          Skip, while "By genre" / "By year" stay left under Keep — each control beneath
          the button it belongs to (owner, 2026-08-07).
          Still inside #decide, so it hides with the view on a tab switch. -->
-    <div id="setAsideBar" class="set-aside-bar hidden" role="button" tabindex="0"
-         aria-label="Open the records you skipped">
-      <span class="sab-label">Skipped</span>
+    <!-- Starts in its empty state, not hidden (owner 2026-10-03): it used to appear
+         only once the day loaded, so the loading screen showed Genre + Year alone and
+         the row re-centred when Skipped arrived. updateSetAsideBar takes it from here. -->
+    <div id="setAsideBar" class="set-aside-bar is-empty" role="button" aria-disabled="true"
+         aria-label="Open the records you've seen today">
+      <!-- v331 (owner 2026-10-04): "Skipped" → "Seen", with Skip → Next. Labels only;
+           the internal aside / setAside* names stay, as they did through every rename. -->
+      <span class="sab-label">Seen</span>
       <span class="sab-count" id="setAsideCount">0</span>
     </div>
   </div>
@@ -269,16 +261,47 @@
 
 </section>
 
+<!-- Owner 2026-09-24: the Genre screen — a full-screen list of every genre and style tag
+     in today's records, opened by the Genre button under the record. A `.modal` so the
+     shared dialog layer (wireDialogA11y) gives it focus, the Tab trap and Escape; the
+     Back button is its `.modal-close`. Ticks apply live, exactly like the chips. -->
+<div id="styleBrowse" class="modal style-browse hidden" role="dialog" aria-modal="true"
+     aria-labelledby="sbTitle">
+  <div class="modal-box sb-box">
+    <div class="sb-head">
+      <div class="sb-top">
+        <button type="button" id="sbBack" class="modal-close sb-back">‹ Back</button>
+        <h3 id="sbTitle">Genres &amp; styles</h3>
+        <button type="button" id="sbSort" class="sb-sort">A–Z</button>
+      </div>
+      <p class="sb-intro muted" id="sbIntro">Every tag on today's records, A to Z. Tick any
+        to narrow Today.</p>
+      <input type="search" id="sbSearch" class="sb-search" placeholder="Find a tag"
+        autocomplete="off" aria-label="Find a tag">
+    </div>
+    <!-- v332: one flat list (no genre groups) with a letter rail beside it in A–Z order;
+         rarest-first order hides the rail and groups by how rare a tag is today. -->
+    <div class="sb-body">
+      <div class="sb-list" id="sbList"><!-- injected --></div>
+      <nav class="sb-letters" id="sbLetters" aria-label="Jump to a letter"></nav>
+    </div>
+    <div class="sb-tray">
+      <div class="sb-picked" id="sbPicked"></div>
+      <button type="button" id="sbGo" class="sb-go">Back to today</button>
+    </div>
+  </div>
+</div>
+
 <!-- The pull-up pile itself — a door over Today (VISION: pull-only, returnable). -->
 <div id="setAsideSheet" class="set-aside-sheet hidden" role="dialog" aria-modal="true"
-     aria-label="Records you skipped today">
+     aria-label="Records you've seen today">
   <div class="sas-panel">
     <div class="sas-head">
-      <h3>Skipped today</h3>
+      <h3>Seen today</h3>
       <button id="setAsideClose" type="button" class="modal-close" title="Close">✕</button>
     </div>
-    <p class="sas-hint muted">Records you skipped today — bring any back to look
-      again. This pile clears tomorrow; nothing here is saved.</p>
+    <p class="sas-hint muted">Records you moved past with Next today — bring any back
+      to look again. This list clears tomorrow; nothing here is saved.</p>
     <div id="setAsideList" class="sas-list"><!-- injected --></div>
   </div>
 </div>
@@ -390,6 +413,12 @@
   <p class="guest-notebook-note">This lives only in this browser — not synced or backed up.
     <button type="button" class="linkish" data-guest-keep
       title="Start your Notebook — sync it, back it up, and keep it for good">Keep it for good →</button></p>
+  <!-- v9 (owner 2026-10-03): opened records can be hidden; the choice is remembered on
+       this device. renderTrail shows the toggle only once there's an opened entry. -->
+  <div class="trail-tools">
+    <button type="button" id="openedToggle" class="opened-toggle on" aria-pressed="true" hidden>
+      <span class="ot-switch" aria-hidden="true"></span>Show opened</button>
+  </div>
   <div id="trail" class="notebook-trail"><!-- interleaved dated entries injected --></div>
   <div class="trail-foot">
     <button type="button" id="trailPill" class="take-note-pill">✎ Write a note</button>
@@ -483,26 +512,33 @@
       <p>Every album in the catalogue is tagged with its original release month and
         day. Music&nbsp;Forest gathers every record whose release date lands on
         today's month and day — any year — and shows them one at a time.</p>
-      <p>The order is a <b>genre-balanced deal</b>: records are grouped by a coarse
-        genre and the deck takes one genre per round, so the first records span
-        genres instead of leading with a run of the most common one. Within that,
+      <!-- Owner, 2026-10-04: the 13 hidden genres were retired and the deal sizes turns
+           to the day (static/app.js balancedOrder, GENRE_BACKFILL_DESIGN.md). Keep
+           this paragraph describing what the code actually does. -->
+      <p>The order is <b>dealt for variety</b>. Each record is grouped by its first
+        genre or style, and each group's turns are sized to how much of the day it
+        is — softened a little, so the day's biggest sounds come up slightly less
+        often than their share and the smallest slightly more. Two records from the
+        same group don't come back to back while anything else is left. Within that,
         placement is random. Genre is the <em>only</em> thing balanced — to keep the
         day varied — and there's no weighting by popularity, era, label, or anything
         about you; nothing about you is stored or read to build the day. Only one
         canonical version of each album is counted, so reissues and duplicate
         pressings can't crowd the day or show up twice.</p>
-      <p>Prefer a narrower day? <b>By&nbsp;genre</b> and <b>By&nbsp;year</b> show only
-        what you choose — and the filtered set still runs through the same balanced
-        deal, so "Jazz&nbsp;+&nbsp;Folk" interleaves rather than all-jazz-then-folk.</p>
+      <p>Prefer a narrower day? <b>Genre</b> and <b>Year</b> show only what you
+        choose — and the filtered set still runs through the same deal, so
+        "Jazz&nbsp;+&nbsp;Folk" interleaves rather than all-jazz-then-folk.</p>
 
       <h4 class="about-h">Where the data comes from</h4>
       <p><b>Discogs</b> — one of two catalog sources: releases, dates, labels
         and editions, from its CC0 community data.</p>
       <p><b>MusicBrainz</b> — the other catalog source, global and an equal peer
-        (nearly half the pickable pool comes from it), and where many albums'
-        tracklists, genres and cover art come from.</p>
+        (about two in five of each day's records come from it), and where many albums'
+        tracklists, genres and cover art come from — plus the tags people add
+        there: moods, scenes and places.</p>
       <p><b>Deezer</b> — the availability check: an album only counts as
-        listenable once it's been confirmed streamable there.</p>
+        listenable once it's been confirmed streamable there. It also gives a
+        genre to records neither catalog has one for.</p>
       <p><b>Apple Music / iTunes &amp; the Cover Art Archive</b> — cover art,
         plus exact Apple album links.</p>
       <p><b>Spotify &amp; YouTube Music</b> — exact album links from each
@@ -648,13 +684,11 @@
   <div class="modal-box">
     <button id="storyClose" class="modal-close" title="Close">✕</button>
     <div id="storyHead"></div>
-    <!-- Request 1: Keep / Skip for the CURRENT Today record, shown only when
-         Album details is opened from the deck (renderStoryDeckActions). -->
+    <!-- The acts row (renderStoryDeckActions): ✎ Write a note on every record, plus
+         Skip when this is the record Today is showing. v329 folded FB#40's separate
+         full-width note button into this row when Keep was retired — the row had
+         Keep, the button below it had the note; now the note IS the act. -->
     <div id="storyDeckActions" class="story-deck-actions hidden"></div>
-    <!-- FB#40: a plain button to take a note on this record, on every album view
-         (the per-entity pencils tie a note to a track/person; this ties to the
-         album itself). Opens the same composer, tied to the record. -->
-    <button type="button" id="storyNoteBtn" class="story-note-btn">✎ Write a note</button>
     <!-- FB#105 (owner): Share used to sit in the head, between the platform links
          and the acts, which is part of what buried Keep. It's a secondary, outward
          thing — it belongs after the acts, not ahead of them. Rendered here rather
@@ -799,18 +833,31 @@
   </div>
 </div>
 
-<!-- KEEP REVEAL (E2): the kept album opens as a door over the Today deck — open over
-     context, ✕/Esc back to the deck — instead of a panel below. Keeps the #pick
-     id/class so every #pick-scoped selector (decorateMarks, the why-box) is
-     unchanged. Sits a hair below the other doors (.modal z-index 50; this is 48 in
-     CSS) so a story/artist/label/note pulled *from* the reveal stacks on top. -->
-<div id="choiceRevealModal" class="modal hidden">
-  <div class="modal-box modal-box-choice">
-    <button id="choiceRevealClose" class="modal-close" title="Close (Esc)">✕</button>
-    <div id="pick" class="pick"><!-- kept album injected --></div>
+
+<!-- UPDATE BRIDGE (v333, 2026-10-04). On a deploy the service worker fetches this PAGE
+     fresh but keeps serving the previous build's app.js from cache until the new worker
+     takes over — so the first open after an update runs OLD script against NEW markup.
+     When a build removes an element the old script wires up at startup, that script
+     throws mid-init and Today comes up blank for that whole load (found on prod at v332:
+     the v331 script reached for #sbRail and died before dealing the day; the updater did
+     not rescue it within a minute). These inert stand-ins keep every build from v328 on
+     starting cleanly against this page. Never shown, never read by the current script —
+     the `hidden` container keeps them out of layout and the accessibility tree.
+     The real fix landed in v334: the server stamps every same-origin script/stylesheet
+     URL here with `?v=<build>` (server.py _stamp_assets) and sw.js precaches those exact
+     URLs, so a new page can no longer pull an older build's cached script. That fix
+     guards a reader from their first open of v334 on — v334's page already misses the
+     v333 cache. So this whole container can be retired in any build AFTER v334 has
+     shipped to prod: from then on no page this server sends can be paired with a
+     pre-v334 script. Don't add new stand-ins here; the stamp makes them unnecessary. -->
+<div id="updateBridge" hidden aria-hidden="true">
+  <nav id="sbRail"></nav>                        <!-- v328–v331: the Genre screen's genre rail -->
+  <button type="button" id="storyNoteBtn"></button>   <!-- v328: Album details' separate note button -->
+  <div id="choiceRevealModal" class="hidden">    <!-- v328–v329: the retired keep reveal -->
+    <button type="button" id="choiceRevealClose"></button>
+    <div id="pick"></div>
   </div>
 </div>
-
 
 <!-- SEND FEEDBACK modal: captures a note + the current state, stored locally -->
 <div id="feedbackModal" class="modal hidden">

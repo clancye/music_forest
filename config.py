@@ -131,6 +131,9 @@ ALBUMS_MIN_ROWS = int(os.environ.get("AOTD_ALBUMS_MIN_ROWS", "100000"))
 # blocks a pre-migration host or a legit partial). Floor well below ~1.97M, above any
 # fixture. Read by dbsanity.py -> the rsync gate, /healthz, uptime_ping, the watchdog.
 AVAIL_MIN_ROWS = int(os.environ.get("AOTD_AVAIL_MIN_ROWS", "100000"))
+# The MB tags side file's floor (album_tags rows; a full build holds several hundred
+# thousand). Same contract: absent => unknown, below the floor => a stub, never shipped.
+MB_TAGS_MIN_ROWS = int(os.environ.get("AOTD_MB_TAGS_MIN_ROWS", "50000"))
 
 # L3 — the published Privacy Policy + Terms pages (static/privacy.html,
 # static/terms.html; routes /privacy + /terms). Now LIVE (owner-authored, filled,
@@ -158,6 +161,14 @@ PRECISION_LABELS_FILE = Path(os.environ.get(
 # an error). Rides to Render alongside pool.sqlite (same vintage).
 BANDCAMP_DB_PATH = Path(os.environ.get("AOTD_BANDCAMP_DB", DATA_DIR / "mb_bandcamp.sqlite"))
 
+# MusicBrainz community tags + artist genres (GENRE_BACKFILL_DESIGN.md B2). A static side
+# file built from the MB release dump by tools/build_mb_tags.py: album_tags {release mbid
+# -> raw [[tag, votes], ...]} reached via a pool row's mb_release_ids, and artists {mbid ->
+# name, genres, country} for the artist page. Raw on disk; mbtags.clean_tags filters when
+# serving. Absent => no tags surface (unknown, never an error). Ships as its own
+# rsync_pool.sh leg — never inside albums.db, which must not be whole-file rsynced.
+MB_TAGS_DB_PATH = Path(os.environ.get("AOTD_MB_TAGS_DB", DATA_DIR / "mb_tags.sqlite"))
+
 # The LAZY door (pooldb.door_links) resolves an opened MB-only album's cover +
 # per-platform links via iTunes then Odesli. It is USER-FACING and ON the request
 # path, so it must bound its own time — unlike the patient bulk coverage_study
@@ -183,6 +194,12 @@ DOOR_HTTP_BACKOFF = float(os.environ.get("AOTD_DOOR_BACKOFF", "0"))
 # (§IX.8.7's delete-on-termination, self-enforcing). Default 2 days = today +
 # tomorrow, matching the nightly prewarm horizon.
 SPOTIFY_CACHE_TTL_DAYS = int(os.environ.get("AOTD_SPOTIFY_TTL_DAYS", "2"))
+
+# A Spotify search that found nothing is remembered this long (owner, 2026-10-04), so the
+# warm-up — which walks the same list several times a day — doesn't spend a search on
+# the same "not found" every pass (~50 a day before). It stores no Spotify content, only
+# that our search came up empty; the window lets an album Spotify adds later get found.
+SPOTIFY_MISS_DAYS = int(os.environ.get("AOTD_SPOTIFY_MISS_DAYS", "30"))
 
 # The whole app's Spotify Search budget for one day — MEASURED 2026-07-16, not a
 # documented figure (dev mode publishes none). Prod uses ONE client_id, so blowing it

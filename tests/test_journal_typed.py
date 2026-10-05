@@ -130,7 +130,7 @@ def test_export_import_round_trips_typed_ref(fresh_journal):
     j.add_note("art:Radiohead", None, "silence", ref=ARTIST_REF)
     j.add_note("trk:d:100#8", None, "the cut", ref=TRACK_REF)
     dump = j.export_data()
-    assert dump["version"] == journal.EXPORT_VERSION == 8
+    assert dump["version"] == journal.EXPORT_VERSION == 9      # v9 added `opened`
     # the exported note carries its ref as a decoded object.
     exported = {n["uid"]: n for n in dump["notes"]}
     assert exported["art:Radiohead"]["ref"] == ARTIST_REF

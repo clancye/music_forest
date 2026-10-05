@@ -3,6 +3,9 @@
  * Deliberately conservative so it can never interfere with the E2EE / auth path:
  *
  *   - Same-origin shell assets  -> cache-first (instant repeat loads, offline shell).
+ *                                  The page names them `?v=VERSION` (stamped by the
+ *                                  server), so a new build's page never hits an old
+ *                                  build's cached script — see SHELL below.
  *   - /api/*                    -> NOT intercepted: always live network (auth, sync,
  *                                  feedback, ciphertext are never cached/served stale).
  *   - Cross-origin (jsDelivr CDN scripts, Supabase, mzstatic/Apple art)
@@ -16,31 +19,40 @@
  * next load (skipWaiting + clients.claim), and `activate` deletes the old cache.
  * No user-facing "refresh?" prompt by design — see H1.3 decision 1.
  */
-const VERSION = 'v326';
+const VERSION = 'v337';
 const CACHE = `forest-shell-${VERSION}`;
 
 // The same-origin app shell. Cross-origin CDN scripts are intentionally absent:
 // the browser fetches + SRI-validates them, and opaque cross-origin responses
 // must not be cached here.
+//
+// Scripts and the stylesheet are precached under `?v=VERSION` — the exact URLs the
+// server stamps into the page it serves (server.py _stamp_assets, v334). That is
+// what keeps a page and its scripts the same build: the fresh page after a deploy
+// names `?v=<new>` URLs that no older cache holds, so the cache-first branch below
+// misses and fetches the matching file, instead of running the previous build's
+// app.js against new markup (the v332 blank-Today). Icons and the manifest stay
+// unversioned, as the page names them.
+const versioned = (path) => `${path}?v=${VERSION}`;
 const SHELL = [
   '/',
-  '/static/style.css',
-  '/static/crypto.js',
-  '/static/sync.js',
-  '/static/feedback-sync.js',
-  '/static/journal-store.js',
-  '/static/strings.js',
-  '/static/app.js',
-  '/static/label-panel.js',
-  '/static/onboarding.js',
-  '/static/whatsnew.js',
-  '/static/guest-buffer.js',
-  '/static/store-bridge.js',
-  '/static/device-trust.js',
-  '/static/journal-cache.js',
-  '/static/auth-ui.js',
-  '/static/migrate.js',
-  '/static/sw-register.js',
+  versioned('/static/style.css'),
+  versioned('/static/crypto.js'),
+  versioned('/static/sync.js'),
+  versioned('/static/feedback-sync.js'),
+  versioned('/static/journal-store.js'),
+  versioned('/static/strings.js'),
+  versioned('/static/app.js'),
+  versioned('/static/label-panel.js'),
+  versioned('/static/onboarding.js'),
+  versioned('/static/whatsnew.js'),
+  versioned('/static/guest-buffer.js'),
+  versioned('/static/store-bridge.js'),
+  versioned('/static/device-trust.js'),
+  versioned('/static/journal-cache.js'),
+  versioned('/static/auth-ui.js'),
+  versioned('/static/migrate.js'),
+  versioned('/static/sw-register.js'),
   '/static/manifest.webmanifest',
   '/static/icons/icon-192.png',
   '/static/icons/icon-512.png',

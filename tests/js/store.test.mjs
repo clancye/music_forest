@@ -238,7 +238,7 @@ async function main() {
     "typed track ref survives reload/decrypt");
   // export/import carries the ref (v8).
   const dumpT = storeT2.exportData();
-  ok(dumpT.version === 8, "export is v8");
+  ok(dumpT.version === 9, "export is v9 (v9 added `opened`)");
   const syncT3 = fakeSync();
   const storeT3 = J.createStore({ crypto: C, sync: syncT3 });
   storeT3.setKey(dek);

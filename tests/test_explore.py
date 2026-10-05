@@ -38,6 +38,28 @@ def test_artist_endpoint(client):
     assert "Alpha" in data["discogs_url"]
 
 
+def test_artist_endpoint_carries_mb_artist_genres(client, monkeypatch, tmp_path):
+    # B2 (owner, 2026-10-04): MusicBrainz's genres for the ARTIST ride the artist panel
+    # (and nowhere else); none when the side file is absent or the name is ambiguous.
+    import json
+    import sqlite3
+    import config
+    monkeypatch.setattr(config, "MB_TAGS_DB_PATH", tmp_path / "absent.sqlite")
+    assert client.get("/api/artist?name=Alpha").get_json()["artist_genres"] == []
+    db = tmp_path / "mb_tags.sqlite"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE artists (artist_mbid TEXT PRIMARY KEY, name TEXT NOT NULL, "
+                "genres TEXT, country TEXT)")
+    con.execute("INSERT INTO artists VALUES ('a1', 'Alpha', ?, 'US')",
+                (json.dumps([["shoegaze", 4], ["dream pop", 2]]),))
+    con.commit()
+    con.close()
+    monkeypatch.setattr(config, "MB_TAGS_DB_PATH", db)
+    data = client.get("/api/artist?name=Alpha").get_json()
+    assert data["artist_genres"] == ["shoegaze", "dream pop"]
+    assert 100 in {a["release_id"] for a in data["albums"]}
+
+
 def test_artist_endpoint_blank(client):
     data = client.get("/api/artist?name=%20").get_json()
     assert data["albums"] == [] and data["count"] == 0

@@ -16,12 +16,14 @@ albums.db SQL stays in db.py (its "all SQL in one place" seam, one level down).
 """
 import json
 import random
+import re
 import sqlite3
 import sys
 from datetime import date, datetime, timedelta, timezone
 
 import config
 import db
+import mbtags
 import opsdb
 import sqliteconn
 from poolconn import LIVE, _conn  # noqa: F401 - shared leaf; _conn re-exported so pooldb._conn keeps working; LIVE is the live.sqlite schema prefix (BE2a)
@@ -102,6 +104,153 @@ def _cached_door_platforms(uids, *, now=None):
     except sqlite3.OperationalError:
         return {}
     return out
+
+
+# Deezer's own genre for records that carry none (GENRE_BACKFILL_DESIGN.md, A). ~28% of a
+# day's playable records — all MB-arm, all with an exact Deezer album link — have no tags,
+# so no Genre tick reaches them. tools/deezer_genres.py asks Deezer's album endpoint and
+# keeps the answer in live.sqlite's deezer_album_genres, keyed by Deezer album id. Only an
+# 'ok' row is ever served; 'empty' / 'gone' / 'unknown' are the writer's bookkeeping.
+_DEEZER_ALBUM_RE = re.compile(r"deezer\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?album/(\d+)")
+
+_DEEZER_GENRES_SELECT = (
+    f"SELECT deezer_id, genres FROM {LIVE}deezer_album_genres "
+    "WHERE status = 'ok' AND deezer_id IN ({ph})")
+
+
+def deezer_album_id(url):
+    """The numeric album id in an exact Deezer album link, else None."""
+    m = _DEEZER_ALBUM_RE.search(url or "")
+    return int(m.group(1)) if m else None
+
+
+def _cached_deezer_genres(rows):
+    """Batch-read Deezer's tidied genres for `rows` -> {deezer_id: "a, b"} (the comma
+    string genresOf() splits). Pure read: a missing table (the writer hasn't run on this
+    host yet, or no live split) maps to {} and is NEVER created here, so this code can
+    deploy before the data exists."""
+    ids = set()
+    for r in rows:
+        try:
+            did = deezer_album_id(r["deezer_url"])
+        except (IndexError, KeyError):
+            did = None
+        if did:
+            ids.add(did)
+    if not ids:
+        return {}
+    ids = list(ids)
+    out = {}
+    try:
+        with _conn() as c:
+            for i in range(0, len(ids), 400):
+                chunk = ids[i:i + 400]
+                for did, raw in c.execute(
+                        _DEEZER_GENRES_SELECT.format(ph=",".join("?" * len(chunk))),
+                        chunk):
+                    try:
+                        names = [n for n in json.loads(raw or "[]") if n]
+                    except (ValueError, TypeError):
+                        continue
+                    if names:
+                        out[did] = ", ".join(names)
+    except sqlite3.OperationalError:
+        return {}
+    return out
+
+
+# MusicBrainz community tags (GENRE_BACKFILL_DESIGN.md B2): the styles, moods, scenes and
+# places people tag releases with beyond MB's genre list. tools/build_mb_tags.py stores
+# them raw in config.MB_TAGS_DB_PATH keyed by release mbid; mbtags.clean_tags filters
+# them when serving. Reached through mb_release_ids, so Discogs records with an MB match
+# gain them too. ~a third of MB records that already carry genres gain at least one.
+def _mb_tags_conn():
+    try:
+        con = sqlite3.connect(f"file:{config.MB_TAGS_DB_PATH}?mode=ro", uri=True,
+                              timeout=30)
+        con.execute("PRAGMA busy_timeout=30000")
+        return con
+    except sqlite3.OperationalError:
+        return None
+
+
+def _cached_mb_tags(rows):
+    """{uid: [[tag, votes], ...]} — raw tags united across each row's releases (most
+    votes per name). One batched read; a missing / never-built file maps to {} (no
+    tags, never an error). Pure read."""
+    want, all_mbids = {}, set()
+    for r in rows:
+        try:
+            mrj = r["mb_release_ids"]
+        except (IndexError, KeyError):
+            continue
+        if not mrj or mrj == "[]":
+            continue
+        try:
+            mbids = [m for m in json.loads(mrj) if m]
+        except (ValueError, TypeError):
+            continue
+        if mbids:
+            want[r["uid"]] = mbids
+            all_mbids.update(mbids)
+    if not all_mbids:
+        return {}
+    con = _mb_tags_conn()
+    if con is None:
+        return {}
+    got = {}
+    try:
+        ids = list(all_mbids)
+        for i in range(0, len(ids), 400):
+            chunk = ids[i:i + 400]
+            for mbid, raw in con.execute(
+                    "SELECT release_mbid, tags FROM album_tags WHERE release_mbid IN "
+                    f"({','.join('?' * len(chunk))})", chunk):
+                try:
+                    got[mbid] = json.loads(raw)
+                except (ValueError, TypeError):
+                    continue
+    except sqlite3.OperationalError:
+        return {}
+    finally:
+        con.close()
+    out = {}
+    for uid, mbids in want.items():
+        best = {}
+        for m in mbids:
+            for pair in got.get(m) or []:
+                if isinstance(pair, (list, tuple)) and len(pair) == 2 and pair[0]:
+                    best[pair[0]] = max(int(pair[1] or 0), best.get(pair[0], 0))
+        if best:
+            out[uid] = [[n, v] for n, v in best.items()]
+    return out
+
+
+def artist_mb_genres(name):
+    """MusicBrainz's genres for an artist, for the artist page only (owner,
+    2026-10-04: never the card, the Genre list, its filter or the deal — an artist's
+    range isn't any one album's). The panel is looked up by NAME, so this answers only
+    when exactly one MB artist carries that name: two sharing it show nothing rather
+    than a guess. -> [genre, ...] (most-voted first, up to 8) or []."""
+    name = (name or "").strip()
+    if not name:
+        return []
+    con = _mb_tags_conn()
+    if con is None:
+        return []
+    try:
+        rows = con.execute("SELECT genres FROM artists WHERE name = ? COLLATE NOCASE "
+                           "LIMIT 2", (name,)).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        con.close()
+    if len(rows) != 1 or not rows[0][0]:
+        return []
+    try:
+        return [g for g, _v in json.loads(rows[0][0]) if g][:8]
+    except (ValueError, TypeError):
+        return []
 
 
 # Bandcamp confirmed links via the MB crosswalk (F20). The MB release dump's
@@ -299,56 +448,6 @@ def _entity_genres(raw):
     return ", ".join(g for g in gs if g)
 
 
-# --- A8: coarse genre buckets --------------------------------------------------
-# One shared, server-owned taxonomy that maps a record's merged `genres` string to
-# ONE coarse top-level bucket. It powers two things: the client's genre-BALANCED
-# draw (Phase 1 — deal one bucket per round so Today doesn't lead with a run of the
-# dominant genre; the catalog skews ~heavily electronic/rock) and, later, the opt-in
-# genre FILTER (Phase 2, mirroring the platform chooser). The client reads the
-# `bucket` field _enrich attaches — it never re-implements this map, so there's one
-# source of truth. A record with no genre data (~30% of the pool, mostly the MB arm)
-# is UNKNOWN — a first-class bucket, so genre-blind albums aren't buried in the deal.
-GENRE_UNKNOWN = "unknown"
-_GENRE_BUCKETS = (
-    ("electronic", ("electronic", "electronica", "house", "techno", "trance",
-                    "ambient", "idm", "downtempo", "dubstep", "drum and bass",
-                    "drum n bass", "breakbeat", "electro", "edm", "acid",
-                    "big beat", "trip hop", "synth", "leftfield")),
-    ("hip hop", ("hip hop", "hip-hop", "rap", "trap", "grime")),
-    ("funk / soul", ("funk", "soul", "r&b", "rhythm and blues", "disco", "motown")),
-    ("jazz", ("jazz", "bebop", "swing", "big band")),
-    ("reggae", ("reggae", "ska", "dancehall", "dub reggae", "rocksteady")),
-    ("classical", ("classical", "baroque", "orchestral", "opera", "choral",
-                   "romantic era", "chamber music")),
-    ("folk", ("folk", "singer-songwriter", "americana", "country", "bluegrass")),
-    ("latin", ("latin", "salsa", "cumbia", "bossa", "samba", "tango", "reggaeton")),
-    ("blues", ("blues",)),
-    ("stage & screen", ("soundtrack", "score", "musical", "stage & screen", "theme")),
-    ("world", ("world", "african", "afrobeat", "celtic", "flamenco", "highlife")),
-    ("rock", ("rock", "punk", "metal", "grunge", "hardcore", "emo", "shoegaze",
-              "post-", "indie", "new wave", "goth")),
-    ("pop", ("pop",)),
-)
-
-
-def genre_bucket(genres):
-    """Coarse top-level bucket for a record's merged `genres` string (comma-joined,
-    as _enrich produces it). Returns the bucket of the FIRST classifiable token, so
-    an unclassifiable leading token (MB's 'experimental', 'instrumental') is skipped
-    rather than swallowing the record; GENRE_UNKNOWN when nothing classifies or there
-    are no genres. Case-insensitive substring match; deliberately coarse."""
-    if not genres:
-        return GENRE_UNKNOWN
-    for tok in genres.split(","):
-        t = tok.strip().lower()
-        if not t:
-            continue
-        for name, kws in _GENRE_BUCKETS:
-            if any(kw in t for kw in kws):
-                return name
-    return GENRE_UNKNOWN
-
-
 # --- B25: is this record a compilation / box set? ------------------------------
 # Feedback #64/#65: "Slim Gaillard — Laughing in Rhythm" is a Proper Records BOX SET
 # (102 tracks, measured) served as one album, and "Various — Jamz Vol. 1" is a generic
@@ -361,7 +460,7 @@ def genre_bucket(genres):
 # always mark. Track count is deliberately NOT part of this test — a long record is a
 # separate fact the card states on its own, and plenty of legitimate albums are long.
 #
-# Server-owned, like genre_bucket: the client reads the flag, never re-derives the
+# Server-owned: the client reads the flag, never re-derives the
 # taxonomy, so there's one source of truth.
 _VARIOUS_ARTISTS = {"various", "various artists", "va", "v.a.", "verschiedene"}
 
@@ -400,6 +499,8 @@ def _enrich(rows):
     door_for = _cached_door_platforms([r["uid"] for r in rows])
     bc_for = _cached_bandcamp(rows)
     mbe_for = _cached_mb_enrich(rows)   # F29: CAA cover / genres / exact Discogs
+    dzg_for = _cached_deezer_genres(rows)   # genre backfill: Deezer's genre, gap-fill only
+    mbt_for = _cached_mb_tags(rows)   # B2: MB community tags (raw; filtered below)
     ent_for = _catalog_fields([r["uid"] for r in rows])   # UC1 Phase 1b (flag-gated)
 
     out = []
@@ -492,6 +593,27 @@ def _enrich(rows):
                 a["label"] = mbe["label"]
             if mbe.get("discogs_url"):
                 a["discogs_url"] = mbe["discogs_url"]
+        # Genre backfill: a record that STILL has no genres after every fold above
+        # (entity union, mb_enrich) takes Deezer's, so a Genre tick can reach it — and
+        # the deal, which groups by a record's first tag. Never overrides a genre from
+        # Discogs / the catalog / MB. genres_source is API-only, no visible label.
+        if not a.get("genres"):
+            dzg = dzg_for.get(deezer_album_id(r["deezer_url"]))
+            if dzg:
+                a["genres"] = dzg
+                a["genres_source"] = "deezer"
+        # B2: MusicBrainz community tags — styles, moods, scenes, places — filtered
+        # here (mbtags.clean_tags: junk, editors' markers, and any spelling of a genre
+        # or style the record already carries all go). Their own field, so where they
+        # came from stays visible; the client's Genre list and detail chips read it.
+        mbt = mbt_for.get(r["uid"])
+        if mbt:
+            tags = mbtags.clean_tags(mbt, genres=a.get("genres") or "",
+                                     styles=a.get("styles") or "",
+                                     artist=a.get("artist") or "",
+                                     title=a.get("title") or "")
+            if tags:
+                a["tags"] = ", ".join(tags)
         # B25: how long the record is + whether it's a compilation. A 102-track box
         # set presented exactly like a 40-minute album is what feedback #64 hit; the
         # deck says so when it's notable, and the deal uses it. Discogs counts come
@@ -501,10 +623,9 @@ def _enrich(rows):
         if n_tracks:
             a["n_tracks"] = n_tracks
         a["is_compilation"] = _is_compilation(a)
-        # A8: the coarse genre bucket for the client's balanced draw (+ future
-        # filter). Computed AFTER every genre fold above, so it sees the full
-        # cross-source union (entity genres+styles ∪ MB) this record ends up with.
-        a["bucket"] = genre_bucket(a.get("genres"))
+        # (A8's coarse `bucket` field was retired 2026-10-04 with the 13 hidden genres:
+        # the deal now groups by each record's own first tag, client-side — see
+        # static/app.js balancedOrder and GENRE_BACKFILL_DESIGN.md "Deal balancing".)
         out.append(a)
     return out
 

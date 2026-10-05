@@ -45,6 +45,13 @@
   // Keep each line to one plain sentence — this is read by someone who just wanted to
   // know why a button moved, not a release engineer.
   const ENTRIES = [
+    { v: 332, tier: 3, text: "Genre is one list of every tag on today's records — A to Z with a letter index, or rarest first — instead of tags sorted into our own genre groups. Tags spelled two ways, like \u201cpost rock\u201d and \u201cpost-rock\u201d, are one row." },
+    { v: 331, tier: 3, text: "The button that moves you on to the next record is called Next now, and the records you've moved past are under Seen." },
+    { v: 331, tier: 3, text: "The Genre list starts with the odd corners — the uncategorised styles, then the smallest genres — and works up to the biggest." },
+    { v: 331, tier: 1, text: "The Seen pill is the same height as Genre and Year beside it." },
+    { v: 329, tier: 3, text: "Keep is gone. Writing a note is how a record becomes yours — \u201c\u270e Write a note\u201d sits where Keep was — and a record you open with Listen goes in your Notebook on its own, as \u201cOpened in Spotify\u201d (or wherever you opened it). Everything you kept is still there." },
+    { v: 329, tier: 1, text: "Today's loading screen now has the same layout as the record that replaces it, so nothing jumps when it arrives." },
+    { v: 328, tier: 3, text: "Genre opens a full list of every genre and style in today's records, with how many of each. Tick any to narrow Today; the search box at the top finds a style you'd have typed before." },
     { v: 280, tier: 3, text: "Keep and Skip have swapped places — Skip is on the right now, where your thumb lands. If you keep one by mistake, \u201cUndo keep\u201d puts it back." },
     { v: 277, tier: 3, text: "Today, Notebook and Explore have moved to a bar at the bottom of the screen, so the record sits higher and the tabs are within reach of your thumb. “By genre” and “By year” are under the record now, and “Where you listen” and Feedback have moved into the menu (☰)." },
     { v: 245, tier: 3, text: "Signing in no longer uses a password — enter your email and we send you a one-time code. Your Notebook password is unchanged and still unlocks your notes." },

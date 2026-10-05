@@ -82,8 +82,8 @@ function main() {
     ok(t[2].sel === "#datePref", "step 3 points at By year");
     ok(/deck-cover/.test(t[3].sel), "step 4 points at the album (tap for details)");
     ok(t[4].sel === "#deckListen", "step 5 points at Listen (the #deckListen element)");
-    ok(t[5].sel === "#setAsideBtn", "step 6 points at Skip (the #setAsideBtn element)");
-    ok(t[6].sel === "#keepBtn", "step 7 points at Keep");
+    ok(t[5].sel === "#setAsideBtn", "step 6 points at Next (the #setAsideBtn element)");
+    ok(t[6].sel === "#noteBtn", "step 7 points at Write a note (Keep retired, v329)");
     ok(/journal/.test(t[7].sel), "step 8 points at the Notebook tab");
     // FB#105: Feedback moved into the ☰ menu, so this step resolves its target the
     // same way the platforms step does — the menu where the button is adopted, or the

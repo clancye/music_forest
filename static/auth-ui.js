@@ -211,6 +211,13 @@
     // tour of it. Later than the cue above so the two can never race onto the screen
     // together — showChangeOffer also refuses while any modal or tour is up.
     setTimeout(maybeShowNavMovedOffer, 1600);
+    // v328: the Genre button opens a full screen now, not the chips popover. Last, so
+    // it never races the offers above; it refuses while any of them is up.
+    setTimeout(maybeShowGenreMovedCue, 2000);
+    // v329: Keep retired. After the Genre cue, which it yields to.
+    setTimeout(maybeShowKeepRetiredOffer, 2400);
+    // v331: Skip → Next, Skipped → Seen (only for readers the v329 offer doesn't cover).
+    setTimeout(maybeShowNextSeenOffer, 2800);
   }
   function closeGuestMenu(e) {
     if (!_guestMenu || (e && _guestMenu.contains(e.target))) return;
@@ -434,6 +441,94 @@
         text: "“About the data” has moved off the bottom of the screen. It's in here "
             + "now, under About — along with why Music Forest exists and how each "
             + "day's records are put together.",
+      });
+    } catch (e) { /* a cue must never block the app */ }
+  }
+
+  // v329 (owner 2026-10-03): Keep is retired. Writing a note is how a record becomes
+  // yours, and a Listen tap leaves an "opened" Notebook entry on its own — so Today's
+  // pair is ✎ Write a note + Skip, with the note where Keep was. Tier 3 (a control
+  // people learned is gone), so it doesn't ship silent.
+  //
+  // FORM + WORDING — owner's call (2026-10-03): "just the simpler one", the bare tour
+  // offer (copy.swapOfferText), as for FB#105 and FB#109. The tour's Write-a-note step
+  // says what writing does and that opens are noted on their own; the What's-new entry
+  // carries the fuller disclosure for anyone who goes looking.
+  //
+  // WHO: readers whose last run predates v329 (the What's-new seen-build gate, as for
+  // the cues above). clearSel keeps the new button pair visible beside the offer.
+  // Refuses — flag unspent — while the Genre cue or any other bubble is up.
+  const KEEP_RETIRED_BUILD = 329;
+
+  function maybeShowKeepRetiredOffer() {
+    try {
+      const OB = window.AOTDOnboarding, WN = window.AOTDWhatsNew;
+      if (!OB || !OB.showChangeOffer || !WN || !WN._readSeen) return;
+      const seen = WN._readSeen(localStorage);
+      if (seen == null || seen >= KEEP_RETIRED_BUILD) return;
+      if (document.querySelector(".mf-hint")) return;
+      OB.showChangeOffer(null, {
+        key: OB.KEEP_RETIRED_OFFER_KEY,
+        text: OB.copy.swapOfferText,
+        clearSel: ".deck-buttons",
+      });
+    } catch (e) { /* an offer must never block the app */ }
+  }
+
+  // v331 (owner 2026-10-04): "Skip" → "Next" and "Skipped" → "Seen" — a renamed
+  // control, tier 3. Same form as v329 by the owner's standing choice: the bare tour
+  // offer, whose Next step names both words.
+  //
+  // WHO: readers whose last run was v329 or v330. Anyone older is already offered the
+  // v329 tour (the same tour, now teaching Next and Seen), so offering it twice would
+  // just be noise — the lower bound keeps them to one question.
+  const NEXT_SEEN_BUILD = 331;
+
+  function maybeShowNextSeenOffer() {
+    try {
+      const OB = window.AOTDOnboarding, WN = window.AOTDWhatsNew;
+      if (!OB || !OB.showChangeOffer || !WN || !WN._readSeen) return;
+      const seen = WN._readSeen(localStorage);
+      if (seen == null || seen >= NEXT_SEEN_BUILD || seen < KEEP_RETIRED_BUILD) return;
+      if (document.querySelector(".mf-hint")) return;
+      OB.showChangeOffer(null, {
+        key: OB.NEXT_SEEN_OFFER_KEY,
+        text: OB.copy.swapOfferText,
+        clearSel: ".deck-buttons",
+      });
+    } catch (e) { /* an offer must never block the app */ }
+  }
+
+  // v328 (owner 2026-09-24): the Genre button under the record opens a full-screen
+  // list of every genre and style now, instead of the chips popover — and the popover's
+  // box for typing a style is gone (the list's find box does that job). Someone who
+  // learned the popover taps Genre and meets a different screen, so this is BRAND.md's
+  // tier 3: one anchored bubble on the Genre button, for readers whose last run
+  // predates v328 (the same What's-new seen-build gate as the cues above).
+  //
+  // Only while the button is actually on screen — Genre lives on Today — and never
+  // over a door, the tour, or another cue/offer. Refusing leaves the flag unspent
+  // (showHint burns it only when it shows), so it tries again next visit.
+  const GENRE_MOVE_BUILD = 328;
+  const GENRE_MOVE_CUE_KEY = "aotd.cue.genrescreen.v1";
+
+  function maybeShowGenreMovedCue() {
+    try {
+      const OB = window.AOTDOnboarding, WN = window.AOTDWhatsNew;
+      if (!OB || !OB.showHint || !WN || !WN._readSeen) return;
+      const seen = WN._readSeen(localStorage);
+      if (seen == null || seen >= GENRE_MOVE_BUILD) return;
+      if (document.querySelector(".modal:not(.hidden), .mf-hint")) return;
+      const btn = document.getElementById("genreOpen");
+      if (!btn || !btn.getClientRects().length) return;
+      OB.showHint({
+        key: GENRE_MOVE_CUE_KEY,
+        sel: "#genreOpen",
+        place: "above",
+        label: "What changed about Genre",
+        text: "Genre opens a full list now: every genre and style in today's records, "
+            + "with how many of each. Tick what you want. The search box at the top "
+            + "of the list replaces the box for typing a style.",
       });
     } catch (e) { /* a cue must never block the app */ }
   }
@@ -2211,6 +2306,9 @@
     setTimeout(maybeShowAboutMovedCue, 900);        // FB#97: see the guest menu's copy
     setTimeout(maybeShowKeepSkipSwapOffer, 1200);   // FB#109: likewise
     setTimeout(maybeShowNavMovedOffer, 1600);       // FB#105: likewise
+    setTimeout(maybeShowGenreMovedCue, 2000);       // v328: likewise
+    setTimeout(maybeShowKeepRetiredOffer, 2400);    // v329: likewise
+    setTimeout(maybeShowNextSeenOffer, 2800);       // v331: likewise
     // Reveal the operator-console item iff the server says this account is an operator.
     if (window.AOTDOperator) AOTDOperator.gate(_acctMenu);
     if (_updateReady) setUpdateGlow(true);   // carry a pre-mount detection through

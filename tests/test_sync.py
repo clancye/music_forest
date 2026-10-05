@@ -188,6 +188,18 @@ def test_bad_kind_rejected(local_client):
     assert r.status_code == 400
 
 
+def test_opened_kind_accepted(local_client):
+    # v9: a Listen tap is an encrypted "opened" row. Postgres also needs migration
+    # 0010 (journal_rows_kind_check); this pins the store.py side.
+    r = local_client.post("/api/sync/rows", json={"rows": [
+        {"kind": "opened", "client_id": "o1", "ciphertext": _b64(b"a"),
+         "nonce": _b64(b"x")},
+    ]})
+    assert r.status_code == 200
+    got = local_client.get("/api/sync/rows?kind=opened").get_json()
+    assert [row["client_id"] for row in got["rows"]] == ["o1"]
+
+
 def test_bad_base64_rejected(local_client):
     r = local_client.post("/api/sync/rows", json={"rows": [
         {"kind": "note", "client_id": "x", "ciphertext": "not base64!!",

@@ -23,7 +23,10 @@ function lift(re, what) {
 }
 const code = [
   lift(/\nfunction shuffled\(list\) \{[\s\S]*?\n\}/, "shuffled"),
-  lift(/\nfunction balancedOrder\(list\) \{[\s\S]*?\n\}/, "balancedOrder"),
+  lift(/\nfunction tagKey\(t\) \{[^\n]*\}/, "tagKey"),
+  lift(/\nconst DEAL_SIZE_POWER = [\d.]+;/, "DEAL_SIZE_POWER"),
+  lift(/\nfunction dealKey\(rec\) \{[\s\S]*?\n\}/, "dealKey"),
+  lift(/\nfunction balancedOrder\(list, rand = Math\.random\) \{[\s\S]*?\n\}/, "balancedOrder"),
   lift(/\nconst COMP_DEAL_RATE = [\d.]+;/, "COMP_DEAL_RATE"),
   lift(/\nfunction dealOrder\(list\) \{[\s\S]*?\n\}/, "dealOrder"),
   lift(/\nconst LONG_RECORD_TRACKS = \d+;/, "LONG_RECORD_TRACKS"),
@@ -45,20 +48,20 @@ const plain = (a) => deckMeta(a).replace(/<[^>]+>/g, "");
 
 // --- dealOrder: reorder, never remove ---------------------------------------
 // A day shaped like a real one: ~11% compilations sitting INSIDE well-populated
-// buckets. That shape matters. dealOrder runs on top of balancedOrder, which deals
-// one bucket per round so a rare genre isn't buried — so if a genre exists ONLY as
-// compilations, balance legitimately pulls one to the very front (better a jazz
+// genres. That shape matters. dealOrder runs on top of balancedOrder, which gives a
+// small genre a slightly bigger share of the front than its size — so if a genre
+// exists ONLY as compilations, balance can pull one forward (better a jazz
 // compilation than no jazz at all). Measured on the real 07-14 pool, where genres
 // are mixed, the deal takes compilations from 10.7% of the day to 4.1% of the first
 // ten records. This fixture reproduces that ordinary case; the genre-scarcity
 // interaction is its own case below.
 const day = [
-  ...Array.from({ length: 60 }, (_, i) => ({ id: `a${i}`, bucket: "electronic" })),
-  ...Array.from({ length: 20 }, (_, i) => ({ id: `r${i}`, bucket: "rock" })),
+  ...Array.from({ length: 60 }, (_, i) => ({ id: `a${i}`, genres: "electronic" })),
+  ...Array.from({ length: 20 }, (_, i) => ({ id: `r${i}`, genres: "rock" })),
   ...Array.from({ length: 6 }, (_, i) =>
-    ({ id: `c${i}`, bucket: "electronic", is_compilation: true })),
+    ({ id: `c${i}`, genres: "electronic", is_compilation: true })),
   ...Array.from({ length: 4 }, (_, i) =>
-    ({ id: `k${i}`, bucket: "rock", is_compilation: true })),
+    ({ id: `k${i}`, genres: "rock", is_compilation: true })),
 ];
 
 let compsUpFront = 0, slots = 0, everRodeEarly = false;
@@ -87,7 +90,7 @@ ok(everRodeEarly,
 
 // 4. a day of nothing but compilations still deals every record (no empty deck)
 const allComps = Array.from({ length: 8 },
-  (_, i) => ({ id: `x${i}`, bucket: "jazz", is_compilation: true }));
+  (_, i) => ({ id: `x${i}`, genres: "jazz", is_compilation: true }));
 ok(dealOrder(allComps).length === 8, "all-compilation day still deals every record");
 
 // 4b. KNOWN LIMIT, measured and accepted. The hold-back runs BEFORE balancedOrder,
@@ -95,12 +98,12 @@ ok(dealOrder(allComps).length === 8, "all-compilation day still deals every reco
 //     rather than being surfaced to keep the genre represented. Genre balance loses
 //     to the hold-back here; this pins that so the behaviour is a decision, not a
 //     surprise. It is not a real-world problem: across five real days (1,514–13,071
-//     records, 2026-07-18) not ONE of the 14 buckets was all-compilations, because a
-//     day holds thousands of records. If that ever changes, exempt a compilation
-//     that is the only record in its bucket.
+//     records, 2026-07-18) not ONE of the 14 old genre buckets was all-compilations,
+//     because a day holds thousands of records. If that ever changes, exempt a compilation
+//     that is the only record of its genre.
 const scarce = [
-  ...Array.from({ length: 40 }, (_, i) => ({ id: `e${i}`, bucket: "electronic" })),
-  { id: "onlyjazz", bucket: "jazz", is_compilation: true },
+  ...Array.from({ length: 40 }, (_, i) => ({ id: `e${i}`, genres: "electronic" })),
+  { id: "onlyjazz", genres: "jazz", is_compilation: true },
 ];
 let jazzSeenEarly = 0;
 for (let t = 0; t < 200; t++) {
@@ -111,7 +114,7 @@ ok(jazzSeenEarly > 10 && jazzSeenEarly < 90,
    `(${jazzSeenEarly}/200 early; expected roughly COMP_DEAL_RATE)`);
 
 // 5. a record with no verdict is never held back
-const noFlag = [{ id: "n1", bucket: "rock" }, { id: "n2", bucket: "rock" }];
+const noFlag = [{ id: "n1", genres: "rock" }, { id: "n2", genres: "rock" }];
 ok(dealOrder(noFlag).length === 2, "records with no is_compilation flag are kept");
 ok(dealOrder([]).length === 0, "empty day -> empty deck");
 
