@@ -36,11 +36,17 @@ echo "== auto-update (safe silent reload gate) ==" ; node auto-update.test.mjs
 echo "== balanced-order (A8 genre-balanced deal) ==" ; node balanced-order.test.mjs
 echo "== deal-order (B25 compilations dealt later) ==" ; node deal-order.test.mjs
 echo "== resume-at (keep your place across a reload) ==" ; node resume-at.test.mjs
+echo "== listen-sheet (v350 + v354: More ways to listen, and its order) ==" ; node listen-sheet.test.mjs
+echo "== bar-dates (v353: dates in the bottom search bar) ==" ; node bar-dates.test.mjs
 echo "== whatsnew (changes since your last update) ==" ; node whatsnew.test.mjs
 echo "== genre-filter (A8 Phase 2 client filter) ==" ; node genre-filter.test.mjs
 echo "== style-browse-back (phone back closes the Genre screen) ==" ; node style-browse-back.test.mjs
 echo "== style-browse (browse every style: counts == what a tick yields) ==" ; node style-browse.test.mjs
 echo "== opened (a Listen tap leaves a Notebook entry; Keep retired) ==" ; node opened.test.mjs
+echo "== first-run (the services stand in for the first record) ==" ; node first-run.test.mjs
+echo "== tab-swipe (snap on, or spring back) ==" ; node tab-swipe.test.mjs
+echo "== first-card-speed (small covers, ready record first) ==" ; node first-card-speed.test.mjs
+echo "== open-kind (the Log's first / again / reload / platforms) ==" ; node open-kind.test.mjs
 echo "== analytics parity vs journal.py =="
 python3 "$ROOT/tests/js/parity_gen.py" > /tmp/aotd_parity.json
 PARITY_JSON=/tmp/aotd_parity.json node parity_check.mjs

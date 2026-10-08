@@ -138,8 +138,8 @@ header {
      header kept hugging the status bar. Our own share of the top padding goes 20 →
      34px; the inset term is untouched, so this ADDS clearance on a notched phone
      rather than trading against it. */
-  /* Top padding is `max(10px, var(--safe-top))` — the SAME expression `.acct-menu`
-     uses for its own `top` — so the mark and the ☰ circle align by construction at any
+  /* Top padding is `max(10px, var(--safe-top))` — the SAME expression the ☰ used
+     for its own `top` while it sat top-right (until v352) — so the mark and the ☰ circle align by construction at any
      inset, rather than by a number that happens to work on one device (owner,
      2026-08-07: "the top of the icon aligns with the top of the pancake menu circle").
      If you change one, change both. */
@@ -167,7 +167,7 @@ header {
    button sat under the dock, and scrolling to reveal it rubber-banded straight back —
    there was nothing left to scroll, the button was simply behind the bar (owner,
    2026-08-07). A door owns the screen while it's open; the dock belongs under it, and
-   under the ☰ popover (45) for the same reason. It stays above everything in the page
+   under the ☰ popover (45, until v354) for the same reason. It stays above everything in the page
    itself — the trail's write pill (5) and the date rail (4). */
 .tabs-row {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
@@ -184,81 +184,51 @@ header {
    window. Constrained to the content column and centred, it reads as a deliberate
    dock at every width — one layout to maintain, and one cue to write. */
 .tabs { width: 100%; max-width: 560px; height: 55px; }
-/* FB#105 follow-up (owner): "make the logo bigger? Maybe make the text bigger, too?"
-   The masthead had been sized for a header that also carried the tabs and three
-   filter pills; it is the only thing up there now, so it can be the size it wants to
-   be. Wordmark and the per-surface line both step up with it. */
-.brand h1 { margin: 0; font-family: var(--font-serif); font-weight: 500; font-size: clamp(30px, 7.4vw, 44px); letter-spacing: -.5px; line-height: 1.05; }
-/* Scales with the viewport rather than truncating: at 375px it lands ~15px and stays
-   one line; a wider phone gets the full 16. On a truly tiny screen it still wraps, and
-   that is the right failure — wrapping grows DOWNWARD, so the wordmark above it does
-   not move, where an ellipsis would silently eat the sentence. */
-.brand p { margin: var(--sp-4) 0 0; color: var(--muted); font-size: clamp(14px, 4.1vw, 16px); }
-/* FB (owner, iPhone 13 mini PWA): the line wraps to two. The icon + reserved ☰ column
-   leave the subtitle ~213px, where 4.1vw lands ~15.4px — right on the wrap threshold, so
-   iOS's slightly wider text tips it over where desktop Chromium doesn't (measured: text
-   ~212px vs ~213px avail). NOTE the mini is 375 CSS px, NOT 360 (it renders at 375@3x and
-   downsamples) — the first cut broke at ≤374px and so never fired on it. Break at ≤380px
-   (catches the 375 mini + SE, leaves 390px phones at 16px) and drop to 12.5px, which is
-   ~178px here → ~35px of headroom, comfortably clear of iOS's wider metrics. */
-@media (max-width: 380px) { .brand p { font-size: 12.5px; } }
-/* FB#100/#101 held this line in flow on every surface — blank ones carrying a
-   non-breaking space, hidden with `visibility` — so the tabs below it couldn't jump
-   25px when it emptied. FB#105 moved the tabs above it, which removes the reason:
-   nothing below the tabs can move them now, and the placeholder was costing Notebook
-   and Explore an empty 19px line. setSubtitleFor collapses it with `.hidden` instead,
-   so `#subtitle.is-blank` is gone. */
-/* #9/#10: icon + wordmark are one home affordance — a quiet logo-click back to
-   Choose. Looks like the title, not a button; just gains a pointer + a faint
-   lift on hover/focus so it reads as tappable. */
-/* Reserve the ☰ button's column so nothing in the masthead can run under it. The
-   button is 34px at `right: max(10px, …)`, so ~46px covers it plus a gap. Without this
-   the subtitle cleared the menu by 4px at 375px wide and would have collided on a
-   320px screen. Applied to the whole block, so the wordmark is protected too. */
-.brand { padding-right: 46px; }
-/* align-items: FLEX-START, not center — this is what keeps "Music Forest" still.
-   Centring the text column against the mark made the wordmark's position depend on
-   whether the second line exists, so it dropped 11px on Notebook and Explore, which
-   have none (owner: keep it where it is on Today). Pinned to the top, its y is a
-   constant and the space under it is simply empty on those surfaces. */
-.brand-home {
-  display: inline-flex; align-items: flex-start; gap: var(--sp-14);
-  cursor: pointer; border-radius: 10px; padding: var(--sp-2) var(--sp-6); margin: -2px -6px;
-  -webkit-tap-highlight-color: transparent;
+/* THE MASTHEAD (owner 2026-10-04, docs/mockups/header round 2): one row, no logo. Today
+   shows the day in the quiet eyebrow; Notebook and Explore put their search box in the
+   same row (#rememberHead lives inside .brand). It replaced a 56px icon tile + a 30px
+   wordmark + a line under them, which on an iPhone mini made a 60px row and pushed the
+   Genre row under the dock. (Round 1 — v338, staging only — kept the fir in a circle the
+   size of the ☰; the owner dropped it.)
+   The row is exactly as tall as the ☰ circle was (34px, 44px on touch — the circle that
+   sat top-right until v352) and starts where it does: the header's top padding and
+   the ☰'s `top` were the same expression (see `header`). (The ☰ has lived in the dock
+   since v352, and has been a tab of its own since v354.)
+   `align-self: stretch` because `header` aligns its children to the start, which would
+   shrink this row to its content and leave the search box nowhere to grow.
+   `padding-right` reserves the ☰'s column (44px at `right: max(10px, …)` → 46px covers it
+   plus a gap) so nothing in the row can run under it. */
+.brand {
+  align-self: stretch;
+  display: flex; align-items: center;
+  /* v352: the ☰ moved to the dock, so the row no longer reserves its column. */
+  min-height: 34px;
 }
-/* The wordmark and the per-surface line as one left-aligned column beside the mark. */
-.brand-text { display: flex; flex-direction: column; align-items: flex-start; min-width: 0;
-  padding-top: 2px; }
-.brand-home:hover, .brand-home:focus-visible { background: var(--panel); outline: none; }
-.brand-home:focus-visible { box-shadow: 0 0 0 2px var(--accent-2); }
-/* The mark stands as tall as the two lines beside it, overhanging the text block
-   slightly (64 against ~55) so it reads as a mark rather than a box of matching height
-   — owner's pick from the mockups. A FIXED height, deliberately: Notebook and Explore
-   carry no second line, and an icon that shrank there would read as a different logo
-   rather than the same one. */
-.brand-icon {
-  width: clamp(52px, 15vw, 64px); height: auto; aspect-ratio: 1 / 1; border-radius: 14px;
-  display: block; flex: 0 0 auto;
+@media (pointer: coarse) { .brand { min-height: 44px; } }
+/* The day: "Released on October 4" on Today, collapsed (`.hidden`) on Notebook and
+   Explore. Mono capitals in the muted colour, like the app's other small labels — a
+   caption, so the record stays the only big thing on the screen.
+   15.5px is the LARGEST size at which the longest day, "RELEASED ON SEPTEMBER 30", fits
+   one line on an iPhone 13 mini (375px) with 5% to spare — measured on the round-2 sheet
+   (owner: "maximize the text size so that it'll work on the iphone mini"). Mono is the
+   one face whose widths match between Chromium and iOS, so the fit holds there.
+   It sits CENTRED on the ☰ circle (owner, same evening: the first try stood the capitals
+   on the circle's bottom edge — "it just feels too low"). For this face at line-height
+   1.2 the line box's centre and the capitals' centre agree to within a pixel, so plain
+   flex centring is the optical centring too.
+   It may WRAP rather than truncate: on a 320px phone it balances onto two lines
+   ("RELEASED ON / SEPTEMBER 30"), which still fit inside the row's 44px. */
+.day-line {
+  margin: 0; min-width: 0;
+  font-family: var(--font-mono); font-size: 15.5px; line-height: 1.2;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
+  text-wrap: balance;
 }
-/* Remember surface (U21): the brand + tagline now stay on every surface — the
-   tagline is timeless prose ("Find music, write notes."), not the date, so it fits
-   the notebook just as well, and keeping it identical everywhere is what holds the
-   tabs below it pixel-stable. The HEADER platforms chooser is dropped here, since
-   it does nothing on the journal. Scoped to `.controls` on purpose: when signed in,
-   U20 has adopted the SAME #listenPref into the ☰ menu (`.acct-pop`), and that copy
-   must stay reachable on every tab — an unscoped hide would blank it there too, which
-   is exactly why it vanished on Explore/Notebook. Guests never reach this surface
-   (Choose-only), so their header chooser composition is untouched. */
-body.is-remember .controls .listen-pref { display: none; }
-/* The controls row now carries just the platforms chooser (the date picker moved
-   to the Choose actions in U21; the tabs moved above the brand). Full-width and
-   centered at every width; guests also get their two doors here (body.guest). */
-.controls { display: flex; gap: var(--sp-14); align-items: center; flex-wrap: wrap;
-  width: 100%; justify-content: center; }
-/* Signed in, U20 moves the platforms chooser into the ☰ menu, leaving this row
-   with nothing to show — collapse it (set in JS by adopt/restoreListenPref) so it
-   stops padding a gap between the tabs and the Choose prompt. */
-.controls.is-empty { display: none; }
+/* v353: Notebook and Search have no masthead row — their one search bar moved to the
+   foot of the screen (.bottom-bar, below), so the row would only be empty padding. */
+body.is-remember header .brand { display: none; }
+/* v354: the menu page has none either — its headings are on the page itself. */
+body.is-menu header .brand { display: none; }
 input[type=date], input[type=search], select {
   background: var(--panel); color: var(--text);
   border: 1px solid var(--line); border-radius: 10px;
@@ -294,7 +264,7 @@ select:focus {
    signal mouse users get. This extends the same accent halo the inputs and links
    already wear to every <button> plus the anchor-style controls (.dg, .linklike),
    so focus reads the same everywhere. More specific rules (e.g.
-   .brand-home:focus-visible) still win where a control wants its own look.
+   .card-hit:focus-visible) still win where a control wants its own look.
    ACC1 E [2.4.11 Focus Appearance, AA]: the ring was a translucent 22–35% halo that
    could wash out on a bright album cover; it's now opaque --accent-2 (same hue, same
    2px) so it stays visible on any background — matching the solid card ring. */
@@ -335,8 +305,6 @@ button:focus-visible,
   button:focus-visible,
   .dg:focus-visible,
   .empty .linklike:focus-visible,
-  .brand-home:focus-visible,
-  .pref-toggle:focus-visible,
   a:focus-visible,
   input:focus, select:focus, textarea:focus {
     outline: 2px solid Highlight;
@@ -390,6 +358,33 @@ button:focus-visible,
   color: var(--accent-2); border-top-color: var(--accent);
 }
 .tab:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
+/* 2026-10-04: the lit tab's rule is ONE bar that glides between the tabs — a tap
+   slides it, and a swipe between tabs (wireTabSwipe in app.js) drags it with the
+   finger. v354: the tabs aren't one width any more (the ☰ is a narrow fourth), so
+   placeTabIndicator sets --ind-x / --ind-w from the lit tab's own box — blended between
+   two neighbours mid-swipe. The tabs' own top rules stay transparent so there's never
+   a second one. */
+.tabs { position: relative; }
+.tabs .tab.active { border-top-color: transparent; }
+.tabs-ind {
+  position: absolute; top: 0; left: 0; width: var(--ind-w, calc(100% / 3)); height: 2px;
+  background: var(--accent); pointer-events: none;
+  transform: translateX(var(--ind-x, 0px));
+  transition: transform .34s cubic-bezier(.18, 1.12, .32, 1),
+    width .34s cubic-bezier(.18, 1.12, .32, 1);
+}
+.tabs.is-dragging .tabs-ind { transition: none; }
+.tabs.no-ind .tabs-ind { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .tabs-ind { transition: none; } }
+/* Mid-swipe, the neighbouring tab's name rides in from the uncovered side (app.js
+   showSwipePeek), full strength at the distance where letting go switches tabs. */
+.swipe-peek {
+  position: fixed; z-index: 3; top: 45%; left: 100%; padding-left: var(--sp-24);
+  font-family: var(--font-serif); font-size: 28px; color: var(--accent-2);
+  white-space: nowrap; pointer-events: none; opacity: 0;
+  transition: opacity .18s ease;
+}
+.swipe-peek.from-left { left: auto; right: 100%; padding-left: 0; padding-right: var(--sp-24); }
 /* FB: a little more air between the header's controls and the first card, for the
    same reason as the header padding above. */
 .view { padding: var(--sp-16) clamp(16px, 5vw, 64px) 60px; }
@@ -480,7 +475,9 @@ body.guest .guest-notebook-note { display: block; }
    the button and the filter row then share one width and centre together, so desktop
    reads like mobile. One knob — `#decide` sets `--today-col` for both the deck (.choice)
    and the row (.narrow-today). */
-#decide { --today-col: 420px; --deck-reserve: 400px; }
+/* v356: +8px on both reserves — the Filter / Seen row grew 8px (36 → 44) and its height
+   has to come out of the art, or a short phone (375×667) loses its last pixels of slack. */
+#decide { --today-col: 420px; --deck-reserve: 408px; }
 .choice { width: 100%; max-width: var(--today-col); margin: 0 auto; }
 
 /* FB#105 follow-up (owner, on staging 2026-08-07): "drop the faded rectangle
@@ -550,12 +547,12 @@ body.guest .guest-notebook-note { display: block; }
    420-col art needs a ~930px-tall window; below that the art shrinks and Today still fits.
    Over-reserving only makes the art a little smaller — under-reserving scrolls, so err high. */
 .deck-card { --deck-w: max(160px, min(100%,
-    calc(100dvh - var(--safe-top) - var(--safe-bottom) - var(--deck-reserve, 400px)))); }
+    calc(100dvh - var(--safe-top) - var(--safe-bottom) - var(--deck-reserve, 408px)))); }
 /* Desktop/tablet: taller masthead + more margin than a phone, so reserve more height for
    the chrome. (Owner, desktop 2026-08-11: Today scrolled — the filter row fell below the
    fold.) On a tall window the art still reaches full column width; on a shorter one it
    shrinks to keep everything on one screen. */
-@media (min-width: 600px) { #decide { --deck-reserve: 560px; } }
+@media (min-width: 600px) { #decide { --deck-reserve: 568px; } }
 .deck-cover {
   width: var(--deck-w, 100%);
   aspect-ratio: 1 / 1; margin: 0 auto var(--sp-14);
@@ -602,6 +599,14 @@ body.guest .guest-notebook-note { display: block; }
   color: var(--muted); font-size: 13px; line-height: 1.4; margin: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* v352: "✓ in Notebook" (today, once you've opened it) moved here from the Listen button.
+   Two parts so a long genre line ellipsises its OWN facts and never the mark; still one
+   clamped line, so it can't move the buttons. Sage + mono, so it isn't read as a genre. */
+.deck-sub { display: flex; justify-content: center; }
+.ds-facts { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ds-mark { flex: 0 0 auto; }
+.ds-mark .dot { margin: 0 .35em; }
+.ds-opened { color: var(--accent-2); font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .02em; }
 /* The deck's actions read as ONE tidy set: Listen, Set aside, Keep and Album
    details share a height, radius and full-container width, so nothing looks
    thrown together. Colour carries the hierarchy, not size. */
@@ -625,6 +630,39 @@ body.guest .guest-notebook-note { display: block; }
      The selector keeps it a simple monochrome black triangle everywhere. */
   content: "\25B6\FE0E"; font-size: 10px; margin-right: 9px; opacity: .9;
 }
+
+/* v352 (owner 2026-10-05, mockups round 3 → C): Today's Listen row is two halves. On the
+   left, WHERE you listen — the service in a quiet selector (it opens More ways to listen);
+   on the right, the green ▶ Listen that goes there. The selector is as wide as its name
+   (YouTube Music, the longest, leaves Listen 131px of 306 on an iPhone mini even with
+   iOS's ~15% wider text), so the seam moves a little from record to record. One 47px
+   rounded box, a sage hairline between the halves. */
+.deck-listen .listen-sel {
+  display: flex; height: 47px; border-radius: 12px; overflow: hidden;
+  border: 1px solid var(--living);
+}
+.listen-svc {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 0 12px 0 14px;
+  border: 0; border-right: 1px solid var(--living); background: var(--panel-2);
+  color: var(--text); font: inherit; font-size: 15px; font-weight: 600; white-space: nowrap;
+  cursor: pointer;
+}
+.listen-svc svg { flex: 0 0 auto; color: var(--muted); }
+.listen-svc:hover, .listen-svc:focus-visible { background: color-mix(in srgb, var(--living) 14%, var(--panel-2)); outline: none; }
+.listen-svc:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-2); }
+.listen-go {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--living); color: var(--on-accent); text-decoration: none;
+  font-family: var(--font-serif); font-size: 15px; font-weight: 700;
+}
+.listen-go::before { content: "\25B6\FE0E"; font-size: 10px; margin-right: 9px; opacity: .9; }
+.listen-go:hover, .listen-go:focus-visible { filter: brightness(1.06); outline: none; }
+.listen-go:focus-visible { box-shadow: inset 0 0 0 2px var(--on-accent); }
+/* The record kept on Today after you changed platforms from its card, when it's on none
+   of them: the selector names where it IS, and Listen is outlined — green is yours. */
+.deck-listen .listen-sel.is-off { border-color: var(--line); }
+.listen-sel.is-off .listen-svc { border-right-color: var(--line); }
+.listen-sel.is-off .listen-go { background: transparent; color: var(--text); }
 
 /* v329: "✓ in Notebook" — today's Listen chip, once you've opened the record today.
    Inside the button so the confirmation can't shift the rows beneath it. */
@@ -786,6 +824,13 @@ body.guest .guest-notebook-note { display: block; }
 .deck-end-lead {
   font-family: var(--font-serif); font-size: 18px; margin: 0 0 var(--sp-14);
 }
+/* Out of records with filters on (2026-10-05): the suggestion to change them is the
+   only thing on the card — the pill opens Filter (or Listening platforms), the link
+   clears. */
+.deck-end-actions {
+  display: flex; gap: var(--sp-14); justify-content: center; align-items: center;
+  flex-wrap: wrap; margin-top: var(--sp-12);
+}
 .deck-end p { margin: 0 0 var(--sp-10); color: var(--muted); line-height: 1.5; }
 .deck-end .linkish { font-size: 15px; }
 /* The thin-platform-filter caveat: the count pops so "only N" reads at a glance. */
@@ -839,12 +884,15 @@ body.guest .guest-notebook-note { display: block; }
    It carried its own padding (10/16) and a 20px count badge; it now takes the same
    8/14 padding and 15px type as those pills, and the badge fits inside that line
    height (17px), so all three stand the same height in the row. */
+/* v356 (owner, 2026-10-05): "a little bit bigger" — Filter and Seen both step up, 15 →
+   16.5px type and 8/14 → 11/18 padding, to a 44px touch target. Still one height: the
+   badge grows with them and stays inside the line. */
 .set-aside-bar {
   display: inline-flex; align-items: center; gap: var(--sp-8);
-  padding: var(--sp-8) var(--sp-14); border-radius: 999px; cursor: pointer;
+  padding: 11px var(--sp-18); border-radius: 999px; cursor: pointer;
   background: var(--panel-2); color: var(--text);
   border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(0,0,0,.34);
-  font-size: 15px; line-height: normal;
+  font-size: 16.5px; line-height: 20px;
 }
 .set-aside-bar.hidden { display: none; }
 /* Nothing seen yet. The pill holds its place so the first Next can't reflow the row
@@ -866,9 +914,9 @@ body.guest .guest-notebook-note { display: block; }
 }
 .sab-label { color: var(--muted); }
 .sab-count {
-  min-width: 17px; height: 17px; padding: 0 5px; border-radius: 999px; line-height: 1;
+  min-width: 19px; height: 19px; padding: 0 6px; border-radius: 999px; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center;
-  background: var(--accent); color: var(--on-accent); font-weight: 700; font-size: 12px;
+  background: var(--accent); color: var(--on-accent); font-weight: 700; font-size: 13px;
 }
 
 /* The pull-up sheet — a door over Today, sliding up from the bottom. */
@@ -887,6 +935,78 @@ body.guest .guest-notebook-note { display: block; }
 @keyframes sheet-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .sas-panel { animation: none; } }
 .sas-head { display: flex; align-items: center; justify-content: space-between; }
+
+/* MORE WAYS TO LISTEN (v350): the listen sheet. The Seen pull-up's shape and motion, on a
+   .modal (so the dialog stack gives it Esc, the Tab trap and focus back to the ⌄). */
+.modal.listen-sheet {
+  align-items: flex-end; padding: 0; z-index: 52; background: rgba(0,0,0,.5);
+}
+.modal-box.lsh-panel {
+  width: min(560px, 100%); margin: 0 auto; border-bottom: 0; border-radius: 18px 18px 0 0;
+  padding: var(--sp-16) max(var(--sp-16), var(--safe-right))
+           calc(var(--sp-16) + var(--safe-bottom)) max(var(--sp-16), var(--safe-left));
+  box-shadow: 0 -12px 40px rgba(0,0,0,.4);
+  animation: sheet-up .28s cubic-bezier(.22,.61,.36,1);
+}
+@media (prefers-reduced-motion: reduce) { .modal-box.lsh-panel { animation: none; } }
+.lsh-panel:focus { outline: none; }
+/* .modal-box scope: `.modal-box h3` would otherwise win and zero the right margin, so a
+   long title ran under the ✕ (found on staging, The Robert Cray Band — Shame + A Sin). */
+.modal-box .lsh-title { margin: 0 44px var(--sp-14) 0; font-family: var(--font-serif);
+  font-weight: 400; font-size: 17px; line-height: 1.3; }
+.lsh-label { margin: 0 0 7px; font-family: var(--font-mono); font-size: 11px;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.listen-chips.lsh-also { gap: 6px; margin: 0 0 var(--sp-16); }
+.listen-chips.lsh-also .listen-chip {
+  flex: 0 0 auto; border-radius: 999px; padding: 6px 12px; font-size: 14px; font-weight: 500;
+}
+.lsh-none { margin: 0 0 var(--sp-16); font-size: 13px; color: var(--muted); }
+.lsh-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+/* ~168px tiles on a 375px phone: 14px names keep "YouTube Music" on one line with ~10%
+   to spare for iOS's wider text; nowrap + ellipsis is only the last resort. */
+.lsh-tile {
+  position: relative; height: 46px; padding: 0 30px 0 12px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+  font: inherit; font-size: 14px; text-align: left; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lsh-tile:hover, .lsh-tile:focus-visible { border-color: var(--accent-2); outline: none; }
+/* 2026-10-07: Spotify isn't answering today — a quiet second line on its tile (muted,
+   not a new hue: brick red is the palette's only warning colour, and this is news, not
+   an error the reader made). */
+.lsh-tile.is-quiet { line-height: 1.2; }
+.lsh-quiet { display: block; font-size: 11.5px; color: var(--muted); }
+.lsh-tile[aria-pressed="true"] { background: var(--living-soft); border-color: var(--living); }
+.lsh-tile[aria-pressed="true"]::after {
+  content: attr(data-mark); position: absolute; top: 50%; right: 8px; width: 18px; height: 18px;
+  margin-top: -9px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--living); color: var(--on-accent); font-size: 11px; font-weight: 700;
+}
+/* v354: several chosen, each tile carries its place in the order and can be dragged —
+   press and hold (touch) or press and move (a mouse). touch-action:none keeps the drag
+   from fighting the sheet's scroll; the callout and text selection a long-press would
+   raise are off. The lifted tile follows the pointer (inline transform, no lag); the
+   others slide to open the slot it will land in. */
+.lsh-tile.is-movable {
+  touch-action: none; cursor: grab;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+.lsh-tiles.is-sorting .lsh-tile { transition: transform .18s ease; }
+.lsh-tiles.is-sorting .lsh-tile.dragging {
+  z-index: 2; transition: none; cursor: grabbing;
+  box-shadow: 0 8px 24px rgba(0,0,0,.45); border-color: var(--accent-2);
+}
+.lsh-order { margin: var(--sp-8) 0 0; font-size: 13px; line-height: 1.4; color: var(--muted); }
+.lsh-hint { margin: var(--sp-10) 0 0; min-height: 36px; font-size: 13px; line-height: 1.4; color: var(--muted); }
+.lsh-hint.is-changed { color: var(--text); }
+.lsh-done {
+  display: block; width: 100%; height: 47px; margin-top: var(--sp-12); border-radius: 12px;
+  border: 1px solid var(--accent-2); background: transparent; color: var(--text);
+  font: 700 15px var(--font-serif); cursor: pointer;
+}
+.lsh-done:hover, .lsh-done:focus-visible { border-color: var(--accent); outline: none; }
+/* The floating Feedback launcher would sit on the sheet's Done; it's back when it closes. */
+body:has(#listenSheet:not(.hidden)) .feedback-fab { display: none; }
 .sas-head h3 { margin: 0; font-family: var(--font-serif); }
 .sas-hint { margin: var(--sp-6) 0 var(--sp-14); font-size: 13px; }
 .sas-list { display: flex; flex-direction: column; gap: var(--sp-10); }
@@ -993,101 +1113,9 @@ body.guest .guest-notebook-note { display: block; }
   padding: 0; margin: 0; cursor: pointer; text-align: left;
 }
 .meta .sub .dot { opacity: .5; }
-/* Preferred-platforms chooser (header) — a quiet disclosure that reorders the
-   Listen door. Collapsed by default so the header stays calm. */
-.listen-pref { position: relative; }
-/* FB#100: a filter chip — fully rounded and a touch smaller than the tabs above,
-   so the two families never read as the same control. See the .tabs block. */
-.listen-pref > summary {
-  list-style: none; cursor: pointer; font-size: 13px; color: var(--muted);
-  padding: var(--sp-6) var(--sp-12); border: 1px solid var(--line); border-radius: 999px;
-  white-space: nowrap;
-}
-.listen-pref > summary::-webkit-details-marker { display: none; }
-.listen-pref > summary:hover { color: var(--text); border-color: var(--accent); }
-.listen-pref[open] > summary { color: var(--text); }
-.listen-pref-box {
-  position: absolute; z-index: 30; right: 0; margin-top: var(--sp-6); min-width: 160px;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  padding: var(--sp-10) var(--sp-12); box-shadow: var(--shadow);
-  display: flex; flex-direction: column; gap: var(--sp-8);
-}
-/* Owner (2026-07-03): the messaging was unclear and small — a bold lead says
-   what to DO, each hint line carries one idea, and everything sits a step
-   larger than before (hints 12→13px, rows 13→14px, note 11.5→12.5px). */
-.listen-pref-lead {
-  margin: 0; font-size: 14px; font-weight: 600; color: var(--text);
-}
-.listen-pref-hint { margin: 0 0 var(--sp-2); font-size: 13px; color: var(--muted); }
-.listen-pref-hint.hidden { display: none; }
-/* The chooser is an ordered list, not just a set picker: each platform is a row
-   with a leaf-dot toggle (fills the living green when on). Chosen rows carry a
-   priority number + a drag glyph and are reordered by long-press-drag (the whole
-   row is the drag surface). Selected rows sit at the top (priority order); a thin
-   separator, then the off rows you can add. One thematic colour for all (not
-   per-brand), so it stays calm and on-palette. */
-.pref-list { display: flex; flex-direction: column; gap: 5px; min-width: 210px; }
-.pref-row {
-  display: flex; align-items: center; gap: 8px; min-height: 48px;
-  padding: var(--sp-8) 10px; border-radius: 9px; font-size: 14px; font-weight: 600;
-  border: 1px solid var(--line); background: var(--panel-2); color: var(--muted);
-  transition: border-color .15s ease, background .15s ease, color .15s ease,
-    transform .12s ease, box-shadow .12s ease;
-}
-.pref-row:hover { border-color: var(--accent-2); }
-/* Chosen rows are the drag surface: long-press to lift. touch-action:none keeps
-   the drag from fighting the browser's scroll. */
-.pref-row.sel { touch-action: none; cursor: grab; }
-.pref-row.sel:active { cursor: grabbing; }
-.pref-toggle {
-  flex: 1 1 auto; align-self: stretch;
-  display: flex; align-items: center; gap: 9px; cursor: pointer;
-  background: none; border: none; padding: 0; margin: 0;
-  font: inherit; color: inherit; text-align: left;
-}
-.pref-rank {
-  flex: 0 0 auto; width: 17px; text-align: center; font-size: 11px; font-weight: 700;
-  color: var(--living); font-variant-numeric: tabular-nums;
-}
-.pref-dot {
-  flex: 0 0 auto; width: 17px; height: 17px; border-radius: 50%;
-  border: 1.5px solid var(--line); background: transparent;
-  display: grid; place-items: center; line-height: 1;
-  transition: background .15s ease, border-color .15s ease;
-}
-.pref-row:hover .pref-dot { border-color: var(--accent-2); }
-/* Chosen: the row lifts to the living green + the dot fills with a check. */
-.pref-row.sel {
-  color: var(--text); border-color: var(--living); background: var(--living-soft);
-}
-.pref-row.sel .pref-dot { background: var(--living); border-color: var(--living); }
-.pref-row.sel .pref-dot::after {
-  content: "✓"; color: var(--on-accent); font-size: 11px; font-weight: 700;
-}
-.pref-toggle:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--living) 45%, transparent);
-  border-radius: 6px;
-}
-/* The drag glyph: a quiet affordance that the row is draggable (the row itself is
-   the handle — long-press anywhere on it). */
-.pref-grip {
-  flex: 0 0 auto; color: var(--muted); font-size: 16px; padding: 0 2px;
-  user-select: none; opacity: .7;
-}
-/* The lifted row: raised above its neighbours (which slide with a transition to
-   open the gap). Its own transform/transition are driven inline by wirePrefDrag so
-   it tracks the thumb 1:1 with no lag. */
-.pref-row.dragging {
-  border-color: var(--living); background: var(--living-soft);
-  box-shadow: var(--shadow); position: relative; z-index: 3;
-}
-body.pref-dragging { cursor: grabbing; }
-.pref-sep { height: 1px; background: var(--line); margin: var(--sp-4) 2px; }
-.listen-pref-note {
-  margin: var(--sp-4) 0 0; font-size: 12.5px; line-height: 1.4; color: var(--muted);
-  min-height: 1em;
-}
+/* (The "Select listening platforms" chooser — header pill, then ☰ row, with its
+   ordered rows and drag — was retired in v354. Its grammar lives on in the Listen
+   sheet's tiles: .lsh-tile.is-movable.) */
 /* An empty state's escape hatch into dig mode reads as a real link, not plain text. */
 .empty .linklike {
   background: none; border: none; padding: 0; cursor: pointer; font: inherit;
@@ -1145,11 +1173,12 @@ body.is-decide .genre-pref { display: block; }
    Keep and Skip. */
 .genre-pref > summary,
 .genre-pref > .genre-pref-pill {      /* v328: Genre is a button (it opens a screen) */
-  list-style: none; cursor: pointer; font-size: 15px; color: var(--muted);
-  padding: var(--sp-8) var(--sp-14); border: 1px solid var(--line); border-radius: 999px;
+  list-style: none; cursor: pointer; font-size: 16.5px; color: var(--muted);
+  padding: 11px var(--sp-18); border: 1px solid var(--line); border-radius: 999px;
   white-space: nowrap;
 }
-.genre-pref > .genre-pref-pill { font-family: inherit; line-height: inherit; background: transparent; }
+/* v356: a fixed 20px line, the same as Seen's, so the two pills stand one height. */
+.genre-pref > .genre-pref-pill { font-family: inherit; line-height: 20px; background: transparent; }
 .genre-pref > .genre-pref-pill:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
 .genre-pref > summary::-webkit-details-marker { display: none; }
 .genre-pref > summary:hover,
@@ -1260,7 +1289,6 @@ body.is-decide .genre-pref { display: block; }
   background: none; border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px;
 }
 .sb-sort:hover { color: var(--text); border-color: var(--accent-2); }
-.sb-intro { margin: var(--sp-6) 0 var(--sp-8); font-size: 13px; line-height: 1.4; }
 .sb-search {
   width: 100%; box-sizing: border-box; font: inherit; font-size: 16px; color: var(--text);
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
@@ -1268,9 +1296,42 @@ body.is-decide .genre-pref { display: block; }
 }
 .sb-search::placeholder { color: var(--muted); }
 .sb-search:focus { outline: none; border-color: var(--accent-2); }
+/* FILTER (2026-10-04): the screen's two tabs, Tags | Year, each with how many of its
+   filters are set ("Tags · 2"). A segmented control rather than tabs-as-links: they
+   switch a pane in place, and both feed the one "Show N records" in the tray. */
+.sb-tabs {
+  display: flex; margin: var(--sp-10) 0 var(--sp-10);
+  border: 1px solid var(--line); border-radius: 999px; overflow: hidden;
+}
+.sb-tab {
+  flex: 1; font: inherit; font-size: 15px; color: var(--muted); cursor: pointer;
+  background: transparent; border: 0; padding: var(--sp-8) var(--sp-10);
+}
+.sb-tab + .sb-tab { border-left: 1px solid var(--line); }
+.sb-tab.on { background: var(--panel-2); color: var(--text); font-weight: 600; }
+.sb-tab:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
+.sb-tab-n { color: var(--accent-2); font-weight: 600; font-variant-numeric: tabular-nums; }
+.sb-tab-n[hidden] { display: none; }
+/* The Year tab is only the decade chips, the span and the day door — it scrolls only
+   on a very short screen, and leaves room for the tray at the foot. */
+.sb-year {
+  flex: 1; overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: var(--sp-6);
+  padding: var(--sp-14) max(var(--sp-16), var(--safe-right))
+           calc(140px + var(--safe-bottom)) max(var(--sp-16), var(--safe-left));
+}
+.sb-year[hidden] { display: none; }
+.sb-year .genre-pref-lead { font-size: 14px; opacity: 1; margin-bottom: var(--sp-2); }
+.sb-year .genre-chip { font-size: 15px; padding: var(--sp-6) var(--sp-12); }
+.sb-year .genre-chip .gc-n { font-size: 12px; }
+.sb-year .year-range { margin-top: var(--sp-14); }
+.sb-year .genre-pref-note { margin: var(--sp-6) 0 0; }
+.sb-year .date-door { font-size: 14px; }
+.sb-sort.is-off { visibility: hidden; }
 /* v332: the list and its A–Z letter rail sit side by side; the rail is hidden in
    rarest-first order. */
 .sb-body { flex: 1; display: flex; min-height: 0; }
+.sb-body[hidden] { display: none; }   /* the Year tab is showing */
 .sb-letters {
   flex: none; width: 24px; display: flex; flex-direction: column; justify-content: center;
   align-items: center; padding: var(--sp-4) 0 calc(110px + var(--safe-bottom));
@@ -1417,6 +1478,11 @@ body.is-decide .genre-pref { display: block; }
   position: relative; display: flex; align-items: center;
   flex: 1; min-width: 200px;
 }
+/* The slot goes when its input does. Notebook and Explore share one search row, and
+   showMode hides the other surface's input — but its empty slot still took a flex line,
+   so Explore's box wrapped onto a second line 12px lower. In the masthead row
+   (2026-10-04) that pushed it off the ☰'s line. */
+.search-slot:has(> input.hidden) { display: none; }
 .search-slot > input { flex: 1; width: 100%; padding-right: 38px; }
 .search-slot > input[type="search"]::-webkit-search-cancel-button,
 .search-slot > input[type="search"]::-webkit-search-decoration {
@@ -1470,6 +1536,104 @@ body.is-decide .genre-pref { display: block; }
 .remember-head #forestFind { flex: 1; display: flex; margin: 0; }
 .remember-head #forestSearchInput { flex: 1; min-width: 200px; }
 #forestBody { max-width: 1200px; margin: 0 auto; }
+
+/* THE BOTTOM BAR (v353, owner 2026-10-05, docs/mockups/search N1 + S1). Notebook's and
+   Search's one search bar sits at the foot, above the dock, where a thumb is: a 48px
+   rounded field (a search glyph, a date chip when one's picked, the input) and, on the
+   Notebook, a + that opens a free note. Suggestions open upward from it. While the
+   keyboard is up (body.kb-open, --kb from wireKeyboardLift) it rides on the keyboard and
+   the dock — which the keyboard covers anyway — steps out of the way. The input stays
+   16px: iOS zooms the page into any smaller focused field. */
+.bottom-bar {
+  display: none; position: fixed; z-index: 42;
+  left: max(var(--sp-12), var(--safe-left)); right: max(var(--sp-12), var(--safe-right));
+  bottom: calc(var(--bar-h) + var(--sp-10));
+  max-width: 560px; margin: 0 auto;
+}
+body.is-remember .bottom-bar { display: block; }
+/* The list dissolves behind the bar instead of showing through the strip between it and
+   the dock (the old pill's band did the same: a half-cut thumbnail in that sliver reads as
+   broken). Inside the bar's own stacking context, so it sits over the page, under the bar. */
+.bottom-bar::before {
+  content: ""; position: absolute; z-index: -1; pointer-events: none;
+  left: calc(-1 * max(var(--sp-12), var(--safe-left))); right: calc(-1 * max(var(--sp-12), var(--safe-right)));
+  top: -22px; bottom: calc(-1 * var(--sp-10) - 1px);
+  background: linear-gradient(to top, var(--bg) 62%, transparent);
+}
+body.kb-open .bottom-bar::before { bottom: -8px; }
+body.is-remember { padding-bottom: calc(var(--bar-h) + 72px); }
+/* The Notebook's long-press "N selected · Delete" bar takes the same spot. */
+body:has(#trailSelectBar:not(.hidden)) .bottom-bar { display: none; }
+body.kb-open .bottom-bar { bottom: calc(var(--kb, 0px) + var(--sp-8)); }
+body.kb-open .tabs-row { visibility: hidden; }
+.bar-row { display: flex; align-items: center; gap: var(--sp-8); }
+.bottom-bar .remember-head { flex: 1 1 auto; min-width: 0; padding: 0; }
+.bottom-bar .remember-head .filters {
+  height: 48px; min-height: 0; max-width: none; margin: 0; flex-wrap: nowrap; gap: 6px;
+  padding: 0 4px 0 14px; border-radius: 24px;
+  background: var(--panel); border: 1px solid var(--line);
+  box-shadow: 0 10px 28px rgba(0,0,0,.45);
+}
+.bottom-bar .remember-head .filters:focus-within { border-color: var(--accent-2); }
+.bar-ico { flex: 0 0 auto; color: var(--muted); }
+.bottom-bar .search-slot { min-width: 0; }
+.bottom-bar .remember-head #forestFind { min-width: 0; }
+.bottom-bar .remember-head #journalSearch,
+.bottom-bar .remember-head #forestSearchInput {
+  min-width: 0; height: 46px; min-height: 0; padding: 0 44px 0 0; font-size: 16px;
+  background: transparent; border: 0; border-radius: 0; box-shadow: none;
+}
+.bottom-bar .remember-head #journalSearch:focus,
+.bottom-bar .remember-head #forestSearchInput:focus { box-shadow: none; }
+.bottom-bar input::placeholder { color: var(--muted); }
+.bar-chip {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; max-width: 58%;
+  padding: 4px 4px 4px 10px; border-radius: 999px; white-space: nowrap; font-size: 13px;
+  background: var(--living-soft); border: 1px solid var(--living); color: var(--text);
+}
+.bar-chip-label { overflow: hidden; text-overflow: ellipsis; }
+.bar-chip-x {
+  flex: 0 0 auto; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%;
+  background: transparent; color: var(--muted); font-size: 12px; cursor: pointer;
+}
+.bar-chip-x:hover { color: var(--text); background: color-mix(in srgb, var(--living) 25%, transparent); }
+.bar-plus {
+  flex: 0 0 48px; height: 48px; padding: 0; border-radius: 50%; cursor: pointer;
+  display: grid; place-items: center;
+  border: 1px solid var(--accent-2); background: var(--panel); color: var(--text);
+  font: 300 30px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  box-shadow: 0 10px 28px rgba(0,0,0,.45);
+}
+.bar-plus:hover, .bar-plus:focus-visible { border-color: var(--accent); background: color-mix(in srgb, var(--living) 14%, var(--panel)); }
+.bar-sugg {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + var(--sp-8));
+  max-height: min(52vh, 360px); overflow-y: auto; overscroll-behavior: contain;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  padding: 5px; box-shadow: 0 12px 34px rgba(0,0,0,.5);
+}
+.bs-lab {
+  margin: 0; padding: 6px 10px 4px; font-family: var(--font-mono); font-size: 11px;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+}
+.bs-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px;
+  padding: 0 10px; border: 0; border-radius: 9px; background: none; color: var(--text);
+  font: inherit; font-size: 15px; text-align: left; cursor: pointer;
+}
+.bs-row:hover, .bs-row:focus-visible, .bs-row.is-first { background: var(--panel-2); outline: none; }
+.bs-row svg { flex: 0 0 auto; color: var(--accent-2); }
+.bs-n { margin-left: auto; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.bs-none { margin: 0; padding: 8px 10px; color: var(--muted); font-size: 13.5px; }
+.bs-pickrow { display: flex; align-items: center; gap: 6px; padding: 4px 8px 8px; }
+.bs-pickrow input[type=date] { flex: 1 1 0; min-width: 0; min-height: 40px; font-size: 14px; color-scheme: dark; }
+.bs-pickrow button {
+  flex: 0 0 auto; min-height: 40px; padding: 0 14px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--accent-2); background: transparent; color: var(--text); font: inherit; font-size: 14px;
+}
+/* Things that lived just above the dock clear the bar on these two tabs. */
+body.is-remember .toast { bottom: calc(var(--bar-h) + 74px); }
+body.is-remember .feedback-fab { bottom: calc(var(--bar-h) + 70px); }
+body:has(#barSugg:not(.hidden)) .feedback-fab { display: none; }
 
 /* Genre chips (multi-select) */
 .chips {
@@ -1539,6 +1703,8 @@ footer {
 }
 /* Tiny build readout (feedback #11) — answers "which version am I on?" without
    hunting. Quiet and monospaced so it reads as a version tag, not prose. */
+/* v355: the source credits, between the legal links and the build — quieter than both. */
+.credits { font-size: 11px; line-height: 1.5; opacity: .85; }
 .build-tag {
   font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px;
   color: var(--muted); opacity: .8; letter-spacing: .02em;
@@ -1666,20 +1832,6 @@ body.opc-open #feedbackModal { z-index: 1215; }
   color: var(--muted); font-size: 13px; cursor: pointer; white-space: nowrap;
 }
 .onlyday input { accent-color: var(--accent); }
-/* U21 (owner 2026-07-05): "dig deeper" folded into the foot of the platforms box
-   — the other end of the same dial (the toggles narrow to what you can play, this
-   widens past availability). A divider off the platform list, a checkbox + title,
-   then a plain-language line on what it does. */
-.dig-opt {
-  margin-top: var(--sp-10); padding-top: var(--sp-10);
-  border-top: 1px solid var(--line); text-align: left;
-}
-.dig-label {
-  display: inline-flex; align-items: center; gap: var(--sp-8);
-  font-weight: 600; color: var(--text); cursor: pointer;
-}
-.dig-label input { accent-color: var(--living); }
-.dig-desc { margin: var(--sp-4) 0 0; font-size: 13px; color: var(--muted); line-height: 1.45; }
 
 /* Journal: summary strip */
 .summary {
@@ -2190,10 +2342,9 @@ body.opc-open #feedbackModal { z-index: 1215; }
 .onboard-picker-hint,
 .onboard-picker-note { margin: 0 0 var(--sp-6); color: var(--muted); font-size: 13px; line-height: 1.5; }
 .onboard-picker-note { margin-bottom: 0; }
-/* FB#97: the About door runs long enough to need seams — three sections (why this
-   exists · how the day is put together · where the data comes from). Same hairline
-   grammar as the album-details sections, so a section break reads the same wherever
-   you meet one. The onboard-card is capped + scrollable already. */
+/* The About door's heading (one section since v355 — the owner's piece; the other two
+   left). Same hairline grammar as the album-details sections. The onboard-card is
+   capped + scrollable already. */
 .about-h {
   margin: var(--sp-24) 0 var(--sp-10); padding-top: var(--sp-16);
   border-top: 1px solid var(--line);
@@ -2201,6 +2352,14 @@ body.opc-open #feedbackModal { z-index: 1215; }
   color: color-mix(in srgb, var(--accent-2) 80%, var(--muted));
 }
 .about-h:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+/* v356: the numbered list in the owner's piece reads like its paragraphs — same size,
+   colour and spacing, with the numbers in the margin. */
+.about-list {
+  margin: 0 0 13px; padding-left: 1.6em;
+  color: var(--text); line-height: 1.55; font-size: 15px;
+}
+.about-list li { margin: 0 0 var(--sp-4); padding-left: var(--sp-2); }
+.about-list li::marker { color: var(--muted); }
 /* The owner signing his own piece in "Why this exists". Right-aligned so it reads
    as a signature under the writing. NOT italic — owner's call on review
    (2026-08-08); he wants it plain, so don't restyle it. */
@@ -2313,18 +2472,6 @@ body.modal-open { overflow: hidden; }
 }
 
 @media (max-width: 640px) {
-  /* The platforms dropdown is anchored to its summary's right edge; with the
-     summary near the screen's left edge the ~230px box ran off-screen left
-     (owner, 2026-07-03, two Androids). On a phone, anchor it to the PAGE
-     instead: it keeps its flow position below the summary but spans the
-     viewport (minus margins), centered — on-screen wherever the summary sits.
-     The body.guest variant repeats the selector so it also beats the guest
-     center-under-summary rule above. */
-  .listen-pref { position: static; }
-  .listen-pref-box, body.guest .listen-pref-box {
-    left: 12px; right: 12px; transform: none;
-    margin-inline: auto; max-width: 420px;
-  }
   /* A8: the genre popover gets the same full-width, on-screen treatment on a phone. */
   .genre-pref { position: static; }
   .genre-pref-box {
@@ -2405,6 +2552,45 @@ body.modal-open { overflow: hidden; }
 }
 .listen-primary:hover, .listen-primary:focus-visible {
   filter: brightness(1.06); outline: none;
+}
+/* FIRST RUN (owner 2026-10-04, docs/mockups/welcome round 2 — "S5"): a new guest's
+   Today stands the services where the cover goes — five plus "Everything", two to a
+   row, filling the cover's own square — and Start where Listen goes. Nothing else of
+   the deck shows yet (no Write a note / Next, no Filter / Seen): there's no record to
+   act on. app.js: firstRunHtml / enterFirstRun / finishFirstRun. */
+body.is-first-run .narrow-today { display: none; }
+.fr-ask {
+  margin: 0 0 var(--sp-12); text-align: center;
+  font-family: var(--font-serif); font-size: 21px; line-height: 1.25; color: var(--text);
+}
+.fr-opts {
+  width: var(--deck-w, 100%); aspect-ratio: 1 / 1; margin: 0 auto var(--sp-14);
+  display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; gap: var(--sp-8);
+}
+.fr-opt {
+  position: relative; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: var(--sp-2); padding: var(--sp-6); cursor: pointer;
+  font: inherit; font-size: 17px; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px;
+  -webkit-tap-highlight-color: transparent;
+  transition: background .13s ease, border-color .13s ease;
+}
+.fr-opt small { font-size: 12px; color: var(--muted); }
+.fr-opt:hover { border-color: var(--accent-2); }
+.fr-opt:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.fr-opt.on { background: var(--living-soft); border-color: var(--living); }
+/* The tick: the same filled sage circle the Filter screen's rows use. */
+.fr-opt.on::after {
+  content: "✓"; position: absolute; top: var(--sp-8); right: var(--sp-10);
+  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--living); color: var(--on-accent); font-size: 13px; font-weight: 700;
+}
+.fr-start { cursor: pointer; }
+/* Asleep until one of the six is chosen: an outline, not a dimmed green, so it never
+   reads as a Listen button that's broken. */
+.fr-start:disabled {
+  cursor: default; background: transparent; color: var(--muted);
+  border-color: var(--line); opacity: .75; filter: none;
 }
 /* Secondary platforms: the rest of your confirmed services as quiet chips, in
    priority order — one tap, no door to open first. */
@@ -2989,196 +3175,87 @@ body.auth-pending > *:not(#authGate):not(.mf-cue) { visibility: hidden; }
 .auth-or span { padding: 0 var(--sp-12); }
 .auth-providers { display: flex; flex-direction: column; gap: var(--sp-10); }
 .auth-providers .oauth-btn { width: 100%; text-align: center; }
-/* H1.2 — one-time "Import previous journal" button (migrate.js), shown after
-   unlock in hosted mode only. Sits bottom-left, out of the way of the Trail and
-   Feedback FABs on the right. */
-/* "Export my journal" + "Import previous journal" live in the account (☰) menu
-   (import used to be a floating FAB that overlapped the feedback button). Quiet
-   secondary items above Sign out. */
-/* #2 (menu redesign): the account popover reads as a calm list of rows, not a
-   stack of loud filled buttons. Each row is transparent and left-aligned (icon in
-   a fixed gutter so labels line up), lighting up only on hover; the everyday items
-   sit up top, the rarer account/app tools tuck under "Settings", and thin
-   separators + more width keep names from feeling squished. */
-/* Selected by STRUCTURE, not by a list of class names. It used to be an
-   enumeration (.acct-export, .acct-import, .acct-setpw, …), which meant every new
-   menu item shipped unstyled until someone remembered to add it to the list —
-   exactly what happened to "Lock Notebook" and "Take the tour" (owner, on-device
-   2026-08-04: "not stylized properly"). Any button inside the popover is a row now,
-   so a new item is right by default and the failure mode is gone. */
-.acct-pop button,
-.acct-update-ready {
-  display: flex; align-items: center; gap: var(--sp-10);
-  width: 100%; padding: 10px var(--sp-12); margin: 0 0 2px; border-radius: 8px;
-  cursor: pointer; background: transparent; color: var(--muted);
-  border: 1px solid transparent; font: inherit; font-size: 13px; font-weight: 500;
-  text-align: left; letter-spacing: .01em;
+/* ============================================================================
+   THE MENU PAGE (v354, owner 2026-10-05): "make the pancake menu its own tab that is
+   swiped onto … the options can show up kind of like the notes do in the notebook
+   tab". It was a popover (top-right until v352, then over a slot in the dock); now
+   the ☰ is the dock's fourth tab and what the popover held is a page that reads like
+   the Notebook — small mono headings like its day lines (.trail-day), over rows like
+   its entries (.trail-entry): a 44px tile where a note has its cover, a serif name
+   where it has its title, a quiet line where it has its text, and the same hairline
+   between rows. auth-ui.js builds the rows (menuRow); every row is a <button>.
+   ========================================================================== */
+/* The ☰ keeps the narrow slot it had beside the tabs (so the three named tabs keep
+   their widths); the sage bar narrows as it glides onto it (placeTabIndicator). */
+.tabs .tab-menu {
+  flex: 0 0 56px; padding: 0; position: relative;
+  font-family: inherit; font-size: 19px; letter-spacing: 0;
 }
-/* The platforms chooser (U20) is adopted INTO this popover and brings its own
-   controls — its rows and toggles must keep their own shapes, not become menu rows. */
-.acct-pop .listen-pref button,
-.acct-pop .pref-row button {
-  width: auto; margin: 0; padding: 0; border-radius: revert;
-  /* Restore the toggle's OWN row layout explicitly — `display: revert` rolled a
-     <button> back to the UA `inline-block`, dropping .pref-toggle's flex, so the
-     block-level .pref-dot stacked ABOVE the name and the row ballooned (dot-over-
-     label, ~55px) only inside the ☰ menu (ACC1 touch-targets, 2026-08-08). */
-  display: flex; align-items: center; gap: 9px;
-  font-size: revert; font-weight: revert;
-}
-/* FB#105: ✎ Feedback is adopted in here too. `.acct-pop button` above already gives
-   it the row shape (it wins on specificity); what's left is undoing the floating
-   chip's own positioning and lift, which that rule doesn't touch. */
-.acct-pop .feedback-fab {
-  position: static; inset: auto; z-index: auto; box-shadow: none; opacity: 1;
-}
-/* FB#105 follow-up: the colophon is adopted in here too. It keeps its stacked shape
-   (links, then build) but drops the page footer's rule and padding for the menu's own
-   hairline — inside a popover it's the last item, not a page boundary. */
-.acct-pop footer {
-  border-top: 1px solid var(--line); border-radius: 0;
-  margin: var(--sp-6) 0 0; padding: var(--sp-10) var(--sp-12) var(--sp-4);
-  gap: var(--sp-2); font-size: 11.5px;
-}
-.acct-pop button:hover,
-.acct-update-ready:hover {
-  background: color-mix(in srgb, var(--living) 16%, transparent); color: var(--text);
-}
-/* …except the two that carry their own hover (Sign out warms, Delete reddens). */
-.acct-pop .listen-pref button:hover,
-.acct-pop .pref-row button:hover { background: revert; color: revert; }
-/* #60: "Start a journal →" is the primary account CTA in the guest menu — give it
-   the brand accent so it reads as the lead action, not just another row. */
-.acct-start { color: var(--accent-2); }
-.acct-export:disabled, .acct-import:disabled,
-.acct-devtrust:disabled, .acct-update:disabled {
-  opacity: .5; cursor: default; background: transparent;
-}
-/* #2: the "Settings" disclosure. A quiet toggle with a caret that rotates open;
-   its group sits softly inset so the tucked tools read as a sub-level, not more
-   top-level noise. It firms up — and glows — only when an update waits inside. */
-.acct-settings-toggle { color: var(--muted); margin-top: 1px; }
-.acct-caret {
-  margin-left: auto; font-size: 13px; color: var(--muted);
-  transition: transform .15s ease;
-}
-.acct-settings-toggle[aria-expanded="true"] .acct-caret { transform: rotate(90deg); }
-.acct-settings {
-  margin: 1px 0 1px; padding-left: var(--sp-8);
-  border-left: 2px solid color-mix(in srgb, var(--living) 32%, transparent);
-}
-.acct-settings > button:last-child { margin-bottom: 0; }
-/* #24/#26: ONE flat update signal — a single "Update ready — reload" row at the
-   top of the open menu (a calm accent outline, no bloom — #22), instead of the
-   ☰ + Settings toggle + Update button all lighting up at once. */
-.acct-update-ready {
-  color: color-mix(in srgb, var(--accent-2) 80%, var(--text));
-  border-color: color-mix(in srgb, var(--living) 55%, transparent);
-  margin-bottom: var(--sp-6);
-}
-.acct-update-ready:hover {
-  background: color-mix(in srgb, var(--living) 14%, transparent);
-  color: var(--accent-2);
-}
-.acct-reload { margin-left: auto; color: var(--living); padding-left: var(--sp-8); }
-/* The email tucked onto the Sign out row (was a header block) — quiet, truncating. */
-.acct-email-inline {
-  margin-left: var(--sp-6); min-width: 0;
-  color: color-mix(in srgb, var(--muted) 72%, transparent); font-size: 11px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-/* Thin separators between the menu's groups (header · everyday · settings · exit). */
-.acct-sep { height: 1px; background: var(--line); margin: 7px var(--sp-2); border: 0; }
-/* Account menu — small button pinned top-right (clear of the top-left feedback
-   FAB and the bottom-right Trail), opening a little Sign-out popover. z-index 45
-   sits below modals (50), and the :has() rule hides it whenever a modal is open,
-   so it's only present when no "hover page" is up. */
-.acct-menu {
-  position: fixed; z-index: 45;
-  top: max(10px, var(--safe-top));
-  right: max(10px, var(--safe-right));
-}
-.acct-btn {
-  width: 34px; height: 34px; border-radius: 999px; cursor: pointer;
-  background: var(--panel-2); color: var(--muted); border: 1px solid var(--line);
-  box-shadow: var(--shadow); font: inherit; font-size: 15px; line-height: 1;
-  opacity: .8;
-}
-.acct-btn:hover { color: var(--text); border-color: var(--accent-2); opacity: 1; }
-/* An update is ready: a small flat accent dot badges the ☰ (no bloom — #22).
-   The "Update ready — reload" row inside the menu carries the actual action. */
-.acct-btn.has-update {
-  color: var(--text); opacity: 1; position: relative;
-  border-color: color-mix(in srgb, var(--accent-2) 55%, var(--line));
-}
-.acct-btn.has-update::after {
-  content: ""; position: absolute; top: 4px; right: 4px;
+/* An update waiting: a small flat dot on the ☰ (no bloom — #22). The "Update ready"
+   row at the top of the page carries the action. */
+.tab-menu.has-update::after {
+  content: ""; position: absolute; top: 13px; left: calc(50% + 5px);
   width: 8px; height: 8px; border-radius: 50%;
-  background: var(--living); border: 2px solid var(--panel-2);
+  background: var(--living); border: 2px solid var(--bg);
 }
-.acct-pop {
-  position: absolute; top: 44px; right: 0; min-width: 246px; max-width: 86vw;
-  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm);
-  box-shadow: var(--shadow); padding: var(--sp-8);
-  /* The menu is fixed, so page scroll can't reach anything pushed past the
-     fold — with the platforms chooser (U20) or Settings expanded on a short
-     phone, the pop itself scrolls instead. */
-  max-height: calc(100dvh - 64px - var(--safe-top));
-  overflow-y: auto; -webkit-overflow-scrolling: touch;
+.menu-page { max-width: 760px; margin: 0 auto; }
+.menu-group {
+  margin: var(--sp-20) 0 var(--sp-6); padding-bottom: var(--sp-6);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono, ui-monospace, monospace); font-size: 13px; font-weight: 400;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
 }
-/* Sign out shares the quiet-row shape (above) but warms on hover — a deliberate
-   exit, not a loud red button. */
-.acct-signout { color: var(--muted); white-space: nowrap; }
-.acct-signout:hover {
-  background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--text);
+.menu-sheet > .menu-group:first-child,
+.menu-sheet > .acct-update-ready.hidden + .menu-group { margin-top: var(--sp-4); }
+.menu-row {
+  position: relative;
+  display: flex; align-items: flex-start; gap: var(--sp-12); width: 100%;
+  margin: 0; padding: var(--sp-12) var(--sp-8); border: 0; border-radius: 10px;
+  background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer;
+  transition: background .15s ease;
 }
-/* Delete account — the one destructive item, marked in the danger colour and
-   tucked inside Settings so it's never a stray tap. */
-/* A danger divider sets Delete apart from the tools above it. */
-.acct-sep-danger { background: color-mix(in srgb, var(--danger) 32%, transparent); margin-top: var(--sp-8); }
-.acct-delete {
-  color: var(--danger-text);
-  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
-  margin-top: var(--sp-4);
+/* The hairline between rows is drawn, not a border: a border on a rounded row bends
+   at its corners. (The Notebook puts its line on a square wrapper, .trail-row.) */
+.menu-rows > .menu-row + .menu-row::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 1px;
+  background: color-mix(in srgb, var(--line) 55%, transparent);
 }
-.acct-delete:hover {
-  background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger-text);
-  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+.menu-row:hover { background: var(--panel-2); }
+.menu-row:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.menu-row:disabled { opacity: .55; cursor: default; }
+.mr-tile {
+  flex: 0 0 auto; width: 44px; height: 44px; border-radius: 7px;
+  border: 1px solid var(--line); display: grid; place-items: center; color: var(--muted);
+  transition: color .15s ease, border-color .15s ease;
 }
-/* Hide the floating ☰ while a modal is open so it doesn't sit over the overlay —
-   EXCEPT the feedback modal (#24/#26): you open feedback precisely to report on
-   (and snapshot) the open menu, so it must stay visible then. */
-body:has(.modal:not(.hidden):not(#feedbackModal)) .acct-menu { display: none; }
-@media (pointer: coarse) { .acct-btn { width: 44px; height: 44px; } }
-
-/* U20: signed in, the "♫ Select platforms" chooser lives in the ☰ menu (auth-ui
-   moves the same #listenPref element in on mount, out on unmount — the guest
-   and the local no-auth build keep it in the header). In here it dresses as a
-   menu row whose box expands INLINE as a soft-inset sub-level (the Settings
-   disclosure grammar), never as a floating popover. Placed after the ≤640px
-   page-anchor rule on purpose: position:static makes those left/right offsets
-   inert. */
-.acct-pop .listen-pref { position: static; }
-.acct-pop .listen-pref > summary {
-  display: flex; align-items: center; gap: var(--sp-10);
-  width: 100%; padding: 9px var(--sp-10); margin: 0 0 1px; border-radius: 8px;
-  border: 1px solid transparent; font-size: 13px; font-weight: 500;
-  color: var(--text); white-space: nowrap;
+.menu-row:hover .mr-tile { color: var(--accent-2); border-color: var(--accent-2); }
+/* Top-aligned with the tile, as a note's text is with its cover; a one-line row's name
+   sits a little down so it doesn't hang off the tile's top edge. */
+.mr-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding-top: 2px; }
+.acct-reload, .acct-showopened .ot-switch { align-self: center; }
+.mr-title { font-family: var(--font-serif); font-size: 15.5px; line-height: 1.3; color: var(--text); }
+.mr-desc { font-family: var(--font-serif); font-size: 14px; line-height: 1.4; color: var(--muted); }
+/* #24/#26: ONE update signal — this row, first on the page, in a calm living outline. */
+.menu-row.acct-update-ready {
+  margin-bottom: var(--sp-6);
+  border: 1px solid color-mix(in srgb, var(--living) 55%, transparent);
 }
-.acct-pop .listen-pref > summary:hover {
-  background: color-mix(in srgb, var(--living) 16%, transparent);
-  border-color: transparent; color: var(--text);
+.acct-update-ready .mr-tile { color: var(--living); border-color: color-mix(in srgb, var(--living) 55%, transparent); }
+.acct-reload { margin-left: auto; padding-left: var(--sp-8); color: var(--living); font-size: 13px; white-space: nowrap; }
+/* The email on the Sign out row truncates rather than wrapping the row. */
+.acct-signout .mr-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Delete account — the one destructive row, in the danger colour, behind a confirm and
+   a typed DELETE. */
+.menu-row.acct-delete .mr-title { color: var(--danger-text); }
+.menu-row.acct-delete .mr-tile {
+  color: var(--danger-text); border-color: color-mix(in srgb, var(--danger) 45%, transparent);
 }
-.acct-pop .listen-pref > summary::after {
-  content: "▸"; margin-left: auto; font-size: 13px; color: var(--muted);
-  transition: transform .15s ease;
-}
-.acct-pop .listen-pref[open] > summary::after { transform: rotate(90deg); }
-.acct-pop .listen-pref-box {
-  position: static; min-width: 0; max-width: none;
-  margin: 1px 0; padding: var(--sp-8) 0 var(--sp-8) var(--sp-8);
-  background: transparent; border: none; border-radius: 0; box-shadow: none;
-  border-left: 2px solid color-mix(in srgb, var(--living) 32%, transparent);
+.menu-row.acct-delete:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+/* FB#105: the colophon (Privacy · Terms, and the build) is adopted onto the page, last.
+   It drops the page footer's rule — the rows above already end in one. */
+.menu-sheet footer {
+  border-top: 0; margin-top: var(--sp-20);
+  padding: var(--sp-12) 0 var(--sp-8);
 }
 
 /* (The old "road not taken" companion card — the not-chosen record inside the
@@ -3292,15 +3369,32 @@ body:has(.modal:not(.hidden):not(#feedbackModal)) .acct-menu { display: none; }
 }
 .trail-hidden-opened { margin: var(--sp-6) var(--sp-8); font-size: 12.5px; color: var(--muted); font-style: italic; }
 .trail-tools { max-width: 760px; margin: 0 auto; display: flex; justify-content: flex-end; }
-.opened-toggle {
-  display: inline-flex; align-items: center; gap: var(--sp-8); cursor: pointer;
-  font: inherit; font-size: 13px; color: var(--muted); background: none;
-  border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px;
+/* FILTER BY DATE (owner 2026-10-05): two native date pickers under the find box. Their
+   labels sit above them in the app's small mono capitals, so the boxes keep the width
+   a full date needs on a 375px phone; `color-scheme: dark` asks the device for a dark
+   picker. ✕ clear appears once either end is set. */
+.nb-dates {
+  justify-content: flex-start; align-items: flex-end; gap: var(--sp-8);
+  margin-bottom: var(--sp-12);
 }
-.opened-toggle[hidden] { display: none; }
-.opened-toggle:hover { color: var(--text); border-color: var(--accent-2); }
-.opened-toggle:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
-.opened-toggle.on { color: var(--text); border-color: var(--accent); }
+.nb-date { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.nb-date > span {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted);
+}
+.nb-date input {
+  width: 100%; min-width: 0; min-height: 40px; box-sizing: border-box;
+  font: inherit; font-size: 15px; color: var(--text); color-scheme: dark;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 6px 10px;
+}
+.nb-date input:focus { outline: none; border-color: var(--accent-2); }
+.nb-dash { color: var(--muted); padding-bottom: 10px; }
+.nb-clear { font-size: 13px; padding-bottom: 11px; white-space: nowrap; }
+.nb-clear[hidden] { display: none; }
+/* ☰ › Settings › Show opened records (2026-10-05; was the Notebook's pill). A menu row
+   with the little switch at its end. */
+.acct-showopened .ot-switch { margin-left: auto; }
 .ot-switch {
   position: relative; width: 28px; height: 16px; border-radius: 999px;
   background: var(--panel-2); border: 1px solid var(--line); flex: none;
@@ -3309,8 +3403,8 @@ body:has(.modal:not(.hidden):not(#feedbackModal)) .acct-menu { display: none; }
   content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px;
   border-radius: 50%; background: var(--muted); transition: left .15s ease;
 }
-.opened-toggle.on .ot-switch { background: var(--living-soft); border-color: var(--living); }
-.opened-toggle.on .ot-switch::after { left: 14px; background: var(--living); }
+.acct-showopened.on .ot-switch { background: var(--living-soft); border-color: var(--living); }
+.acct-showopened.on .ot-switch::after { left: 14px; background: var(--living); }
 @media (prefers-reduced-motion: reduce) { .ot-switch::after { transition: none; } }
 .te-chip {
   font-family: var(--font-mono, ui-monospace, monospace); font-size: 9.5px;
@@ -3355,32 +3449,8 @@ body:has(.modal:not(.hidden):not(#feedbackModal)) .acct-menu { display: none; }
   justify-content: center; gap: var(--sp-12); flex-wrap: wrap;
 }
 .trail-retry-note { font-size: 12px; }
-/* Sticky pill: always in reach while the trail leads (softens #28's top write door).
-   FB#105: it stops at the dock rather than the viewport edge. The Notebook is the one
-   surface where the dock genuinely crowds — this pill and the date rail were already
-   living down here — so the fade is deliberately deep and bottom-heavy (solid --bg
-   for the lower 70%): notes scrolling past have to dissolve into the pill's band
-   BEFORE they reach the dock's top rule, or a half-cut album thumbnail shows in the
-   sliver between the two and the foot reads as broken. */
-.trail-foot {
-  position: sticky; bottom: var(--bar-h); z-index: 5;
-  display: flex; justify-content: center;
-  margin-top: var(--sp-12); padding: var(--sp-20) 0 var(--sp-16);
-  background: linear-gradient(to top, var(--bg) 70%, transparent);
-  pointer-events: none;
-}
-.take-note-pill {
-  pointer-events: auto; cursor: pointer;
-  font-family: var(--font-serif); font-size: 15px; font-weight: 600;
-  color: var(--on-accent); background: var(--accent); border: 1px solid var(--accent);
-  border-radius: 24px; padding: var(--sp-10) var(--sp-20);
-  min-height: 44px; /* ACC1 touch-targets: was 43px */
-  display: inline-flex; align-items: center; justify-content: center;
-  box-shadow: 0 6px 20px rgba(0,0,0,.35),
-              0 0 22px color-mix(in srgb, var(--accent) 22%, transparent);
-  transition: filter .15s ease;
-}
-.take-note-pill:hover, .take-note-pill:focus-visible { filter: brightness(1.06); outline: none; }
+/* v353: the sticky ✎ Write a note pill that lived here is gone — the Notebook's + in the
+   bottom bar (.bar-plus) opens the same free composer. */
 
 /* --- FB#91: the date rail (Variant B, "the thumb") --------------------------
    Nearly nothing at rest; wakes while you scroll; speaks while you hold it. The
@@ -3406,9 +3476,9 @@ body:has(.modal:not(.hidden):not(#feedbackModal)) .acct-menu { display: none; }
   /* FB#105: 49px of clearance ABOVE the dock, which is what the old raw 104px was
      buying over the write pill before the dock existed. Expressed off --bar-h so it
      tracks the bar instead of having to be re-guessed if the bar's height changes. */
-  bottom: calc(var(--bar-h) + 49px);
+  bottom: calc(var(--bar-h) + 70px);   /* v353: clears the bottom search bar */
   width: 44px;
-  z-index: 4;                      /* under .trail-foot (5), so the pill always wins */
+  z-index: 4;
   pointer-events: none;
   -webkit-tap-highlight-color: transparent;
 }
@@ -3588,10 +3658,6 @@ body:has(.modal:not(.hidden):not(#feedbackModal)) .acct-menu { display: none; }
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
   padding: var(--sp-14);
 }
-/* time selector */
-.opc-timesel { position: sticky; top: 0; z-index: 2;
-  background: linear-gradient(var(--bg), color-mix(in srgb, var(--bg) 80%, transparent));
-  padding: var(--sp-8) 0; margin: 0 auto var(--sp-4); max-width: 640px; }
 .opc-chips { display: flex; gap: var(--sp-6); overflow-x: auto; }
 .opc-chips::-webkit-scrollbar { display: none; }
 .opc-chip {
@@ -3603,30 +3669,6 @@ body:has(.modal:not(.hidden):not(#feedbackModal)) .acct-menu { display: none; }
   background: color-mix(in srgb, var(--accent) 22%, var(--panel));
   color: var(--accent-2); border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
 }
-.opc-subday { font-size: 11.5px; line-height: 1.4; color: #e0b13c; margin: var(--sp-8) 2px 0; }
-/* numbers + layout */
-.opc-big { font-size: 26px; font-weight: 600; letter-spacing: -.6px; font-variant-numeric: tabular-nums; }
-.opc-unit { font-size: 12.5px; color: var(--muted); margin-left: var(--sp-4); }
-.opc-twoup { display: flex; gap: var(--sp-24); align-items: baseline; }
-.opc-kpihead { display: flex; justify-content: space-between; align-items: flex-end; }
-.opc-foot { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.opc-delta { font-size: 12.5px; color: var(--muted); margin-top: var(--sp-10); }
-/* funnel */
-.opc-funnel { display: flex; gap: var(--sp-8); }
-.opc-fstep { flex: 1; background: var(--panel-2); border-radius: 10px; padding: var(--sp-10) var(--sp-8); text-align: center; }
-.opc-fstep .fn { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.opc-fstep .fl { font-size: 11px; color: var(--muted); margin-top: 2px; }
-.opc-fstep.lit { background: color-mix(in srgb, var(--accent) 20%, var(--panel-2)); }
-.opc-fstep.lit .fn { color: var(--accent-2); }
-/* composition bar + legend */
-.opc-compbar { display: flex; height: 11px; border-radius: 6px; overflow: hidden; margin: var(--sp-12) 0 var(--sp-10); background: var(--panel-2); }
-.opc-compbar span { display: block; }
-.opc-legend { display: flex; flex-wrap: wrap; gap: var(--sp-8) var(--sp-16); font-size: 12.5px; color: var(--muted); }
-.opc-legend b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
-.opc-legend .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: var(--sp-6); vertical-align: middle; }
-/* charts */
-.opc-chartwrap { margin-top: var(--sp-8); }
-.opc-chart { display: block; }
 /* per-service bars */
 .opc-svc { display: flex; flex-direction: column; gap: var(--sp-10); }
 .opc-svcrow { display: grid; grid-template-columns: 68px 1fr auto; align-items: center; gap: var(--sp-10); }
@@ -3785,25 +3827,6 @@ body:has(.modal:not(.hidden):not(#feedbackModal)) .acct-menu { display: none; }
 .opc-reqbtn:hover, .opc-reqbtn:focus-visible { border-color: var(--accent); outline: none; }
 .opc-reqbtn.primary { border-color: color-mix(in srgb, var(--accent) 55%, var(--panel)); color: var(--accent-2); }
 .opc-reqfb { color: var(--muted); }
-/* Summary + Backlog watch-list */
-.opc-subtools { display: flex; flex-wrap: wrap; gap: var(--sp-8); }
-.opc-watch { display: flex; gap: var(--sp-10); padding: var(--sp-8) 0; align-items: flex-start; }
-.opc-watch + .opc-watch { border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
-.opc-wbadge { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; padding: 1px 7px;
-  border-radius: 999px; flex: 0 0 auto; margin-top: 2px; border: 1px solid var(--line); color: var(--muted); }
-.opc-wbadge.crit { color: #e6a08c; border-color: color-mix(in srgb, #d0553f 50%, var(--line)); }
-.opc-wbadge.warn { color: #e0c07a; border-color: color-mix(in srgb, #e0b13c 50%, var(--line)); }
-.opc-wbadge.rest { color: var(--muted); }
-.opc-wmain { flex: 1; min-width: 0; }
-.opc-wtitle { font-size: 13.5px; line-height: 1.4; }
-
-/* --- v229: drill-downs + "what's changed" ------------------------------------ */
-/* since-you-last-looked summary bar */
-.opc-since { margin: 8px clamp(14px, 4vw, 28px) 0; padding: 9px 12px; border-radius: 10px;
-  font-size: 12.5px; line-height: 1.5; display: flex; align-items: center; gap: var(--sp-10);
-  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); color: var(--text); }
-.opc-since.hidden { display: none; }
 /* Loud, always-visible alarm banner for a live degradation (e.g. an unreadable pool). */
 .opc-alarm { margin: 8px clamp(14px, 4vw, 28px) 0; padding: 10px 13px; border-radius: 10px;
   font-size: 12.5px; line-height: 1.5; display: flex; align-items: flex-start; gap: var(--sp-10);
@@ -3817,14 +3840,92 @@ body:has(.modal:not(.hidden):not(#feedbackModal)) .acct-menu { display: none; }
   0%, 100% { border-color: color-mix(in srgb, #d0553f 55%, var(--line)); }
   50% { border-color: color-mix(in srgb, #d0553f 90%, var(--line)); } }
 @media (prefers-reduced-motion: reduce) { .opc-alarm { animation: none; } }
-.opc-since.warn { background: color-mix(in srgb, #e0b13c 12%, var(--panel)); border-color: color-mix(in srgb, #e0b13c 40%, var(--line)); }
-.opc-since-txt { flex: 1; }
-.opc-since-txt b { color: var(--accent-2); font-weight: 600; }
-.opc-since.warn .opc-since-txt b { color: #e0b13c; }
-.opc-since-txt .when { color: var(--muted); font-weight: 400; }
-.opc-markseen { flex: 0 0 auto; border: 1px solid var(--line); background: var(--panel); color: var(--muted);
-  font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
-.opc-markseen:hover { border-color: var(--accent); color: var(--text); }
+
+/* ============================================================================
+   v358 (owner, design session 2026-10-07; mock: docs/mockups/console/final.template):
+   three tabs — Log, Inbox, Health. The pieces below are the Log (a day per entry,
+   Guests / Accounts lines, numbers and percentages only), Inbox's two segments, and
+   Health's five rows that each open a page.
+   ========================================================================== */
+.opc-tabs3 { display: flex; width: min(100%, 420px); }
+.opc-tabs3 .opc-tab { flex: 1 1 0; }
+.opc-badge.count.warn { background: #e0b13c; color: #1a140a; }
+.opc-sub { padding: 0 clamp(14px, 4vw, 28px); }
+.opc-sub:empty { display: none; }
+.opc-seg2 { display: flex; max-width: 640px; margin: 0 auto var(--sp-10); border: 1px solid var(--line);
+  border-radius: 999px; overflow: hidden; }
+.opc-seg2 button { flex: 1; border: 0; background: none; color: var(--muted); font: inherit; font-size: 13.5px;
+  padding: 7px 0; cursor: pointer; }
+.opc-seg2 button.on { background: color-mix(in srgb, var(--accent) 20%, var(--panel)); color: var(--text); }
+.opc-segn { display: inline-block; min-width: 17px; height: 17px; margin-left: 6px; padding: 0 5px; border-radius: 999px;
+  background: var(--accent-2); color: var(--on-accent); font-size: 11px; font-weight: 700; line-height: 17px; }
+.opc-hsub { max-width: 640px; margin: 0 auto var(--sp-6); }
+.opc-hback { background: none; border: 0; padding: 2px 0; color: var(--accent-2); font: inherit; font-size: 14px; cursor: pointer; }
+.opc-htitle { margin: 2px 0 0; font: 500 22px var(--font-serif); color: var(--text); }
+/* the Log */
+.opc-log { gap: 0; }
+.opc-totline { display: flex; align-items: center; gap: var(--sp-6); margin: 2px 0 var(--sp-8); }
+.opc-totline .lbl { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
+.opc-totline .opc-chip { padding: 3px 10px; font-size: 12px; }
+.opc-totcard { margin-bottom: var(--sp-8); animation: opcFold .18s ease; }
+@keyframes opcFold { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.opc-hair { height: 1px; background: var(--line); margin: var(--sp-10) 0 var(--sp-8); }
+.opc-t2 { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.opc-t2 th:first-child, .opc-t2 td:first-child { width: 33%; }
+.opc-t2 th { font-size: 11.5px; font-weight: 400; color: var(--muted); text-align: right; padding: 0 0 4px; line-height: 1.25; }
+.opc-t2 th:first-child { text-align: left; }
+.opc-t2 td { text-align: right; font-size: 16px; font-weight: 600; padding: 3px 0; font-variant-numeric: tabular-nums; color: var(--text); }
+.opc-t2 td:first-child { text-align: left; font-size: 13px; font-weight: 400; color: var(--muted); }
+.opc-t2 td.na { color: color-mix(in srgb, var(--muted) 55%, transparent); font-weight: 400; }
+.opc-t2 td.merged { vertical-align: middle; }
+.opc-t2 td.merged small { display: block; font-size: 10.5px; font-weight: 400; color: var(--muted); }
+.opc-t2 tr.acc td { border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
+.opc-colhead { position: sticky; top: 0; z-index: 2; padding: var(--sp-8) 0 2px;
+  background: linear-gradient(var(--bg) 80%, color-mix(in srgb, var(--bg) 0%, transparent)); }
+.opc-day { display: flex; justify-content: space-between; margin: var(--sp-16) 2px var(--sp-4); padding-bottom: var(--sp-6);
+  border-bottom: 1px solid var(--line); font-family: var(--font-mono); font-size: 12.5px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--muted); }
+.opc-day .sofar { letter-spacing: .04em; text-transform: none; }
+.opc-drow { display: block; width: 100%; background: none; border: 0; padding: var(--sp-6) 2px; border-radius: 10px;
+  cursor: pointer; font: inherit; color: inherit; }
+.opc-drow:hover { background: var(--panel); }
+.opc-drow .opc-t2 { pointer-events: none; }
+.opc-ev { display: flex; gap: 9px; align-items: baseline; padding: 3px 2px; font-family: var(--font-serif); font-size: 14.5px; color: var(--text); }
+.opc-ev .g { flex: 0 0 16px; text-align: center; color: var(--accent-2); font-family: var(--font-sans, inherit); font-size: 12px; }
+.opc-ev.link { cursor: pointer; }
+.opc-ev.link > span:last-child { text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: var(--muted); }
+.opc-ev .who { margin-left: 5px; font-family: var(--font-sans, inherit); font-size: 11.5px; color: var(--muted); }
+.opc-ddet { padding: var(--sp-4) 2px var(--sp-8); }
+.opc-dsub { margin: var(--sp-10) 0 var(--sp-4); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.opc-ddet .opc-dsub:first-child { margin-top: var(--sp-4); }
+.opc-nt { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.opc-nt td { padding: 3px 0; text-align: right; font-variant-numeric: tabular-nums; }
+.opc-nt td:first-child { text-align: left; color: var(--text); }
+.opc-nt td.pc { width: 50px; color: var(--muted); font-size: 12.5px; }
+.opc-nt th { font-size: 11.5px; font-weight: 400; color: var(--muted); text-align: right; padding: 0 0 3px; }
+.opc-nt4 td:nth-child(2), .opc-nt4 td:nth-child(3), .opc-nt4 th:nth-child(2), .opc-nt4 th:nth-child(3) { width: 66px; }
+.opc-more { display: block; width: 100%; margin: var(--sp-16) 0 0; padding: 10px; border-radius: 12px; border: 1px solid var(--line);
+  background: none; color: var(--muted); font: inherit; font-size: 13.5px; cursor: pointer; }
+.opc-more:hover { border-color: var(--accent-2); color: var(--text); }
+.opc-endnote { text-align: center; }
+/* a Log event landing in Inbox */
+.opc-flash { animation: opcFlash 1.8s ease; }
+@keyframes opcFlash { 0%, 40% { box-shadow: 0 0 0 2px var(--accent-2); } 100% { box-shadow: 0 0 0 0 transparent; } }
+@media (prefers-reduced-motion: reduce) { .opc-flash, .opc-totcard { animation: none; } }
+/* Health */
+.opc-allok { display: flex; align-items: center; gap: var(--sp-8); font-size: 14px; padding: 2px 2px 0; }
+.opc-amber { padding: 10px 13px; border-radius: 10px; font-size: 13px; line-height: 1.45;
+  background: color-mix(in srgb, #e0b13c 12%, var(--panel)); border: 1px solid color-mix(in srgb, #e0b13c 40%, var(--line)); }
+.opc-amber b { color: #e0b13c; }
+.opc-hlist2 { padding: var(--sp-4) var(--sp-8); }
+.opc-hdoor { display: flex; align-items: center; gap: var(--sp-12); width: 100%; text-align: left; background: none; border: 0;
+  padding: var(--sp-12) 4px; cursor: pointer; font: inherit; color: inherit; }
+.opc-hdoor + .opc-hdoor { border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
+.opc-hdoor .b { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.opc-hdoor .nm { font-family: var(--font-serif); font-size: 16px; color: var(--text); }
+.opc-hdoor .v { font-size: 12.5px; color: var(--muted); }
+.opc-hdoor .ar { color: var(--muted); font-size: 18px; }
+.opc-hdoor:hover .nm { color: var(--accent-2); }
 
 /* tab badges */
 .opc-tab { position: relative; }
@@ -3836,31 +3937,7 @@ body:has(.modal:not(.hidden):not(#feedbackModal)) .acct-menu { display: none; }
   padding: 0 4px; border-radius: 999px; background: var(--accent-2); color: var(--on-accent);
   font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
 
-/* card "+N new" delta + new-card accent rail + one-shot pulse */
 .opc-card { position: relative; }
-.opc-deltachip { position: absolute; top: 12px; right: 12px; z-index: 1; font-size: 11px; color: var(--accent-2);
-  background: color-mix(in srgb, var(--accent) 16%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
-  border-radius: 999px; padding: 1px 8px; font-variant-numeric: tabular-nums; }
-.opc-card.opc-isnew { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
-.opc-card.opc-isnew::before { content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px;
-  border-radius: 3px; background: linear-gradient(var(--accent), var(--accent-2)); animation: opc-pulse 1.8s ease-in-out 2; }
-@keyframes opc-pulse { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
-
-/* listen "by service" drill-down */
-.opc-drill { margin-top: 12px; border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent); padding-top: 10px; }
-.opc-drilltog { display: flex; align-items: center; gap: 6px; background: none; border: 0; color: var(--accent-2);
-  font: inherit; font-size: 12.5px; cursor: pointer; padding: 0; }
-.opc-drilltog .car { transition: transform .18s; }
-.opc-drillbody { margin-top: 10px; display: none; flex-direction: column; gap: 9px; }
-.opc-drillbody.open { display: flex; }
-
-/* notebook Split/Combined toggle */
-.opc-seg { display: inline-flex; background: var(--panel-2); border-radius: 8px; padding: 3px; gap: 2px; margin-top: 4px; }
-.opc-seg button { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px;
-  padding: 4px 10px; border-radius: 6px; cursor: pointer; }
-.opc-seg button.on { background: color-mix(in srgb, var(--accent) 22%, var(--panel)); color: var(--accent-2); }
-
-@media (prefers-reduced-motion: reduce) { .opc-card.opc-isnew::before { animation: none; } }
 
 /* The top-of-app breathing room (owner, 2026-08-04: "things feel a bit scrunched up
    towards the top"), gated on there being room for it. A SHORT phone still needs U21's
@@ -3876,19 +3953,5 @@ body:has(.modal:not(.hidden):not(#feedbackModal)) .acct-menu { display: none; }
   header { padding-bottom: 12px; }
   #decide.view { padding-top: var(--sp-10); }
 }
-/* The same reasoning, applied to FB#105's larger masthead: a short phone can't afford
-   it. The record's own top gap is no longer set here — `#decide.view` centres in the
-   leftover, so it needs no breakpoint.
-   This query is still viewport-height, which is a KNOWN blunt instrument: an iPhone 13
-   mini reads 812 and misses it, though only 728 of that is usable. It is a floor for
-   genuinely tiny screens (a 667pt SE), not the mechanism that makes Today fit — that
-   is the centring. Do not add layout rules here expecting them to catch a notched
-   phone; they will not. */
-@media (max-height: 719px) {
-  /* Shrink the lockup, but keep its PROPORTION: the mark has to stay at least as tall
-     as the two lines beside it, or it stops reading as a mark and starts reading as a
-     small square that got left behind. At 34px (the first pass here) it was shorter
-     than the ~50px text stack and the whole arrangement inverted. */
-  .brand-icon { width: clamp(52px, 14vw, 58px); }
-  .brand h1 { font-size: clamp(26px, 6vw, 34px); }
-}
+/* (A max-height: 719px block used to shrink FB#105's tall lockup on short phones. The
+   one-row masthead (2026-10-04) is the circles' height everywhere, so it went.) */

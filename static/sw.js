@@ -19,7 +19,7 @@
  * next load (skipWaiting + clients.claim), and `activate` deletes the old cache.
  * No user-facing "refresh?" prompt by design — see H1.3 decision 1.
  */
-const VERSION = 'v337';
+const VERSION = 'v358';
 const CACHE = `forest-shell-${VERSION}`;
 
 // The same-origin app shell. Cross-origin CDN scripts are intentionally absent:
@@ -51,7 +51,6 @@ const SHELL = [
   versioned('/static/device-trust.js'),
   versioned('/static/journal-cache.js'),
   versioned('/static/auth-ui.js'),
-  versioned('/static/migrate.js'),
   versioned('/static/sw-register.js'),
   '/static/manifest.webmanifest',
   '/static/icons/icon-192.png',
@@ -118,6 +117,12 @@ self.addEventListener('fetch', (event) => {
 
   // Live API surface (auth / sync / feedback / catalog) -> never cached.
   if (url.pathname.startsWith('/api/')) return;
+
+  // The cover cache (/covers/…, today's and tomorrow's thumbnails) -> hands off to the
+  // browser's own HTTP cache, which honours the server's few-hour max-age. The runtime
+  // cache below would keep every cover until the next VERSION bump, long after the
+  // server's rolling window (and any takedown) had dropped it.
+  if (url.pathname.startsWith('/covers/')) return;
 
   // Deploy-state probes -> hands off entirely. /version is the update gate:
   // auth-ui compares it against the running build to decide "a new version is

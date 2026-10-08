@@ -134,110 +134,135 @@
     document.body.classList.remove("guest");
     unmountGuestMenu();
   }
-  // A guest gets the same ☰ corner menu as a signed-in user (#60: the guest header
-  // no longer carries door buttons). It holds the primary "Start a journal →"
-  // account CTA, a pull-only "About" door (FB#97), the #61 "Request a record"
-  // channel, and a "Sign in" door for a returning visitor.
+  // --- the menu page (v354) ------------------------------------------------------
+  // Owner, 2026-10-05: "make the pancake menu its own tab that is swiped onto … the
+  // options can show up kind of like the notes do in the notebook tab". So the ☰ is
+  // the dock's fourth tab (index.html, `.tab-menu`) and what its popover held is a page
+  // (#menuPage): small mono headings like the Notebook's day lines, over rows that
+  // each carry a tile, a serif name and a quiet line saying what it does — a note's
+  // cover, title and text. Both menus below build into it the same way; the tab shows
+  // only while one is mounted (a local single-user build mounts none).
+  // Line icons, drawn in the tile in the muted colour. aria-hidden: the name says it.
+  const MENU_ICONS = {
+    about: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><path d="M12 7.6v.1"/>',
+    tour: '<path d="M4.5 6.5 9 5l6 1.5L19.5 5v13L15 19.5 9 18l-4.5 1.5z"/><path d="M9 5v13"/><path d="M15 6.5v13"/>',
+    feedback: '<path d="M5 5.5h14v10H10l-4.5 3.5v-3.5H5z"/>',
+    signin: '<path d="M14 4.5h4.5v15H14"/><path d="M4.5 12h10"/><path d="m11 8.5 3.5 3.5-3.5 3.5"/>',
+    signout: '<path d="M10 4.5H5.5v15H10"/><path d="M9.5 12h10"/><path d="m16 8.5 3.5 3.5-3.5 3.5"/>',
+    lock: '<rect x="5.5" y="10.5" width="13" height="9" rx="1.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
+    opened: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/>',
+    unlock: '<path d="M8.5 19.5c-1.3-2-2-4.3-2-7a5.5 5.5 0 0 1 11 0c0 1.2-.1 2.4-.4 3.5"/><path d="M12 12.5c0 2.6-.6 5-1.8 7"/><path d="M15 19c.5-1 .9-2 1.1-3.1"/><path d="M9.5 12.5a2.5 2.5 0 0 1 5 0"/>',
+    update: '<path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M19 4.5v4h-4"/>',
+    export: '<path d="M12 4.5v10"/><path d="m8 10.5 4 4 4-4"/><path d="M5 18.5h14"/>',
+    remove: '<path d="M5.5 7.5h13"/><path d="M9.5 7.5V5h5v2.5"/><path d="M7 7.5l1 12h8l1-12"/>',
+    console: '<rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="m8 10 2.5 2L8 14"/><path d="M12.5 14.5h3.5"/>',
+  };
+  function menuIcon(name) {
+    return '<span class="mr-tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" ' +
+      'fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
+      'stroke-linejoin="round">' + (MENU_ICONS[name] || "") + '</svg></span>';
+  }
+  // One row: the tile, the name (.mr-title — the flows that report on a row, like
+  // "Checking…" or "✓ Exported", write into this span, so the tile and the line under
+  // it survive them), and the line saying what it does. `extra` is the row's own end
+  // piece (a switch, a "reload →").
+  function menuRow(cls, icon, title, desc, extra) {
+    return '<button type="button" class="menu-row ' + cls + '">' + menuIcon(icon) +
+      '<span class="mr-body"><span class="mr-title">' + title + '</span>' +
+      (desc ? '<span class="mr-desc">' + desc + '</span>' : '') + '</span>' +
+      (extra || '') + '</button>';
+  }
+  function menuGroup(label) { return '<h3 class="menu-group">' + label + '</h3>'; }
+  // The row a flow should report on: its name span (see menuRow).
+  function rowLabel(root, sel) {
+    const row = root.querySelector(sel);
+    return row ? (row.querySelector(".mr-title") || row) : null;
+  }
+  // The tab is there exactly while a menu is mounted. If it goes while you're on it
+  // (sign out, lock), you land on Today rather than on an empty page.
+  function syncMenuTab() {
+    const tab = document.querySelector('.tab[data-mode="menu"]');
+    const on = !!(_guestMenu || _acctMenu);
+    if (tab) tab.classList.toggle("hidden", !on);
+    const T = window.AOTDTabs;
+    if (!on && T && T.current() === "menu") T.setMode("decide");
+    else if (T) T.relight();
+  }
+  // "How to use" walks Today — the record, Listen, Next, Write a note — and since v354
+  // it's tapped on the menu PAGE, where Today is hidden. The tour skips any step whose
+  // target isn't on screen, so it skipped all six Today steps and opened at step 7
+  // (owner, on staging 2026-10-05). Go to Today first, then start once it's drawn.
+  function startTourOnToday() {
+    const OB = window.AOTDOnboarding, T = window.AOTDTabs;
+    if (!OB) return;
+    const go = () => setTimeout(() => OB.startTourOnDemand(), 60);
+    if (!T || T.current() === "decide") { go(); return; }
+    Promise.resolve(T.setMode("decide")).catch(() => {}).then(go);
+  }
+  function mountMenuPage(node) {
+    const page = document.getElementById("menuPage");
+    if (!page) return false;
+    page.appendChild(node);
+    return true;
+  }
+
+  // A guest gets a menu like a signed-in user's (#60: the guest header no longer
+  // carries door buttons). It holds a pull-only "About" door (FB#97), "How to use",
+  // Feedback, and "Sign in" — the way to keep a Notebook for good, or to reopen one.
   let _guestMenu = null;
   function mountGuestMenu() {
     if (_guestMenu) return;
     _guestMenu = document.createElement("div");
     _guestMenu.id = "guestMenu";
-    _guestMenu.className = "acct-menu";       // reuse the account-menu styling
+    _guestMenu.className = "menu-sheet";
     _guestMenu.innerHTML =
-      '<button class="acct-btn" aria-haspopup="true" aria-expanded="false" ' +
-        'title="Menu" aria-label="Menu">☰</button>' +
-      '<div class="acct-pop hidden">' +
-        '<button class="acct-start" title="Start your Notebook — sync it, back it up, and keep it for good">Start your Notebook →</button>' +
+      // (2026-10-04, owner: "Start your Notebook", "What's new" and "Request a record"
+      // are off the menu. Making an account goes through the sign-in row below;
+      // whatsnew.js stays loaded — its seen-build record still gates the cues.)
+      menuGroup("Music Forest") +
+      '<div class="menu-rows">' +
         // FB#97 (owner): "what is this" is now "About", and it opens the About door
         // — why this exists, how the day is put together, and where every piece of
         // data on screen comes from (which the footer used to carry).
-        '<button class="acct-whatis" title="About Music Forest — why it exists, and where the data comes from">About</button>' +
+        menuRow("acct-whatis", "about", "About",
+          "Why Music Forest exists") +
         // FB#99: the tour is offered, not forced — so it needs a permanent home for
         // anyone who said no (or wants it again).
-        '<button class="acct-tour" title="Walk through the app, one tip at a time">Take the tour</button>' +
-        // Guests run the same shell and get the same updates, so the same door.
-        '<button class="acct-whatsnew" title="What has changed since you last updated">What&#39;s new</button>' +
-        '<button class="acct-request" title="Can’t find a record? Ask us to add it">Request a record</button>' +
-        '<button class="acct-signin" title="Already have a Notebook? Sign in.">Sign in</button>' +
+        menuRow("acct-tour", "tour", "How to use", "A walk through the app, one tip at a time") +
+        '<span class="menu-slot-feedback"></span>' +
+      '</div>' +
+      menuGroup("Your Notebook") +
+      '<div class="menu-rows">' +
+        menuRow("acct-signin", "signin", "Sign in",
+          "Keep your Notebook for good — or open the one you already have") +
       '</div>';
-    const btn = _guestMenu.querySelector(".acct-btn");
-    const pop = _guestMenu.querySelector(".acct-pop");
-    const close = () => {
-      pop.classList.add("hidden");
-      btn.setAttribute("aria-expanded", "false");
-    };
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const open = !pop.classList.toggle("hidden");
-      btn.setAttribute("aria-expanded", open ? "true" : "false");
-    });
-    _guestMenu.querySelector(".acct-start").addEventListener("click", (e) => {
-      e.stopPropagation(); close(); showGate("start");
-    });
-    _guestMenu.querySelector(".acct-whatis").addEventListener("click", (e) => {
-      e.stopPropagation(); close();
+    _guestMenu.querySelector(".acct-whatis").addEventListener("click", () => {
       if (window.openAboutDoor) window.openAboutDoor();
     });
-    _guestMenu.querySelector(".acct-tour").addEventListener("click", (e) => {
-      e.stopPropagation(); close();
-      if (window.AOTDOnboarding) window.AOTDOnboarding.startTourOnDemand();
+    _guestMenu.querySelector(".acct-tour").addEventListener("click", () => {
+      startTourOnToday();
     });
-    _guestMenu.querySelector(".acct-whatsnew").addEventListener("click", (e) => {
-      e.stopPropagation(); close();
-      if (window.AOTDWhatsNew) window.AOTDWhatsNew.show();
-    });
-    _guestMenu.querySelector(".acct-request").addEventListener("click", (e) => {
-      e.stopPropagation(); close();
-      if (window.openRecordRequest) window.openRecordRequest("");
-    });
-    _guestMenu.querySelector(".acct-signin").addEventListener("click", (e) => {
-      e.stopPropagation(); close(); showGate("signin");
-    });
-    document.addEventListener("click", closeGuestMenu);   // click-away closes it
-    document.body.appendChild(_guestMenu);
-    // FB#105: a guest's platforms chooser lives in here too now, not in the header.
-    // After the append, so the pop is in the document when the chooser moves into it.
-    adoptListenPref(_guestMenu.querySelector(".acct-pop"));
-    adoptFeedbackBtn(_guestMenu.querySelector(".acct-pop"));
-    adoptFooter(_guestMenu.querySelector(".acct-pop"));
-    // FB#97: one-time note that About the data moved in here. After the mount, so
-    // the anchor exists; a beat later so it lands after first paint.
-    setTimeout(maybeShowAboutMovedCue, 900);
-    // FB#109: the Keep/Skip swap, for someone who was here before it. Ahead of the
-    // nav offer below — see its comment for why this one wins when both are due.
-    setTimeout(maybeShowKeepSkipSwapOffer, 1200);
-    // FB#105: and, for someone who was here before the layout moved, the offer of a
-    // tour of it. Later than the cue above so the two can never race onto the screen
-    // together — showChangeOffer also refuses while any modal or tour is up.
-    setTimeout(maybeShowNavMovedOffer, 1600);
-    // v328: the Genre button opens a full screen now, not the chips popover. Last, so
-    // it never races the offers above; it refuses while any of them is up.
-    setTimeout(maybeShowGenreMovedCue, 2000);
-    // v329: Keep retired. After the Genre cue, which it yields to.
-    setTimeout(maybeShowKeepRetiredOffer, 2400);
-    // v331: Skip → Next, Skipped → Seen (only for readers the v329 offer doesn't cover).
-    setTimeout(maybeShowNextSeenOffer, 2800);
-  }
-  function closeGuestMenu(e) {
-    if (!_guestMenu || (e && _guestMenu.contains(e.target))) return;
-    // #24/#26: opening feedback must NOT close the menu (same as the account menu).
-    if (e && e.target.closest &&
-        e.target.closest("#feedbackBtn, #feedbackModal")) return;
-    const pop = _guestMenu.querySelector(".acct-pop");
-    const btn = _guestMenu.querySelector(".acct-btn");
-    if (pop) pop.classList.add("hidden");
-    if (btn) btn.setAttribute("aria-expanded", "false");
+    _guestMenu.querySelector(".acct-signin").addEventListener("click", () => showGate("signin"));
+    if (!mountMenuPage(_guestMenu)) { _guestMenu = null; return; }
+    // FB#105: Feedback and the colophon live here too, not on the page.
+    adoptFeedbackBtn(_guestMenu);
+    adoptFooter(_guestMenu);
+    syncMenuTab();
+    // v339: Genre + Year → one Filter button (and the logo went).
+    setTimeout(maybeShowFilterCue, 2000);
+    // (The tour OFFERS — FB#105's nav move, FB#109's swap, v329, v331 — are off:
+    // owner, 2026-10-05, "Skip the bubble for tour and everything". The tour is
+    // ☰ › "How to use". The informational cues above and the Filter one stay.)
   }
   function unmountGuestMenu() {
-    document.removeEventListener("click", closeGuestMenu);
-    // FB#105: the chooser lives in here now, so re-home it BEFORE the node goes —
-    // removing the menu with #listenPref still inside would destroy the element and
-    // every listener wireListenPref attached to it, and nothing re-creates them.
-    restoreListenPref(_guestMenu);
+    if (!_guestMenu) return;
+    // FB#105: Feedback and the colophon are real elements with real listeners, so they
+    // go home BEFORE the node does — removing the menu with them inside would destroy
+    // them, and nothing re-creates them.
     restoreFeedbackBtn(_guestMenu);
     restoreFooter(_guestMenu);
-    if (_guestMenu) { _guestMenu.remove(); _guestMenu = null; }
+    _guestMenu.remove(); _guestMenu = null;
+    syncMenuTab();
   }
   // Phase D: how many picks a guest is about to bring across, for the gate's live
   // "your N picks come with you" reassurance. Reads the same localStorage buffer
@@ -416,34 +441,9 @@
     } catch (e) { /* a cue must never block sign-in */ }
   }
 
-  // FB#97 moved "About the data" out of the footer and into the ☰ menu as "About".
-  // That's a moved surface, not an additive one — someone who used the footer door
-  // would find it simply gone — so it ships with a cue (BRAND.md §"Announcing a
-  // change"), gated the same way as the one above: only for a reader whose last run
-  // predates the build that moved it. Anchored to ☰, which is where it went.
-  const ABOUT_MOVE_BUILD = 253;
-  const ABOUT_MOVE_CUE_KEY = "aotd.cue.aboutmoved.v1";
-
-  function maybeShowAboutMovedCue() {
-    try {
-      const OB = window.AOTDOnboarding, WN = window.AOTDWhatsNew;
-      if (!OB || !OB.showHint || !WN || !WN._readSeen) return;
-      const seen = WN._readSeen(localStorage);
-      if (seen == null || seen >= ABOUT_MOVE_BUILD) return;
-      // Never over another door, and never over the first-run tour — which points at
-      // this very button on its platforms step.
-      if (document.querySelector('.modal:not(.hidden), .mf-tour')) return;
-      OB.showHint({
-        key: ABOUT_MOVE_CUE_KEY,
-        sel: ".acct-btn",
-        place: "below",
-        label: "Where About the data went",
-        text: "“About the data” has moved off the bottom of the screen. It's in here "
-            + "now, under About — along with why Music Forest exists and how each "
-            + "day's records are put together.",
-      });
-    } catch (e) { /* a cue must never block the app */ }
-  }
+  // (FB#97's one-time "Where About the data went" cue — aotd.cue.aboutmoved.v1 — was
+  // retired in v355: the data section it pointed readers to left About, which is now
+  // the owner's own piece alone. BRAND.md's cue table keeps the record.)
 
   // v329 (owner 2026-10-03): Keep is retired. Writing a note is how a record becomes
   // yours, and a Listen tap leaves an "opened" Notebook entry on its own — so Today's
@@ -499,36 +499,37 @@
     } catch (e) { /* an offer must never block the app */ }
   }
 
-  // v328 (owner 2026-09-24): the Genre button under the record opens a full-screen
-  // list of every genre and style now, instead of the chips popover — and the popover's
-  // box for typing a style is gone (the list's find box does that job). Someone who
-  // learned the popover taps Genre and meets a different screen, so this is BRAND.md's
-  // tier 3: one anchored bubble on the Genre button, for readers whose last run
-  // predates v328 (the same What's-new seen-build gate as the cues above).
+  // v339 (owner 2026-10-04, docs/mockups/header round 2): Genre and Year became ONE
+  // Filter button (its screen has Tags and Year tabs), and the logo at the top — the tap
+  // back to Today — went. Both are BRAND.md tier 3, so one anchored bubble on Filter for
+  // readers whose last run predates v339 (the What's-new seen-build gate the cues above
+  // use). The WORDING is the owner's, verbatim: "use filter to sort by tags and years".
+  // Like the v286 offer, it doesn't name what moved — the owner's call for this audience.
   //
-  // Only while the button is actually on screen — Genre lives on Today — and never
-  // over a door, the tour, or another cue/offer. Refusing leaves the flag unspent
-  // (showHint burns it only when it shows), so it tries again next visit.
-  const GENRE_MOVE_BUILD = 328;
-  const GENRE_MOVE_CUE_KEY = "aotd.cue.genrescreen.v1";
+  // It supersedes v328's Genre cue ("aotd.cue.genrescreen.v1", anchored on the Genre
+  // button, which no longer exists), so a reader who never saw that one gets this.
+  //
+  // Only while the button is actually on screen — Filter lives on Today — and never over
+  // a door, the tour, or another cue/offer. Refusing leaves the flag unspent (showHint
+  // burns it only when it shows), so it tries again next visit.
+  const FILTER_BUILD = 339;
+  const FILTER_CUE_KEY = "aotd.cue.filter.v1";
 
-  function maybeShowGenreMovedCue() {
+  function maybeShowFilterCue() {
     try {
       const OB = window.AOTDOnboarding, WN = window.AOTDWhatsNew;
       if (!OB || !OB.showHint || !WN || !WN._readSeen) return;
       const seen = WN._readSeen(localStorage);
-      if (seen == null || seen >= GENRE_MOVE_BUILD) return;
+      if (seen == null || seen >= FILTER_BUILD) return;
       if (document.querySelector(".modal:not(.hidden), .mf-hint")) return;
-      const btn = document.getElementById("genreOpen");
+      const btn = document.getElementById("filterOpen");
       if (!btn || !btn.getClientRects().length) return;
       OB.showHint({
-        key: GENRE_MOVE_CUE_KEY,
-        sel: "#genreOpen",
+        key: FILTER_CUE_KEY,
+        sel: "#filterOpen",
         place: "above",
-        label: "What changed about Genre",
-        text: "Genre opens a full list now: every genre and style in today's records, "
-            + "with how many of each. Tick what you want. The search box at the top "
-            + "of the list replaces the box for typing a style.",
+        label: "What changed about Genre and Year",
+        text: "Use Filter to sort by tags and years.",
       });
     } catch (e) { /* a cue must never block the app */ }
   }
@@ -1838,10 +1839,9 @@
   }
 
   // --- in-app account menu --------------------------------------------------
-  // A small account button pinned to the top-right corner. Clicking it opens a
-  // little menu showing the signed-in email + Sign out. Hosted mode only;
-  // mounted once unlocked, removed on lock/sign-out. CSS hides it whenever a
-  // modal ("hover page") is open, so it never sits over an album door or its ✕.
+  // The signed-in version of the menu page (v354; a top-right popover before that,
+  // then a ☰ in the dock). Hosted mode only; mounted once unlocked, removed on
+  // lock/sign-out. Its rows are built by mountAccountMenu, below.
   let _acctMenu = null;
   // Whether a newer app version is sitting ready (installed but not yet running,
   // since applying it needs a reload). When true the ☰ button glows faintly — an
@@ -1854,12 +1854,12 @@
     if (!_acctMenu) return;
     // #24/#26: one update treatment, not three. The ☰ carries a small flat dot
     // (a quiet "something's waiting", no bloom), and a single "Update ready — reload"
-    // row appears at the top of the open menu. The Settings toggle and the in-Settings
-    // "Check for updates" no longer light up — the top row is the whole signal.
-    const b = _acctMenu.querySelector(".acct-btn");
+    // row appears at the top of the menu page. "Check for updates" doesn't light up —
+    // the top row is the whole signal. (v354: the ☰ is the dock's Menu tab.)
+    const b = document.querySelector('.tab[data-mode="menu"]');
     if (b) {
       b.classList.toggle("has-update", on);
-      b.title = on ? "Account — an update is ready (open to reload)" : "Account";
+      b.title = on ? "Menu — an update is ready" : "Menu";
     }
     const row = _acctMenu.querySelector(".acct-update-ready");
     if (row) row.classList.toggle("hidden", !on);
@@ -2049,91 +2049,46 @@
       });
     }).catch(() => {});
   }
-  // U20 (owner, 2026-07-03): signed in, the "♫ Select platforms" chooser tucks
-  // into the ☰ menu — the services are usually set once, so the header stays calm.
-  //
-  // FB#105 (2026-08-07): the GUEST menu adopts it too, so ☰ is the one permanent
-  // home on every hosted path. Two reasons it stopped making sense to keep a guest's
-  // copy in the header. It was the last thing in that row once "By genre" / "By year"
-  // moved under the record, and one lonely pill was costing the header 40px that the
-  // record wanted. And it is no longer the first thing a guest meets: the first-run
-  // card now asks where you listen outright, so the header pill was a second front
-  // door to a question already answered.
-  //
-  // The local no-auth build mounts neither menu, so there it stays in the header —
-  // which is also why `.controls` and restoreListenPref below still exist.
-  //
-  // We move the SAME #listenPref element (never a copy), so all its wiring — the
-  // toggles, the long-press drag order, the tap-outside dismiss — rides along
-  // untouched.
-  function adoptListenPref(pop) {
-    const pref = document.getElementById("listenPref");
-    if (!pref || pref.parentNode === pop) return;
-    pref.open = false;
-    // Under the menu's lead row when there is one. A guest's lead is the
-    // "Start your Notebook →" CTA, and a settings control must not displace it; the
-    // account menu has no lead row, so the chooser stays top, where it has been since
-    // U20. (This used to anchor off `.acct-email`, which stopped existing when the
-    // address moved inline onto the Sign out row — the lookup had been returning null
-    // and silently falling through to firstChild ever since.)
-    const lead = pop.querySelector(".acct-start");
-    pop.insertBefore(pref, lead ? lead.nextSibling : pop.firstChild);
-    // U21: the header controls row is now empty — collapse it so it stops adding a
-    // gap between the tabs and the Choose prompt.
-    const controls = document.querySelector("header .controls");
-    if (controls) controls.classList.toggle("is-empty", controls.children.length === 0);
-  }
-  // On lock/sign-out (or leaving guest mode) a menu unmounts — re-home the chooser to
-  // its header slot (last in .controls) BEFORE the menu node is removed, or it would
-  // be torn down with it, taking every listener wireListenPref attached.
-  //
-  // Takes the menu being torn down, and does nothing unless THAT menu is the one
-  // holding the chooser. Both menus can adopt it now, and a guest signing in hands it
-  // from one to the other — if this checked "is it in either menu?" it would depend on
-  // whether unmountGuestMenu happened to run before mountAccountMenu, and in the order
-  // that actually fires (aotd:unlocked mounts the account menu first) it would have
-  // pulled the chooser straight back out of the menu that just adopted it.
-  function restoreListenPref(menu) {
-    const pref = document.getElementById("listenPref");
-    if (!pref || !menu || !menu.contains(pref)) return;
-    pref.open = false;
-    const host = document.querySelector("header .controls");
-    if (host) { host.appendChild(pref); host.classList.remove("is-empty"); }
-  }
+  // (U20 / FB#105 adopted the "Select listening platforms" chooser into both menus
+  // here. v354 retired it — owner 2026-10-05 — so adoptListenPref/restoreListenPref
+  // went with it: Today's Listen row opens the same choices, and orders them.)
 
   // FB#105 (owner): "retire it into the pancake menu." The floating ✎ Feedback chip
   // was the fourth thing living at the foot of the screen, and the dock made that one
   // too many.
   //
-  // Moved, not rebuilt — the SAME #feedbackBtn element, like the platforms chooser
-  // above. That matters for three things that all keep working untouched: app.js's
-  // `$("#feedbackBtn").addEventListener` wiring, cloneView()'s exclusion of it from
-  // the bug-report snapshot, and the click-away exemptions in both menus (which now
-  // resolve trivially, since the button is inside the menu it must not close).
+  // Moved, not rebuilt — the SAME #feedbackBtn element. That matters for three things
+  // that all keep working untouched: app.js's `$("#feedbackBtn").addEventListener`
+  // wiring, cloneView()'s exclusion of it from the bug-report snapshot, and the
+  // click-away exemptions that still name it.
   //
-  // KNOWN COST, worth stating plainly: the chip sat at z-index 82, deliberately above
-  // open panels (z 50-80), so you could report from INSIDE an album/artist panel —
-  // exactly when you most want to. The menu is z-index 45, under modals, and raising
-  // it is not a fix: ☰ is top-right, which is where a dialog's own ✕ lives, and the
-  // chip was bottom-left precisely to avoid that collision. So feedback is now sent
-  // from the app surface rather than from within an open door. Everything else about
-  // the flow, including the snapshot, is unchanged.
+  // v354: on the menu page it dresses as a row like its neighbours (its chip text and
+  // class are put back on the way out, for the local build that floats it). Feedback
+  // is sent from the app surface rather than from within an open door — the menu
+  // page sits under every dialog, like the dock.
   //
   // A guest gets it for the first time here: they never had the chip
   // (`body.guest .feedback-fab` hid it), so this is a door opening, not one moving.
-  function adoptFeedbackBtn(pop) {
+  function adoptFeedbackBtn(menu) {
     const btn = document.getElementById("feedbackBtn");
-    if (!btn || btn.parentNode === pop) return;
-    // Above the way out — sign out / sign in / lock are the last thing in either
-    // menu, and a "tell me what you think" row belongs with the app, not the exit.
-    const exit = pop.querySelector(".acct-lock, .acct-signout, .acct-signin");
-    pop.insertBefore(btn, exit || null);
+    const slot = menu.querySelector(".menu-slot-feedback");
+    if (!btn || !slot) return;
+    if (btn.dataset.chip == null) btn.dataset.chip = btn.innerHTML;
+    btn.classList.remove("feedback-fab");
+    btn.classList.add("menu-row", "acct-feedback");
+    btn.innerHTML = menuIcon("feedback") +
+      '<span class="mr-body"><span class="mr-title">Feedback</span>' +
+      '<span class="mr-desc">Tell me what works and what doesn’t. I read everything.</span></span>';
+    slot.replaceWith(btn);
   }
-  // Same teardown discipline as the chooser: the button is a real element with a real
-  // listener, so it has to leave the menu before the menu leaves the document.
+  // Same teardown discipline: the button has to leave the menu before the menu leaves
+  // the document, and it goes back to being the chip.
   function restoreFeedbackBtn(menu) {
     const btn = document.getElementById("feedbackBtn");
     if (!btn || !menu || !menu.contains(btn)) return;
+    btn.classList.remove("menu-row", "acct-feedback");
+    btn.classList.add("feedback-fab");
+    if (btn.dataset.chip != null) { btn.innerHTML = btn.dataset.chip; delete btn.dataset.chip; }
     document.body.appendChild(btn);
   }
 
@@ -2142,15 +2097,19 @@
   // standing between the record and the dock, and it is reference material — you go
   // looking for it, you don't read it daily.
   //
-  // Moved, not rebuilt, for the same reason as the two above: app.js writes the build
+  // Moved, not rebuilt, for the same reason as Feedback: app.js writes the build
   // string into #buildTag on boot, and a copy would go stale the moment the real one
   // changed. Privacy and Terms stay one tap away rather than leaving the app — they
-  // are legal links and have to remain reachable, which ☰ satisfies. Last in the pop,
-  // under the exit, because that is where a colophon belongs.
-  function adoptFooter(pop) {
-    const foot = document.querySelector("body > footer");
-    if (!foot || foot.parentNode === pop) return;
-    pop.appendChild(foot);
+  // are legal links and have to remain reachable, which the menu satisfies. Last on
+  // the page, where a colophon belongs.
+  // Found wherever it is: a guest signing in mounts the account menu BEFORE the guest
+  // menu goes, so the colophon is still in the guest menu at that moment (looking only
+  // under <body> left it behind, and it fell back to the page foot when the guest menu
+  // was torn down).
+  function adoptFooter(menu) {
+    const foot = document.querySelector("body > footer, #menuPage footer");
+    if (!foot || foot.parentNode === menu) return;
+    menu.appendChild(foot);
   }
   function restoreFooter(menu) {
     const foot = menu && menu.querySelector("footer");
@@ -2161,176 +2120,124 @@
     if (_acctMenu) return;
     _acctMenu = document.createElement("div");
     _acctMenu.id = "acctMenu";
-    _acctMenu.className = "acct-menu";
+    _acctMenu.className = "menu-sheet";
     _acctMenu.innerHTML =
-      '<button class="acct-btn" aria-haspopup="true" aria-expanded="false" ' +
-        'title="Account" aria-label="Account menu">☰</button>' +
-      '<div class="acct-pop hidden">' +
-        // #24/#26: a calm top level — a waiting update surfaces as ONE row here
-        // (no longer the ☰ + Settings toggle + Update button all lit at once); the
-        // rarer tools tuck behind a single "Settings" disclosure. Labels carry the
-        // menu (no emoji); the email rides the Sign out row instead of a header.
-        '<button class="acct-update-ready hidden" title="A new version is ready — reload to update">' +
-          'Update ready<span class="acct-reload">reload →</span></button>' +
-        // Sits directly under the update row so it's to hand at the one moment it's
-        // wanted — you just updated and something looks different. Pull-only: no
-        // badge, no unread count, never opens itself (VISION P4).
-        '<button class="acct-whatsnew" title="What has changed since you last updated">What&#39;s new</button>' +
+      // #24/#26: a waiting update surfaces as ONE row, at the top of the page (and a
+      // small dot on the ☰ tab) — not the ☰ + Settings + Update all lit at once.
+      menuRow("acct-update-ready hidden", "update", "Update ready",
+        "A new version is here. Reload to use it.", '<span class="acct-reload">reload →</span>') +
+      menuGroup("Music Forest") +
+      '<div class="menu-rows">' +
+        // ("What's new" sat here until 2026-10-04 — off the menu, owner's call.)
         // FB#97 (owner): renamed from "What is this?" and re-pointed at the About
         // door (it used to re-open the first-run welcome).
-        '<button class="acct-whatis" title="About Music Forest — why it exists, and where the data comes from">About</button>' +
-        '<button class="acct-tour" title="Walk through the app, one tip at a time">Take the tour</button>' +
+        menuRow("acct-whatis", "about", "About",
+          "Why Music Forest exists") +
+        menuRow("acct-tour", "tour", "How to use", "A walk through the app, one tip at a time") +
+        '<span class="menu-slot-feedback"></span>' +
         // Operator-only (admin-in-pwa-tab): hidden until AOTDOperator.gate() confirms
         // /api/admin/whoami. A reader never has this in a revealed state.
-        '<button class="acct-console hidden" title="Operator tools — usage, pool, feedback, cost">Operator console</button>' +
-        '<button class="acct-settings-toggle" aria-expanded="false" title="Quick unlock, backups, and app updates">Settings<span class="acct-caret">▸</span></button>' +
-        '<div class="acct-settings hidden">' +
-          '<button class="acct-devtrust" title="Turn one-tap quick unlock (Face ID, fingerprint, or passcode) on or off for this device">Quick unlock</button>' +
-          '<button class="acct-update" title="Check for a new version of the app and reload to apply it">Check for updates</button>' +
-          '<button class="acct-export" title="Download a plaintext backup of your Notebook (decrypted in your browser)">Export Notebook (backup)</button>' +
-          '<button class="acct-import" title="Bring your pre-Supabase Notebook into your encrypted account">Import old Notebook</button>' +
-          // Delete is the last item, behind a danger divider and its own bordered
-          // danger styling so it reads as a deliberate, distinct destructive action.
-          '<div class="acct-sep acct-sep-danger"></div>' +
-          '<button class="acct-delete" title="Permanently delete your account and all synced Notebook data">Delete account…</button>' +
-        '</div>' +
-        '<div class="acct-sep"></div>' +
+        menuRow("acct-console hidden", "console", "Operator console",
+          "Usage, the pool, feedback, cost") +
+      '</div>' +
+      // #24/#26 tucked these behind a "Settings" disclosure to keep a small popover
+      // calm. A page has the room, so they stand in groups of their own (v354).
+      menuGroup("Your Notebook") +
+      '<div class="menu-rows">' +
+        // 2026-10-05: the Notebook's "Show opened" pill, moved in here (owner).
+        // Opened records show by default; this is the way to hide them.
+        '<button type="button" class="menu-row acct-showopened" role="switch" aria-checked="true">' +
+          menuIcon("opened") +
+          '<span class="mr-body"><span class="mr-title">Show opened records</span>' +
+          '<span class="mr-desc">Records you open with Listen, in your Notebook</span></span>' +
+          '<span class="ot-switch" aria-hidden="true"></span></button>' +
+        menuRow("acct-export", "export", "Export Notebook (backup)",
+          "A plaintext copy, decrypted here in your browser") +
+      '</div>' +
+      menuGroup("This device") +
+      '<div class="menu-rows">' +
+        menuRow("acct-devtrust", "unlock", "Quick unlock",
+          "Face ID, fingerprint or passcode — on or off for this device") +
+        menuRow("acct-update", "update", "Check for updates",
+          "Look for a new version, and reload to use it") +
+      '</div>' +
+      menuGroup("Account") +
+      '<div class="menu-rows">' +
         // The deliberate lock, alongside the idle timer's backstop (2026-08-04). With
         // the timeout out at 6 hours, the timer can't answer "I'm handing someone my
-        // phone right now" — this can. Top level, paired with Sign out: they're the two
-        // ways to put the notebook away, and this is the light one, dropping the key
-        // from memory WITHOUT ending the session, so coming back is one biometric tap.
-        // Buried under Settings it would be useless for the case it exists for.
-        '<button class="acct-lock" title="Re-lock your Notebook now — you stay signed in">Lock Notebook</button>' +
-        '<button class="acct-signout">Sign out' +
-          (_email ? '<span class="acct-email-inline">(' + esc(_email) + ')</span>' : '') +
-        '</button>' +
+        // phone right now" — this can. It drops the key from memory WITHOUT ending the
+        // session, so coming back is one biometric tap.
+        menuRow("acct-lock", "lock", "Lock Notebook", "Lock it now — you stay signed in") +
+        menuRow("acct-signout", "signout", "Sign out", _email ? esc(_email) : "") +
+        // Delete is the last row, in the danger colour, behind its own confirm + typed
+        // DELETE, so it reads as a deliberate, distinct destructive action.
+        menuRow("acct-delete", "remove", "Delete account…",
+          "Permanently delete your account and all synced Notebook data") +
       '</div>';
-    const btn = _acctMenu.querySelector(".acct-btn");
-    const pop = _acctMenu.querySelector(".acct-pop");
-    const settingsToggle = _acctMenu.querySelector(".acct-settings-toggle");
-    const settingsGroup = _acctMenu.querySelector(".acct-settings");
-    const revealSettings = (on) => {
-      settingsGroup.classList.toggle("hidden", !on);
-      settingsToggle.setAttribute("aria-expanded", on ? "true" : "false");
+    // ☰ › Show opened records — reads and writes app.js's own switch.
+    const showOpenedBtn = _acctMenu.querySelector(".acct-showopened");
+    const syncShowOpened = () => {
+      const S = window.AOTDShowOpened;
+      const on = !S || S.get();
+      showOpenedBtn.setAttribute("aria-checked", on ? "true" : "false");
+      showOpenedBtn.classList.toggle("on", on);
     };
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const open = !pop.classList.toggle("hidden");
-      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    showOpenedBtn.addEventListener("click", () => {
+      const S = window.AOTDShowOpened;
+      if (S) S.set(!S.get());
+      syncShowOpened();
     });
+    syncShowOpened();
     // #24/#26: the one update signal — the top row reloads into the new version
-    // (checkForUpdatesFlow reloads when _updateReady). Keeps the menu open on tap.
-    _acctMenu.querySelector(".acct-update-ready").addEventListener("click", (e) => {
-      e.stopPropagation();
-      checkForUpdatesFlow(_acctMenu.querySelector(".acct-update-ready"));
+    // (checkForUpdatesFlow reloads when _updateReady).
+    _acctMenu.querySelector(".acct-update-ready").addEventListener("click", () => {
+      checkForUpdatesFlow(rowLabel(_acctMenu, ".acct-update-ready"));
     });
-    settingsToggle.addEventListener("click", (e) => {
-      e.stopPropagation();
-      revealSettings(settingsGroup.classList.contains("hidden"));
+    _acctMenu.querySelector(".acct-export").addEventListener("click", () => {
+      exportJournal(rowLabel(_acctMenu, ".acct-export"));
     });
-    _acctMenu.querySelector(".acct-export").addEventListener("click", (e) => {
-      e.stopPropagation();
-      pop.classList.add("hidden");
-      btn.setAttribute("aria-expanded", "false");
-      exportJournal(_acctMenu.querySelector(".acct-export"));
+    _acctMenu.querySelector(".acct-devtrust").addEventListener("click", () => deviceTrustFlow());
+    _acctMenu.querySelector(".acct-update").addEventListener("click", () => {
+      // The row reports inline ("Checking…" → "Up to date" / "Update ready").
+      checkForUpdatesFlow(rowLabel(_acctMenu, ".acct-update"));
     });
-    _acctMenu.querySelector(".acct-import").addEventListener("click", (e) => {
-      e.stopPropagation();
-      pop.classList.add("hidden");
-      btn.setAttribute("aria-expanded", "false");
-      if (window.AOTDImport && AOTDImport.run) {
-        AOTDImport.run(_acctMenu.querySelector(".acct-import"));
-      }
-    });
-    _acctMenu.querySelector(".acct-devtrust").addEventListener("click", (e) => {
-      e.stopPropagation();
-      pop.classList.add("hidden");
-      btn.setAttribute("aria-expanded", "false");
-      deviceTrustFlow();
-    });
-    _acctMenu.querySelector(".acct-update").addEventListener("click", (e) => {
-      e.stopPropagation();
-      // Keep the menu open: the button reports status inline ("Checking…" →
-      // "Up to date" / "Update ready") so the result is visible where it was clicked.
-      checkForUpdatesFlow(_acctMenu.querySelector(".acct-update"));
-    });
-    _acctMenu.querySelector(".acct-delete").addEventListener("click", (e) => {
-      e.stopPropagation();
-      // Keep the menu open behind the native confirm/prompt; the flow tears the
-      // menu down itself on success (via doSignOut).
-      deleteAccountFlow(_acctMenu.querySelector(".acct-delete"));
-    });
-    _acctMenu.querySelector(".acct-whatsnew").addEventListener("click", (e) => {
-      e.stopPropagation();
-      pop.classList.add("hidden");
-      btn.setAttribute("aria-expanded", "false");
-      if (window.AOTDWhatsNew) window.AOTDWhatsNew.show();
+    _acctMenu.querySelector(".acct-delete").addEventListener("click", () => {
+      // The flow tears the menu down itself on success (via doSignOut).
+      deleteAccountFlow(rowLabel(_acctMenu, ".acct-delete"));
     });
     // FB#97: the pull-only About door. (Phase F pointed this at the first-run
     // welcome; About is the fuller page — the welcome is still what a first-timer
     // meets, and the tour can be restarted from there.)
-    _acctMenu.querySelector(".acct-whatis").addEventListener("click", (e) => {
-      e.stopPropagation();
-      pop.classList.add("hidden");
-      btn.setAttribute("aria-expanded", "false");
+    _acctMenu.querySelector(".acct-whatis").addEventListener("click", () => {
       if (window.openAboutDoor) window.openAboutDoor();
     });
-    _acctMenu.querySelector(".acct-tour").addEventListener("click", (e) => {
-      e.stopPropagation();
-      pop.classList.add("hidden");
-      btn.setAttribute("aria-expanded", "false");
-      if (window.AOTDOnboarding) window.AOTDOnboarding.startTourOnDemand();
+    _acctMenu.querySelector(".acct-tour").addEventListener("click", () => {
+      startTourOnToday();
     });
-    _acctMenu.querySelector(".acct-lock").addEventListener("click", (e) => {
-      e.stopPropagation();
-      pop.classList.add("hidden");
-      btn.setAttribute("aria-expanded", "false");
-      lock();
-    });
-    _acctMenu.querySelector(".acct-console").addEventListener("click", (e) => {
-      e.stopPropagation();
-      pop.classList.add("hidden");
-      btn.setAttribute("aria-expanded", "false");
+    _acctMenu.querySelector(".acct-lock").addEventListener("click", () => lock());
+    _acctMenu.querySelector(".acct-console").addEventListener("click", () => {
       if (window.AOTDOperator) AOTDOperator.open();
     });
     _acctMenu.querySelector(".acct-signout").addEventListener("click", async () => {
       if (!confirm("Sign out? Your Notebook will lock and you'll return to the login screen.")) return;
       await doSignOut();
     });
-    document.addEventListener("click", closeAccountMenu);  // click-away closes it
-    adoptListenPref(pop);                    // U20: platforms live here when signed in
-    adoptFeedbackBtn(pop);                   // FB#105: and so does Send feedback
-    adoptFooter(pop);                        // FB#105: Privacy · Terms · build, too
-    document.body.appendChild(_acctMenu);
-    setTimeout(maybeShowAboutMovedCue, 900);        // FB#97: see the guest menu's copy
-    setTimeout(maybeShowKeepSkipSwapOffer, 1200);   // FB#109: likewise
-    setTimeout(maybeShowNavMovedOffer, 1600);       // FB#105: likewise
-    setTimeout(maybeShowGenreMovedCue, 2000);       // v328: likewise
-    setTimeout(maybeShowKeepRetiredOffer, 2400);    // v329: likewise
-    setTimeout(maybeShowNextSeenOffer, 2800);       // v331: likewise
+    if (!mountMenuPage(_acctMenu)) { _acctMenu = null; return; }
+    adoptFeedbackBtn(_acctMenu);             // FB#105: Send feedback lives here
+    adoptFooter(_acctMenu);                  // FB#105: Privacy · Terms · build, too
+    syncMenuTab();
+    setTimeout(maybeShowFilterCue, 2000);           // v339: see the guest menu's copy
     // Reveal the operator-console item iff the server says this account is an operator.
     if (window.AOTDOperator) AOTDOperator.gate(_acctMenu);
     if (_updateReady) setUpdateGlow(true);   // carry a pre-mount detection through
     initUpdateWatch();
   }
-  function closeAccountMenu(e) {
-    if (!_acctMenu || (e && _acctMenu.contains(e.target))) return;
-    // #24/#26: opening feedback must NOT close the menu — you tap Feedback
-    // precisely to report on (and snapshot) the open menu.
-    if (e && e.target.closest &&
-        e.target.closest("#feedbackBtn, #feedbackModal")) return;
-    const pop = _acctMenu.querySelector(".acct-pop");
-    const btn = _acctMenu.querySelector(".acct-btn");
-    if (pop) pop.classList.add("hidden");
-    if (btn) btn.setAttribute("aria-expanded", "false");
-  }
   function unmountAccountMenu() {
-    document.removeEventListener("click", closeAccountMenu);
-    restoreListenPref(_acctMenu);
+    if (!_acctMenu) return;
     restoreFeedbackBtn(_acctMenu);
     restoreFooter(_acctMenu);
-    if (_acctMenu) { _acctMenu.remove(); _acctMenu = null; }
+    _acctMenu.remove(); _acctMenu = null;
+    syncMenuTab();
   }
   document.addEventListener("aotd:unlocked", () => { if (window.AOTD_HOSTED) mountAccountMenu(); });
   document.addEventListener("aotd:locked", unmountAccountMenu);

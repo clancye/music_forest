@@ -565,6 +565,38 @@ ART_MAX_REDIRECTS = int(os.environ.get("AOTD_ART_MAX_REDIRECTS", "4"))
 ART_MAX_PIXELS = int(os.environ.get("AOTD_ART_MAX_PIXELS", str(40 * 1000 * 1000)))
 ART_MAX_DIMENSION = int(os.environ.get("AOTD_ART_MAX_DIMENSION", "10000"))
 
+# --- Cover cache (covercache.py) ---------------------------------------------
+# The ONE exception to hotlink mode, owner-approved 2026-10-05: the host keeps its own
+# copy of Cover Art Archive 500px thumbnails for TODAY's and TOMORROW's records, so
+# the first card on Today doesn't wait 1-4.5 s (sometimes a 503 after 16 s) on the
+# archive's two redirects. CAA images only — never Discogs, never Apple. Rolling
+# window, re-fetched every cycle, a takedown blocklist; see covercache.py.
+#   AOTD_COVER_CACHE          : 1 on, 0 off. Unset = on exactly in hotlink mode
+#                               (AOTD_CACHE_ART_BYTES=0, i.e. the hosted app), so
+#                               staging and prod get it with no dashboard step and a
+#                               local run doesn't fetch thousands of covers.
+#   AOTD_COVER_CACHE_DIR      : where the thumbnails live (default <data>/covers);
+#                               a cache — `rm -rf` it at any time, it refills.
+#   AOTD_COVER_CACHE_MAX_MB   : hard cap on the cache's size (default 600).
+#   AOTD_COVER_CACHE_MIN_FREE_MB : never write while the disk has less free than
+#                               this (default 2048) — staging runs ~3 GB free, and
+#                               the rsync pre-flight needs room for its temp copies.
+#   AOTD_COVER_CACHE_MAX_AGE_H : a thumbnail older than this is re-fetched, and one
+#                               the archive no longer serves is deleted (default 24).
+#   AOTD_COVER_CACHE_DELAY    : seconds between fetches, to be polite to CAA (0.5).
+#   AOTD_COVER_BLOCKLIST      : takedown list, one MusicBrainz id per line
+#                               (default <data>/cover_blocklist.txt).
+_cover_flag = os.environ.get("AOTD_COVER_CACHE", "")
+COVER_CACHE_ENABLED = (_cover_flag not in ("0", "false", "False") if _cover_flag
+                       else not CACHE_ART_BYTES)
+COVER_CACHE_DIR = Path(os.environ.get("AOTD_COVER_CACHE_DIR", DATA_DIR / "covers"))
+COVER_CACHE_MAX_MB = int(os.environ.get("AOTD_COVER_CACHE_MAX_MB", "600"))
+COVER_CACHE_MIN_FREE_MB = int(os.environ.get("AOTD_COVER_CACHE_MIN_FREE_MB", "2048"))
+COVER_CACHE_MAX_AGE_H = float(os.environ.get("AOTD_COVER_CACHE_MAX_AGE_H", "24"))
+COVER_CACHE_DELAY = float(os.environ.get("AOTD_COVER_CACHE_DELAY", "0.5"))
+COVER_BLOCKLIST = Path(os.environ.get("AOTD_COVER_BLOCKLIST",
+                                      DATA_DIR / "cover_blocklist.txt"))
+
 # --- Artist bios (A4) -------------------------------------------------------
 # Optional, no-key artist blurbs shown only when the user opens the bio door in
 # an album's story view (pull-only, never auto-surfaced). Sourced from the

@@ -29,7 +29,7 @@ to break a door open. A missing table, a locked file, a read-only disk — all d
 "no number", never to an exception on the request path.
 """
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import config
 import sqliteconn
@@ -116,6 +116,92 @@ def record_spotify_search(outcome, *, now=None):
         pass
 
 
+# The on-demand door's PAUSE (2026-10-07, owner: "gracefully let users know"). When
+# Spotify stops answering — a rate limit, an outage, a refused credential — every door
+# open used to make a fresh failing call (up to ~12s of spinner each) and, during a 429
+# ban, fed the penalty. Now a short run of errors pauses the request path's lookups for a
+# while; a paused lookup is "couldn't check", never "not on Spotify". One row, shared by
+# every worker on this host. The Mac's prewarm never reads it (it has its own patience
+# and its own 10-in-a-row stop).
+_PAUSE_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS spotify_pause (id INTEGER PRIMARY KEY CHECK (id = 1), "
+    "streak INT NOT NULL DEFAULT 0, first_err_at TEXT, last_err_at TEXT, "
+    "paused_until TEXT, pauses INT NOT NULL DEFAULT 0, reason TEXT)")
+# Errors this close together count as one run; this many in a run pause the lookups.
+SPOTIFY_PAUSE_AFTER = 3
+_STREAK_WINDOW_MIN = 10
+# The first pause is short; each one that follows without a success in between doubles,
+# up to two hours (a 429 ban is measured in hours — no point knocking every 15 minutes).
+_PAUSE_FIRST_MIN = 15
+_PAUSE_MAX_MIN = 120
+
+
+def _iso(dt):
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse(ts):
+    try:
+        return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def spotify_pause_state(*, now=None):
+    """{paused, until, since, reason, streak} for the on-demand Spotify lookups. `since`
+    is when the run of errors began. Never raises: an unreadable table reads as not
+    paused (a counter can't be the thing that blocks a lookup)."""
+    now_dt = now or datetime.now(timezone.utc)
+    try:
+        with _conn() as c:
+            c.execute(_PAUSE_SCHEMA)
+            row = c.execute("SELECT * FROM spotify_pause WHERE id = 1").fetchone()
+    except Exception:  # noqa: BLE001
+        row = None
+    if row is None:
+        return {"paused": False, "until": None, "since": None, "reason": None, "streak": 0}
+    until = _parse(row["paused_until"])
+    return {"paused": bool(until and until > now_dt), "until": row["paused_until"],
+            "since": row["first_err_at"], "reason": row["reason"], "streak": row["streak"]}
+
+
+def note_spotify_outcome(err, *, now=None):
+    """Record one on-demand lookup's outcome. A success clears everything; an error
+    extends the run, and SPOTIFY_PAUSE_AFTER errors within _STREAK_WINDOW_MIN of each
+    other pause the lookups (15 min, doubling per repeat pause, at most 2 h). Once paused,
+    the first failure after the pause ends pauses again — no success in between means
+    the trouble hasn't passed. Returns the new state. Never raises."""
+    now_dt = now or datetime.now(timezone.utc)
+    try:
+        with _conn() as c:
+            c.execute(_PAUSE_SCHEMA)
+            row = c.execute("SELECT * FROM spotify_pause WHERE id = 1").fetchone()
+            if not err:
+                c.execute("INSERT OR REPLACE INTO spotify_pause (id, streak, pauses) "
+                          "VALUES (1, 0, 0)")
+            else:
+                last = _parse(row["last_err_at"]) if row else None
+                fresh = last is None or (now_dt - last).total_seconds() > _STREAK_WINDOW_MIN * 60
+                pauses = row["pauses"] if row else 0
+                streak = 1 if fresh else row["streak"] + 1
+                # Still in trouble (paused before, no success since): keep the original
+                # start, and one more failure pauses again rather than three.
+                first = (row["first_err_at"] if row and row["first_err_at"] and
+                         (pauses or not fresh) else _iso(now_dt))
+                until = row["paused_until"] if row else None
+                if streak >= SPOTIFY_PAUSE_AFTER or pauses:
+                    minutes = min(_PAUSE_MAX_MIN, _PAUSE_FIRST_MIN * (2 ** pauses))
+                    until = _iso(now_dt + timedelta(minutes=minutes))
+                    pauses += 1
+                c.execute(
+                    "INSERT OR REPLACE INTO spotify_pause (id, streak, first_err_at, "
+                    "last_err_at, paused_until, pauses, reason) VALUES (1,?,?,?,?,?,?)",
+                    (streak, first, _iso(now_dt), until, pauses, "not answering"))
+    except Exception:  # noqa: BLE001
+        pass
+    return spotify_pause_state(now=now_dt)
+
+
 def spotify_burn_today(*, now=None):
     """{day, searches, filled, miss, err, last_at} for today (UTC — the same clock the
     quota resets on). Zeros when nothing has been spent yet; None only if the DB itself
@@ -187,6 +273,62 @@ def usage_totals():
     except Exception:  # noqa: BLE001
         return {"keys": {}, "since": None}
     return {"keys": {r["key"]: r["n"] for r in rows}, "since": since}
+
+
+def usage_by_local_day(days, tz_name, *, now=None):
+    """Per-key counts for each of the last `days` LOCAL calendar days (the reader's zone,
+    config.APP_TZ) — the operator Log's rows (2026-10-07). Built from the UTC-hour buckets,
+    each hour placed on the local day it falls in, so a day runs midnight to midnight
+    Eastern rather than UTC. Days older than the hourly table's first hour fall back to the
+    UTC day table and are listed in `approx` (their edges are off by the zone offset).
+    -> {"days": {"YYYY-MM-DD": {key: n}}, "approx": [day, ...]}. Never raises."""
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+    out = {"days": {}, "approx": []}
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:  # noqa: BLE001
+        tz = timezone.utc
+    now_dt = now or datetime.now(timezone.utc)
+    today = now_dt.astimezone(tz).date()
+    first = today - timedelta(days=int(days) - 1)
+    start_utc = datetime(first.year, first.month, first.day, tzinfo=tz).astimezone(timezone.utc)
+    for i in range(int(days)):
+        out["days"][(first + timedelta(days=i)).isoformat()] = {}
+    try:
+        with _conn() as c:
+            c.execute(_USAGE_SCHEMA)
+            c.execute(_USAGE_HOURLY_SCHEMA)
+            earliest = c.execute("SELECT MIN(hour) FROM usage_hourly").fetchone()[0]
+            rows = c.execute("SELECT hour, key, n FROM usage_hourly WHERE hour >= ?",
+                             (start_utc.strftime("%Y-%m-%dT%H"),)).fetchall()
+            day_rows = c.execute("SELECT day, key, n FROM usage_counter WHERE day >= ?",
+                                 (first.isoformat(),)).fetchall()
+    except Exception:  # noqa: BLE001
+        return out
+    covered_from = None
+    if earliest:
+        try:
+            covered_from = datetime.strptime(earliest, "%Y-%m-%dT%H").replace(
+                tzinfo=timezone.utc).astimezone(tz).date() + timedelta(days=1)
+        except ValueError:
+            covered_from = None
+    for r in rows:
+        try:
+            d = datetime.strptime(r["hour"], "%Y-%m-%dT%H").replace(
+                tzinfo=timezone.utc).astimezone(tz).date().isoformat()
+        except ValueError:
+            continue
+        bucket = out["days"].get(d)
+        if bucket is not None and (covered_from is None or d >= covered_from.isoformat()):
+            bucket[r["key"]] = bucket.get(r["key"], 0) + r["n"]
+    for r in day_rows:
+        d = r["day"]
+        if d in out["days"] and (covered_from is None or d < covered_from.isoformat()):
+            out["days"][d][r["key"]] = out["days"][d].get(r["key"], 0) + r["n"]
+            if d not in out["approx"]:
+                out["approx"].append(d)
+    return out
 
 
 def usage_in_range(hours, *, now=None):

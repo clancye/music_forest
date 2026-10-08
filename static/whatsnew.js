@@ -45,6 +45,9 @@
   // Keep each line to one plain sentence — this is read by someone who just wanted to
   // know why a button moved, not a release engineer.
   const ENTRIES = [
+    { v: 339, tier: 3, text: "Genre and Year are one button now: Filter. Inside it, Tags and Year sit side by side, and one button shows how many records are left." },
+    { v: 339, tier: 3, text: "The top of the screen just says which day you're looking at. The Music Forest logo is gone; Today is always in the bar at the bottom." },
+    { v: 339, tier: 3, text: "On Notebook and Explore, the search box sits at the top, beside the menu (☰)." },
     { v: 332, tier: 3, text: "Genre is one list of every tag on today's records — A to Z with a letter index, or rarest first — instead of tags sorted into our own genre groups. Tags spelled two ways, like \u201cpost rock\u201d and \u201cpost-rock\u201d, are one row." },
     { v: 331, tier: 3, text: "The button that moves you on to the next record is called Next now, and the records you've moved past are under Seen." },
     { v: 331, tier: 3, text: "The Genre list starts with the odd corners — the uncategorised styles, then the smallest genres — and works up to the biggest." },

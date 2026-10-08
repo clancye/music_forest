@@ -6,9 +6,11 @@
  * always-unfiltered escape hatch). Since v335 the ticked Genre-screen tags
  * (genreTags) are the ONLY genre input: the hidden-bucket set (genreFilter) is gone,
  * and a leftover `bucket` field on a record is never read. Around it: the deck filter
- * still composes tags AND era AND year span, the Genre pill's tally counts tags, the
- * filtered-empty state names what was ticked as the Genre screen labels it (v336:
- * "post-rock", not its merged key "postrock"), and Clear filters empties both facets.
+ * still composes tags AND era AND year span; the one Filter pill's tally counts
+ * everything set and each tab counts its own (v339: Genre + Year became Filter); the
+ * filtered-empty state names what was set as the Filter screen labels it (v336:
+ * "post-rock", not its merged key "postrock"); and Clear filters empties tags, eras AND
+ * the year span (v339 — the span used to survive it).
  * We lift the shipped functions from app.js and run them in isolation.
  *
  * Run: node tests/js/genre-filter.test.mjs
@@ -42,21 +44,27 @@ const code = [
   lift(/\nfunction styleIndex\(\) \{[\s\S]*?\n\}/, "styleIndex"),
   lift(/\nfunction tagLabel\(k\) \{[\s\S]*?\n\}/, "tagLabel"),
   lift(/\nfunction applyGenreFilter\(list\) \{[\s\S]*?\n\}/, "applyGenreFilter"),
+  lift(/\nfunction applyYearFilters\(list, \{ decades = true \} = \{\}\) \{[\s\S]*?\n\}/, "applyYearFilters"),
   lift(/\nfunction applyDeckFilters\(list\) \{[\s\S]*?\n\}/, "applyDeckFilters"),
   lift(/\nfunction updateGenreTally\(\) \{[\s\S]*?\n\}/, "updateGenreTally"),
+  lift(/\nlet _firstRun = false;[^\n]*/, "_firstRun"),   // v341: the empty state yields to the first-run picker
+  lift(/\nfunction yearSpanLabel\(\) \{[\s\S]*?\n\}/, "yearSpanLabel"),
+  lift(/\nfunction filterSuggestionHtml\(lead\) \{[\s\S]*?\n\}/, "filterSuggestionHtml"),
   lift(/\nfunction renderGenreFilteredEmpty\(\) \{[\s\S]*?\n\}/, "renderGenreFilteredEmpty"),
   lift(/\nfunction clearGenreFilter\(\) \{[\s\S]*?\n\}/, "clearGenreFilter"),
+  lift(/\nfunction resetYearSpan\(\) \{[\s\S]*?\n\}/, "resetYearSpan"),
   "return { applyGenreFilter, applyDeckFilters, updateGenreTally, renderGenreFilteredEmpty,",
   "  clearGenreFilter, tagKey, genreTags, deckEras, els, choice,",
   "  setDay:(all)=>{deckState={all}},",
   "  setDig:(v)=>{digMode=v}, setYears:(a,b)=>{deckYearFrom=a; deckYearTo=b},",
+  "  years:()=>[deckYearFrom, deckYearTo],",
   "  refilters:()=>refilters };",
 ].join("\n");
 // eslint-disable-next-line no-new-func
 const api = new Function(code)();
 const { applyGenreFilter, applyDeckFilters, updateGenreTally, renderGenreFilteredEmpty,
   clearGenreFilter, tagKey, genreTags, deckEras, els, choice, setDay, setDig, setYears,
-  refilters } = api;
+  years, refilters } = api;
 
 let passed = 0, failed = 0;
 function ok(c, m) { if (c) { passed++; } else { failed++; console.error("  ✗ FAIL:", m); } }
@@ -106,21 +114,29 @@ setDig(true);
 ok(applyDeckFilters(day).length === day.length, "dig ignores tags, eras and the year span");
 setDig(false); setYears(null, null); tick();
 
-// The Genre pill's tally counts the ticked tags; the Year pill's counts eras + a span.
-els.genreTally = { hidden: false, textContent: "" };
-els.dateTally = { hidden: false, textContent: "" };
+// v339: the one Filter pill's tally counts everything set; the Filter screen's Tags tab
+// counts ticked tags and its Year tab counts eras + a span (one, however wide).
+els.filterTally = { hidden: false, textContent: "" };
+els.sbTagsN = { hidden: false, textContent: "" };
+els.sbYearN = { hidden: false, textContent: "" };
 updateGenreTally();
-ok(els.genreTally.hidden && els.dateTally.hidden, "no ticks, no eras -> both tallies hidden");
+ok(els.filterTally.hidden && els.sbTagsN.hidden && els.sbYearN.hidden,
+   "nothing set -> every tally hidden");
 tick("jazz", "rock"); deckEras.add("1970s"); setYears(1960, null);
 updateGenreTally();
-ok(!els.genreTally.hidden && els.genreTally.textContent === " · 2", "Genre tally counts ticked tags");
-ok(!els.dateTally.hidden && els.dateTally.textContent === " · 2", "Year tally counts eras + the span");
+ok(!els.filterTally.hidden && els.filterTally.textContent === " · 4", "Filter tally counts tags + eras + the span");
+ok(!els.sbTagsN.hidden && els.sbTagsN.textContent === " · 2", "Tags tab counts ticked tags");
+ok(!els.sbYearN.hidden && els.sbYearN.textContent === " · 2", "Year tab counts eras + the span");
+renderGenreFilteredEmpty();
+ok(choice.innerHTML.includes("Nothing today in jazz, rock, 1970s, 1960–…."), "empty state names an open-ended span");
 setYears(null, null);
 
 // The filtered-empty state names what was ticked, tags then eras.
 renderGenreFilteredEmpty();
 ok(choice.innerHTML.includes("Nothing today in jazz, rock, 1970s."), "empty state names the ticks");
 ok(choice.innerHTML.includes("data-clear-genres"), "empty state offers Clear filters");
+ok(choice.innerHTML.includes("data-change-filters"), "…and Change filters (2026-10-05: filters first)");
+ok(!choice.innerHTML.includes("data-goto-explore"), "…and nothing else competes with the filter suggestion");
 
 // ...by the label the Genre screen shows, not the merged key the filter holds: ticking
 // the post-rock row stores "postrock", and the empty state must still say "post-rock".
@@ -131,10 +147,16 @@ renderGenreFilteredEmpty();
 ok(choice.innerHTML.includes("Nothing today in post-rock, dreampop, 1970s."),
    "empty state shows the row's label, and the key for a tag absent today");
 
-// Clear filters empties both facets and re-derives the deck once; a no-op when clear.
+// Clear filters empties tags, eras and the year span (its two boxes too), and re-derives
+// the deck once; a no-op when clear.
+els.yearFrom = { value: "1960" }; els.yearTo = { value: "1980" };
+els.yearRangeClear = { classList: { add() {}, remove() {}, toggle() {} } };
+setYears(1960, 1980);
 const before = refilters();
 clearGenreFilter();
 ok(!genreTags.size && !deckEras.size, "Clear filters empties tags and eras");
+ok(years()[0] == null && years()[1] == null && els.yearFrom.value === "" && els.yearTo.value === "",
+   "Clear filters empties the year span and its boxes");
 ok(refilters() === before + 1, "Clear filters re-derives the deck");
 clearGenreFilter();
 ok(refilters() === before + 1, "Clear filters with nothing set does nothing");

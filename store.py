@@ -381,6 +381,28 @@ class SQLiteStore:
                            for r in rows],
                 "baseline": {"keeps": base["keeps"] or 0, "notes": base["notes"] or 0}}
 
+    def log_events(self, days, tz_name):
+        """The local build's share of the operator Log: notes and "Opened in" entries per
+        day (counts only). There are no accounts, requests or hosted feedback here, so
+        those stay empty — the Log shows nothing rather than a made-up zero. Dated by
+        server-arrival time, in UTC (SQLite stores ISO strings). -> (days, errors), as the
+        Postgres store."""
+        start = _days_ago(int(days))[:10]
+        day = "substr(COALESCE(created_at, updated_at), 1, 10)"
+        out = {}
+        try:
+            with self._conn() as c:
+                rows = c.execute(
+                    f"SELECT {day} AS d, SUM(kind = 'note') AS n, SUM(kind = 'opened') AS o "
+                    "FROM journal_rows WHERE deleted_at IS NULL AND kind IN ('note','opened') "
+                    f"AND {day} >= ? GROUP BY d", (start,)).fetchall()
+        except Exception as e:  # noqa: BLE001
+            return out, [f"notes: {e}"]
+        for r in rows:
+            out[r["d"]] = {"notes": r["n"] or 0, "opened": r["o"] or 0, "joined": 0,
+                           "asked": [], "feedback": []}
+        return out, []
+
     def access_request_counts(self):
         """Counts by status for the Usage tab's Guests row ({new, invited,
         declined}). Metadata only — no address leaves this query."""
@@ -717,6 +739,61 @@ class PostgresStore:
             except Exception:  # noqa: BLE001 - pre-0008 store: created_at absent
                 continue
         return {"available": False}
+
+    def log_events(self, days, tz_name):
+        """What happened each LOCAL day (the operator Log, 2026-10-07): notes and "Opened
+        in" entries written (counts — the ciphertext is never read), accounts that joined
+        (auth.users.confirmed_at — the invite's true join moment, see _invite_funnel),
+        people who asked to join (their addresses, for the operator's Inbox jump), and
+        feedback received (ids + whether a guest or an account sent it). Each part is its
+        own statement and its own guard, so one missing table degrades just that part —
+        but never silently: a part that failed is named in `errors`, so a broken query
+        reads as "couldn't read" in the Log rather than as a quiet day.
+        -> ({"YYYY-MM-DD": {"notes", "opened", "joined", "asked": [...], "feedback": [...]}},
+            ["part: first line of the error", ...])"""
+        out, errors = {}, []
+        day_of = lambda col: f"to_char(({col} AT TIME ZONE %s), 'YYYY-MM-DD')"
+        since = "now() - (%s || ' days')::interval"
+
+        def run(part, sql, args):
+            try:
+                with self._cursor() as cur:
+                    cur.execute(sql, args)
+                    return cur.fetchall()
+            except Exception as e:  # noqa: BLE001 - one part failing never sinks the Log
+                errors.append(f"{part}: {(str(e).splitlines() or [type(e).__name__])[0]}")
+                return None
+
+        def slot(d):
+            return out.setdefault(d, {"notes": 0, "opened": 0, "joined": 0,
+                                      "asked": [], "feedback": []})
+        for col in ("created_at", "updated_at"):
+            rows = run("notes", f"SELECT {day_of(col)} AS d, "
+                       "COUNT(*) FILTER (WHERE kind = 'note'), "
+                       "COUNT(*) FILTER (WHERE kind = 'opened') "
+                       "FROM journal_rows WHERE deleted_at IS NULL "
+                       f"AND kind IN ('note','opened') AND {col} >= {since} GROUP BY 1",
+                       (tz_name, int(days)))
+            if rows is not None:
+                # A store before 0008 has no created_at, so the updated_at retry is the
+                # expected path there — that first miss isn't news.
+                errors.clear()
+                for d, n, o in rows:
+                    slot(d)["notes"], slot(d)["opened"] = n, o
+                break
+        for d, n in run("joined", f"SELECT {day_of('confirmed_at')}, COUNT(*) FROM auth.users "
+                        f"WHERE confirmed_at >= {since} GROUP BY 1",
+                        (tz_name, int(days))) or []:
+            slot(d)["joined"] = n
+        for d, email in run("asked", f"SELECT {day_of('created_at')}, email FROM access_requests "
+                            f"WHERE created_at >= {since} ORDER BY created_at",
+                            (tz_name, int(days))) or []:
+            slot(d)["asked"].append(email)
+        for d, fid, guest in run("feedback", f"SELECT {day_of('created_at')}, id, user_id IS NULL "
+                                 f"FROM feedback WHERE created_at >= {since} ORDER BY id",
+                                 (tz_name, int(days))) or []:
+            slot(d)["feedback"].append({"id": fid, "guest": bool(guest)})
+        return out, errors
 
     def access_request_counts(self):
         """Counts by status for the Usage tab's Guests row. Metadata only — no

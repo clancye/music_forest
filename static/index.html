@@ -44,71 +44,25 @@
      (openWanderMap) is still reachable from the wander breadcrumb (#wanderBar,
      data-wmap) while you're actively wandering — pull, not a permanent affordance. -->
 <header>
-  <!-- BRAND. FB#101 (2026-08-04): the line under the wordmark is no longer the fixed
-       tagline on every surface. It's per-surface now — "Released on this day in
-       history" on Today, nothing on Notebook and Explore — set by setSubtitleFor() in
-       app.js. Today's text is seeded here so the first paint isn't blank.
-
-       2026-08-07 (owner): a mark-plus-STACKED-wordmark lockup — the icon stands as tall
-       as the two lines beside it, and the wordmark and the line under it left-align to
-       each other as one block. This is why #subtitle now lives INSIDE #brandHome: the
-       two lines have to be one column for the mark to sit against them. Tapping the
-       line therefore also returns you to Today, which is a widening of the home
-       affordance BRAND.md describes as "icon + wordmark" — accepted deliberately.
-
-       It also dissolves a problem rather than compensating for one. Centred, the icon
-       and wordmark were centred as a UNIT, so the wordmark itself sat 29px right of
-       centre; the first fix for that was a translateX, which is the kind of arithmetic
-       that rots. As one left-aligned lockup there is nothing to offset. -->
+  <!-- BRAND. 2026-10-04 (owner, docs/mockups/header round 2): the masthead is ONE row
+       and carries no logo. Today shows the day in the quiet eyebrow — "Released on
+       October 4" in mono capitals, as large as an iPhone mini allows (15.5px) and sitting
+       on the ☰ circle's bottom edge — set by setSubtitleFor() in app.js from the deck's own
+       day. Notebook and Search have no masthead row since v353: their one search bar is
+       at the foot of the screen (#bottomBar, above the dock), so the row is hidden there.
+       Round 1 (v338, staging only) kept the fir in a circle as the tap back to Today; the
+       owner dropped it ("remove the logo all together"). Getting back to Today is the
+       dock's Today tab. "Music Forest" stays as the page's <h1> for screen readers and the
+       heading outline (ACC1), just not drawn. -->
   <div class="brand">
-    <!-- #9/#10: icon + wordmark are one home affordance — tap to return to Today. -->
-    <div id="brandHome" class="brand-home" role="button" tabindex="0"
-      title="Music Forest — back to Today" aria-label="Music Forest — back to Today">
-      <img class="brand-icon" src="/static/icons/icon-192.png" alt="" width="40" height="40">
-      <div class="brand-text">
-        <h1>Music&nbsp;Forest</h1>
-        <p id="subtitle">Released on this day in history</p>
-      </div>
-    </div>
+    <h1 class="sr-only">Music Forest</h1>
+    <p id="subtitle" class="day-line"></p>
   </div>
-  <div class="controls">
-    <!-- Pick the services you use. Doing so both filters the Listen door to those
-         AND surfaces only albums you can play on them (the pick + browse). Pick
-         nothing -> every album surfaces (default). Dig mode always ignores it. We
-         only offer platforms we can confirm (Spotify / Apple / YouTube / Deezer);
-         Spotify is warmed for the current day, so its filter is meaningful today and
-         unknown for distant days (dig always full). -->
-    <!-- Owner (2026-07-03): the old single hint ("Show only albums I can play
-         on — drag to set which plays first:") crammed three ideas into one
-         small line. Now: a plain button ("Where you listen", U26 2026-07-12; was
-         "Select platforms"), a lead that says what to do, and one short line per
-         effect — the drag line only appears once there's an order to set. -->
-    <details class="listen-pref" id="listenPref">
-      <summary title="Choose the services you use">Where you listen</summary>
-      <div class="listen-pref-box">
-        <p class="listen-pref-lead">Choose the services you use</p>
-        <p class="listen-pref-hint">Only albums you can play there will surface —
-          choose none to see everything.</p>
-        <p class="listen-pref-hint hidden" id="listenPrefDragHint">Drag your
-          services to set which plays first.</p>
-        <div class="pref-list" id="prefList" role="list"></div>
-        <p class="listen-pref-note" id="listenPrefNote" aria-live="polite"></p>
-        <!-- U21 (owner 2026-07-05): "dig deeper" folded in here — it's the other end
-             of the same dial (the platform toggles narrow the pool to what you can
-             play; this widens it past availability entirely). Shown only when the
-             pool is serving (updateDigVisibility toggles .hidden); same #digWrap /
-             #digToggle the choice-actions used, so all its wiring rides along. -->
-        <div class="dig-opt hidden" id="digWrap">
-          <label class="dig-label">
-            <input type="checkbox" id="digToggle">
-            <span>Dig deeper</span>
-          </label>
-          <p class="dig-desc">Also include records with no confirmed way to listen
-            yet — the full set released on this day, not just the listenable ones.</p>
-        </div>
-      </div>
-    </details>
-  </div>
+  <!-- (The "Select listening platforms" chooser that sat here, and moved into the ☰
+       in U20 / FB#105, was retired in v354 — owner 2026-10-05: Today's Listen row
+       already opens the same choices, Everything included, and now reorders them
+       by drag. "Dig deeper" went with it; it stays at the end of the day's
+       records and on every filtered-empty screen, where it was always offered.) -->
 </header>
 
 <!-- TABS (FB#105, owner 2026-08-05): "let's move the today/notebook/explore tabs to
@@ -133,14 +87,56 @@
      while the last two change the output of the first page." They read as two
      different kinds of control — and as of FB#105 they aren't even on the same end of
      the screen. -->
+<!-- THE BOTTOM BAR (v353, owner 2026-10-05, docs/mockups/search N1 + S1): Notebook's and
+     Search's one search bar, at the foot above the dock where a thumb is. The box is the
+     same #rememberHead slot the masthead used to hold (showMode swaps its two inputs), so
+     the text searches are untouched. It understands dates: on the Notebook a date-like
+     entry ("oct", "oct 5", "last week", "sep 1 - oct 5") offers to narrow by date, with
+     how many entries each range holds (#barSugg), and the picked range becomes a chip;
+     on Search a day ("oct 5", "10/5") offers the records released then, any year. The
+     Notebook's + opens a free note — the job of the ✎ Write a note pill it replaced.
+     While the keyboard is up the bar rides on it (wireKeyboardLift). -->
+<div id="bottomBar" class="bottom-bar">
+  <div id="barSugg" class="bar-sugg hidden" role="listbox" aria-label="Suggestions"></div>
+  <div class="bar-row">
+    <div id="rememberHead" class="remember-head hidden">
+      <div class="filters">
+        <svg class="bar-ico" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+        <span id="nbDateChip" class="bar-chip hidden"></span>
+        <span id="dayChip" class="bar-chip hidden"></span>
+        <input type="search" id="journalSearch" aria-label="Find in your notebook — notes, records, or a date"
+          placeholder="Find in your notebook…" enterkeyhint="search" autocomplete="off">
+        <form class="forest-find hidden" id="forestFind">
+          <input type="search" id="forestSearchInput"
+            aria-label="Search every album or song by artist, title, label, or genre — or a day"
+            placeholder="Search artist, album, song, label…" enterkeyhint="search" autocomplete="off">
+        </form>
+      </div>
+    </div>
+    <button type="button" id="nbPlus" class="bar-plus hidden" aria-label="Write a note"
+      title="Write a note">+</button>
+  </div>
+</div>
+
 <nav class="tabs-row" aria-label="Main">
   <div class="tabs">
+    <!-- 2026-10-04: ONE sage bar that glides between the tabs (and follows a finger
+         swiping between them — wireTabSwipe in app.js), instead of each tab drawing
+         its own top rule. Positioned by --tab-pos, set in showMode. -->
+    <span class="tabs-ind" aria-hidden="true"></span>
     <button class="tab active" data-mode="decide">Today</button>
     <button class="tab" data-mode="journal">Notebook</button>
     <!-- N3: Explore is its own top tab now (it used to be a pill inside the
          Notebook head; the head lost its segmented control when it became
          one trail). -->
-    <button class="tab" data-mode="forest">Explore</button>
+    <button class="tab" data-mode="forest">Search</button>
+    <!-- v354 (owner 2026-10-05): the ☰ is a tab now — a place you go, swiped onto
+         from Search like the others — and its page lists the options the way the
+         Notebook lists entries. Hidden until auth-ui mounts a menu into #menuPage
+         (the local single-user build mounts none, so it has three tabs). -->
+    <button class="tab tab-menu hidden" data-mode="menu" data-label="Menu"
+      aria-label="Menu" title="Menu">☰</button>
   </div>
 </nav>
 
@@ -174,57 +170,20 @@
        Kept inside #decide so they hide with the view on a tab switch; the
        `body.is-decide` display rule still holds for anything that reads it. -->
   <div class="narrow-today">
-    <!-- A8 Phase 2: the opt-in genre filter for Today. The balanced draw (Phase 1)
-         already varies the deck for everyone; this is the deliberate "just show me
-         X" control. Client-side only — the day payload already carries each record's
-         own tags, so the per-tag counts and the filtering need no round-trip.
-         Today-only (CSS keys off body.is-decide); dig mode ignores it (honesty rule).
-         A record with no tags can't match a tick — filtering honestly hides it. -->
-    <!-- Owner 2026-07-26: "Narrow today" split into two plainly-named controls, since the
-         single label read as unclear. "By genre" = the genre + style list; "By year" =
-         the F31 decade chips + a year range + a door to Explore's exact-day searcher (F33).
-         Same client-side filter model (dig ignores both; unknown genre / no-year → no chip). -->
-    <!-- Owner 2026-09-24: Genre opens the full-screen genre + style list (#styleBrowse)
-         directly. It replaced the chips popover (bucket chips, the typed style box and
-         its suggestions) at v328 — the list's "All" per genre is the old chip, its find
-         box the old typed box. A plain button, not a <details>: there's no popover. -->
-    <div class="genre-pref" id="genrePref">
-      <button type="button" class="genre-pref-pill" id="genreOpen"
-        title="Show only certain genres or styles">Genre<span class="genre-tally" id="genreTally" hidden></span></button>
+    <!-- FILTER (owner 2026-10-04, docs/mockups/header round 2 — "F2"): Genre and Year
+         are ONE button now. It opens the Filter screen (#styleBrowse) with two tabs, Tags
+         and Year, and one "Show N records" for both. Client-side only, as before: the day
+         payload already carries each record's tags and year, so counts and filtering need
+         no round-trip. Dig ignores it (honesty rule); a record with no tags can't match a
+         tick, and one with no year can't match a decade. Ticks live only while the app is
+         open — every visit starts unfiltered (owner, same day). The tally counts what's
+         set across both tabs. A plain button, not a <details>: there's no popover.
+         History: A8 Phase 2's genre chips → "Narrow today" → "By genre" + "By year"
+         (2026-07-26) → the Genre screen (v328) → this. -->
+    <div class="genre-pref" id="filterPref">
+      <button type="button" class="genre-pref-pill" id="filterOpen"
+        title="Narrow today by tags or year">Filter<span class="genre-tally" id="filterTally" hidden></span></button>
     </div>
-    <details class="genre-pref" id="datePref">
-      <summary title="Filter today by decade, a year range, or reach a specific day">Year<span class="genre-tally" id="dateTally" hidden></span></summary>
-      <div class="genre-pref-box">
-        <button type="button" class="pref-close" data-pref-close
-          title="Close" aria-label="Close">✕</button>
-        <!-- F31: decade chips actually present in today's records, each with its count.
-             Composes (AND) with genres and the year range. Hidden when a day has no year data. -->
-        <div class="era-row" id="eraRow" hidden>
-          <p class="genre-pref-lead era-lead">By decade</p>
-          <div class="genre-chips" id="eraChips" role="group" aria-label="Filter today by decade"></div>
-        </div>
-        <!-- Owner 2026-07-26: a precise complement to the decade chips — a start/stop year
-             span. Composes (AND) with the decades. -->
-        <div class="year-range" id="yearRange">
-          <p class="genre-pref-lead">Or a span of years</p>
-          <div class="year-range-row">
-            <input type="number" id="yearFrom" class="year-in" inputmode="numeric"
-              min="1900" max="2100" placeholder="from" aria-label="From year">
-            <span class="year-dash" aria-hidden="true">–</span>
-            <input type="number" id="yearTo" class="year-in" inputmode="numeric"
-              min="1900" max="2100" placeholder="to" aria-label="To year">
-            <button type="button" id="yearRangeClear" class="linkish year-clear hidden">✕ clear</button>
-          </div>
-        </div>
-        <p class="genre-pref-note" id="datePrefNote" aria-live="polite"></p>
-        <!-- F33: a door to Explore's exact-day searcher — reach any calendar day (a
-             birthday); records resolve lazily per opened record on that cold day. -->
-        <div class="date-door-row">
-          <button type="button" class="linkish date-door" id="specificDayBtn"
-            title="See records released on any calendar day — a birthday, an anniversary">See a specific day →</button>
-        </div>
-      </div>
-    </details>
     <!-- SET-ASIDE PILE (D2): how many you skipped today; pulls open the reopenable
          pile. Local, per-day and ephemeral — never synced.
          FB#105 follow-up (owner, on an iPhone 13 mini): it used to be `position: fixed`
@@ -262,7 +221,9 @@
 </section>
 
 <!-- Owner 2026-09-24: the Genre screen — a full-screen list of every genre and style tag
-     in today's records, opened by the Genre button under the record. A `.modal` so the
+     in today's records, opened by the Genre button under the record. Since 2026-10-04 it
+     is the FILTER screen, opened by Filter, with the list under its Tags tab and the old
+     Year popover under its Year tab. A `.modal` so the
      shared dialog layer (wireDialogA11y) gives it focus, the Tab trap and Escape; the
      Back button is its `.modal-close`. Ticks apply live, exactly like the chips. -->
 <div id="styleBrowse" class="modal style-browse hidden" role="dialog" aria-modal="true"
@@ -271,19 +232,51 @@
     <div class="sb-head">
       <div class="sb-top">
         <button type="button" id="sbBack" class="modal-close sb-back">‹ Back</button>
-        <h3 id="sbTitle">Genres &amp; styles</h3>
+        <h3 id="sbTitle">Filter</h3>
         <button type="button" id="sbSort" class="sb-sort">A–Z</button>
       </div>
-      <p class="sb-intro muted" id="sbIntro">Every tag on today's records, A to Z. Tick any
-        to narrow Today.</p>
+      <!-- 2026-10-04: two tabs, each carrying how many of its filters are set. The tab you
+           were on is kept for the session (renderSbTab in app.js). -->
+      <div class="sb-tabs" role="tablist" aria-label="Filter by">
+        <button type="button" role="tab" id="sbTabTags" class="sb-tab" data-sb-tab="tags"
+          aria-controls="sbPaneTags">Tags<span class="sb-tab-n" id="sbTagsN" hidden></span></button>
+        <button type="button" role="tab" id="sbTabYear" class="sb-tab" data-sb-tab="year"
+          aria-controls="sbPaneYear">Year<span class="sb-tab-n" id="sbYearN" hidden></span></button>
+      </div>
       <input type="search" id="sbSearch" class="sb-search" placeholder="Find a tag"
         autocomplete="off" aria-label="Find a tag">
     </div>
-    <!-- v332: one flat list (no genre groups) with a letter rail beside it in A–Z order;
-         rarest-first order hides the rail and groups by how rare a tag is today. -->
-    <div class="sb-body">
+    <!-- TAGS: v332's one flat list (no genre groups) with a letter rail beside it in A–Z
+         order; rarest-first order hides the rail and groups by how rare a tag is today. -->
+    <div class="sb-body" id="sbPaneTags" role="tabpanel" aria-labelledby="sbTabTags">
       <div class="sb-list" id="sbList"><!-- injected --></div>
       <nav class="sb-letters" id="sbLetters" aria-label="Jump to a letter"></nav>
+    </div>
+    <!-- YEAR: what the Year popover held (2026-07-26 → v338), moved in whole with its ids,
+         so its wiring (wireGenrePref) is unchanged. F31's decade chips actually present in
+         today's records, each with its count; a start/stop year span that composes (AND)
+         with them; and F33's door to Explore's exact-day searcher. -->
+    <div class="sb-year" id="sbPaneYear" role="tabpanel" aria-labelledby="sbTabYear" hidden>
+      <div class="era-row" id="eraRow" hidden>
+        <p class="genre-pref-lead era-lead">By decade</p>
+        <div class="genre-chips" id="eraChips" role="group" aria-label="Filter today by decade"></div>
+      </div>
+      <div class="year-range" id="yearRange">
+        <p class="genre-pref-lead">Or a span of years</p>
+        <div class="year-range-row">
+          <input type="number" id="yearFrom" class="year-in" inputmode="numeric"
+            min="1900" max="2100" placeholder="from" aria-label="From year">
+          <span class="year-dash" aria-hidden="true">–</span>
+          <input type="number" id="yearTo" class="year-in" inputmode="numeric"
+            min="1900" max="2100" placeholder="to" aria-label="To year">
+          <button type="button" id="yearRangeClear" class="linkish year-clear hidden">✕ clear</button>
+        </div>
+      </div>
+      <p class="genre-pref-note" id="datePrefNote" aria-live="polite"></p>
+      <div class="date-door-row">
+        <button type="button" class="linkish date-door" id="specificDayBtn"
+          title="See records released on any calendar day — a birthday, an anniversary">See a specific day →</button>
+      </div>
     </div>
     <div class="sb-tray">
       <div class="sb-picked" id="sbPicked"></div>
@@ -306,27 +299,18 @@
   </div>
 </div>
 
-<!-- REMEMBER HEAD (owner feedback 2026-07-04: "the buttons all move around"):
-     the ONE control cluster for the whole remember surface. Journal (Notes +
-     Choices) and Explore (the forest) share it, so the search slot and the
-     Notes/Choices/Explore pills sit in the same place in both views instead of
-     rearranging on every hop. The search slot swaps content by mode — the
-     journal filter box, or the forest's tucked-away catalog search — and the
-     pill bar stays put, with Explore carrying a real "you are here" state. -->
-<div id="rememberHead" class="remember-head hidden">
-  <!-- N3: Remember is one interleaved trail now — the segmented [Choices|Notes|
-       Explore] control is gone (Explore became its own top tab; choices + notes
-       interleave into a single stream). Writing moved to a sticky "Take a note"
-       pill at the foot of the trail (#trailPill), so the head is just the search.
-       The slot is shared with Explore: the trail filter on Remember, the catalog
-       search on Explore, swapped by mode so the cluster never rearranges. -->
-  <div class="filters">
-    <input type="search" id="journalSearch" aria-label="Search your notebook — choices and notes" placeholder="Search your notebook…">
-    <form class="forest-find hidden" id="forestFind">
-      <input type="search" id="forestSearchInput"
-        aria-label="Search every album or song by artist, title, label, or genre"
-        placeholder="Search by artist, album, song, label, or genre…">
-    </form>
+<!-- MORE WAYS TO LISTEN (v350, owner 2026-10-05, mockup A): the service half of
+     Today's Listen row. This record's other confirmed links, and your listening
+     platforms (the same choices as the first screen; since v354 the ONLY other place
+     to set them, and the place to drag them into order). A .modal so the dialog stack
+     gives it Esc, the Tab trap and focus back to the selector; the bottom-sheet shape
+     is .listen-sheet's. Content injected by app.js (renderListenSheet). -->
+<div id="listenSheet" class="modal listen-sheet hidden" role="dialog" aria-modal="true"
+     aria-labelledby="lsTitle">
+  <div class="modal-box lsh-panel">
+    <h3 id="lsTitle" class="lsh-title"></h3>
+    <button id="lsClose" type="button" class="modal-close" title="Close" aria-label="Close">✕</button>
+    <div id="lsBody"><!-- injected --></div>
   </div>
 </div>
 
@@ -336,27 +320,7 @@
      its results here. The #forest id / mode "forest" stay so the pill + wiring are
      untouched. -->
 <section id="forest" class="view hidden">
-  <h2 class="sr-only">Explore the catalog</h2>
-  <!-- F33: the exact-day searcher. Pick any calendar day (a birthday) to see the
-       records released then, ANY year — the on-this-day mechanic pointed at a date
-       you choose. Uses the cached pool (no live Spotify/Apple query); each record
-       resolves its links lazily only when opened. -->
-  <!-- Hidden until you arrive via Today's "By date → a specific day" (owner 2026-07-26):
-       it read as a stray dropdown parked under the search. gotoSpecificDay() reveals it. -->
-  <div class="forest-day-row hidden" id="forestDayRow">
-    <span class="fdr-label">Records released on a specific day, any year:</span>
-    <!-- Owner 2026-07-26: plain month/day fields you type in — the native date picker's
-         calendar was clumsy and irrelevant (the year is ignored; it's a month+day). The
-         fields sit on their own row under the label so the long lead-in can't crowd them. -->
-    <div class="fdr-fields">
-      <input type="number" id="forestDayMonth" class="fdr-num" inputmode="numeric" min="1" max="12"
-        placeholder="MM" aria-label="Month (1–12)">
-      <span class="fdr-sep" aria-hidden="true">/</span>
-      <input type="number" id="forestDayDay" class="fdr-num" inputmode="numeric" min="1" max="31"
-        placeholder="DD" aria-label="Day (1–31)">
-      <button type="button" id="forestDayClear" class="linkish hidden">✕ clear</button>
-    </div>
-  </div>
+  <h2 class="sr-only">Search the catalog</h2>
   <div id="forestBody"><!-- search results injected --></div>
 </section>
 
@@ -413,16 +377,14 @@
   <p class="guest-notebook-note">This lives only in this browser — not synced or backed up.
     <button type="button" class="linkish" data-guest-keep
       title="Start your Notebook — sync it, back it up, and keep it for good">Keep it for good →</button></p>
-  <!-- v9 (owner 2026-10-03): opened records can be hidden; the choice is remembered on
-       this device. renderTrail shows the toggle only once there's an opened entry. -->
-  <div class="trail-tools">
-    <button type="button" id="openedToggle" class="opened-toggle on" aria-pressed="true" hidden>
-      <span class="ot-switch" aria-hidden="true"></span>Show opened</button>
+  <!-- FILTER BY DATE (owner 2026-10-05; v353): the range picked in the bottom bar. These
+       two stay as the filter's state — nbDateRange() reads them — but are never shown:
+       the bar's date suggestions (and its "Pick dates…") set them. -->
+  <div class="nb-dates" hidden>
+    <input type="date" id="nbFrom" aria-label="From date" tabindex="-1">
+    <input type="date" id="nbTo" aria-label="To date" tabindex="-1">
   </div>
   <div id="trail" class="notebook-trail"><!-- interleaved dated entries injected --></div>
-  <div class="trail-foot">
-    <button type="button" id="trailPill" class="take-note-pill">✎ Write a note</button>
-  </div>
   <!-- #48 (v2): the selection bar. Appears while long-press selection is active;
        deletes the checked entries (notes + kept records) as one batch. -->
   <div id="trailSelectBar" class="trail-select-bar hidden" role="toolbar"
@@ -433,6 +395,14 @@
       <button type="button" id="trailSelectDelete" class="tsb-delete">Delete</button>
     </div>
   </div>
+</section>
+<!-- MENU (v354, owner 2026-10-05): what the ☰ popover held, as a page of its own —
+     the dock's fourth tab. Rows grouped under small dated-style headings, like the
+     Notebook's entries. auth-ui.js mounts the guest or the account version into
+     #menuPage (and the Feedback button and the colophon with it). -->
+<section id="menu" class="view hidden">
+  <h2 class="sr-only">Menu</h2>
+  <div id="menuPage" class="menu-page"></div>
 </section>
 </main>
 
@@ -450,12 +420,17 @@
 <footer>
   <span><a href="/privacy" class="pull-link" target="_blank" rel="noopener">Privacy</a>
     · <a href="/terms" class="pull-link" target="_blank" rel="noopener">Terms</a></span>
+  <!-- v355: the sources, credited (moved here from About; see the note at its end). -->
+  <span class="credits">Data: Discogs · <a href="https://musicbrainz.org/" class="pull-link"
+    target="_blank" rel="noopener">MusicBrainz</a> · Deezer<br>Cover art: <a
+    href="https://coverartarchive.org/" class="pull-link" target="_blank"
+    rel="noopener">Cover Art Archive</a> · Apple</span>
   <span class="build-tag" id="buildTag" title="App version"></span>
 </footer>
 
 <!-- ABOUT (FB#97, was U19's "About the data"): the ☰ menu's About door — why this
-     exists, then the honest account of where everything on screen comes from. Same
-     calm card shape as the welcome. Pull-only; it never opens itself. -->
+     exists, in the owner's own words and nothing else (v355). Same calm card shape as
+     the welcome. Pull-only; it never opens itself. -->
 <div id="dataModal" class="modal onboard-modal hidden" role="dialog"
      aria-modal="true" aria-label="About Music Forest">
   <div class="onboard-card">
@@ -465,7 +440,8 @@
     <div class="onboard-body about-data">
       <!-- ══ THE OWNER'S PIECE — HIS WORDS, VERBATIM ══════════════════════════
            Landed 2026-08-07, replacing the placeholder that held this slot (his
-           own welcome-screen copy). FB#97 asked for exactly this: "it could go to
+           own welcome-screen copy). Rewritten by the owner 2026-10-05, in a plain-text file
+           and placed here verbatim — only the paragraph / list / link markup is ours. FB#97 asked for exactly this: "it could go to
            a page that I type up and explain why I made music forest."
            DO NOT EDIT FOR VOICE. This is the one place in the app that speaks as
            a person rather than as the product, so BRAND.md's "UI speaks as the
@@ -473,98 +449,30 @@
            point. Don't tighten it, don't swap his words for house vocabulary,
            don't let a copy pass smooth it out. Only he changes this.
            ═════════════════════════════════════════════════════════════════════ -->
-      <h4 class="about-h">Why this exists</h4>
-      <p>I made Music&nbsp;Forest because I want my relationship with music to be
-        more active and exploratory without being tracked and algorithmically
-        recommended.</p>
-      <p>I want to feel like a kid digging around in the dirt, noticing what exists
-        and forming my own opinions of it without anyone telling me how to feel or
-        what to look for. The origins of this project started with notions of
-        mycelial networks, fairies, and forest metaphors that would help guide the
-        vision of this project.</p>
-      <p>A lot of that whimsy has since been dropped (like the little magical fairy
-        who would help you through the tutorial); however, the underpinnings of
-        those ecosystems remain in this project. Explore connections and walk around
-        in the forest of music, examining each object at a time, jotting down your
-        observations in your notebook.</p>
-      <p>Every day I open up Music&nbsp;Forest and discover artists I probably would
-        have never discovered. Sometimes I like them, sometimes I just listen to a
-        few songs and move on to the next album. My listening practice has slowed
-        down in a beautiful way.</p>
-      <p>There are no ranking systems, recommendations, curated lists, etc. Just
-        ears.</p>
-      <p>I like to use the notebook as a way to keep track of what I've listened to.
-        There is a lot of power in the notebook for me.</p>
-      <p>My relationship with listening has positively changed as a result of this
-        project and I hope it has a similar effect for you.</p>
-      <!-- HYPHEN, and not italic — owner's explicit call on review, 2026-08-08,
-           overriding both of my defaults. I had set an em dash to match the tour's
-           sign-off (onboarding.js `tourFeedbackChip`) and italicised it; he wants it
-           plainer. Leave it exactly as typed. The tour's sign-off still uses an em
-           dash; the two differ on purpose until he says otherwise. -->
-      <p class="about-signoff">- Clancy</p>
-
-      <!-- FB#97: this is where Today's retired "why this record? → how, exactly?"
-           door went. It was the most honest thing on that screen — exactly how the
-           day is drawn, and what is deliberately NOT weighted — so it moves rather
-           than disappears. (VISION: progressive disclosure; the honesty rule.) -->
-      <h4 class="about-h">How the day is put together</h4>
-      <p>Every album in the catalogue is tagged with its original release month and
-        day. Music&nbsp;Forest gathers every record whose release date lands on
-        today's month and day — any year — and shows them one at a time.</p>
-      <!-- Owner, 2026-10-04: the 13 hidden genres were retired and the deal sizes turns
-           to the day (static/app.js balancedOrder, GENRE_BACKFILL_DESIGN.md). Keep
-           this paragraph describing what the code actually does. -->
-      <p>The order is <b>dealt for variety</b>. Each record is grouped by its first
-        genre or style, and each group's turns are sized to how much of the day it
-        is — softened a little, so the day's biggest sounds come up slightly less
-        often than their share and the smallest slightly more. Two records from the
-        same group don't come back to back while anything else is left. Within that,
-        placement is random. Genre is the <em>only</em> thing balanced — to keep the
-        day varied — and there's no weighting by popularity, era, label, or anything
-        about you; nothing about you is stored or read to build the day. Only one
-        canonical version of each album is counted, so reissues and duplicate
-        pressings can't crowd the day or show up twice.</p>
-      <p>Prefer a narrower day? <b>Genre</b> and <b>Year</b> show only what you
-        choose — and the filtered set still runs through the same deal, so
-        "Jazz&nbsp;+&nbsp;Folk" interleaves rather than all-jazz-then-folk.</p>
-
-      <h4 class="about-h">Where the data comes from</h4>
-      <p><b>Discogs</b> — one of two catalog sources: releases, dates, labels
-        and editions, from its CC0 community data.</p>
-      <p><b>MusicBrainz</b> — the other catalog source, global and an equal peer
-        (about two in five of each day's records come from it), and where many albums'
-        tracklists, genres and cover art come from — plus the tags people add
-        there: moods, scenes and places.</p>
-      <p><b>Deezer</b> — the availability check: an album only counts as
-        listenable once it's been confirmed streamable there. It also gives a
-        genre to records neither catalog has one for.</p>
-      <p><b>Apple Music / iTunes &amp; the Cover Art Archive</b> — cover art,
-        plus exact Apple album links.</p>
-      <p><b>Spotify &amp; YouTube Music</b> — exact album links from each
-        service's own catalog lookup (Spotify's cached only briefly, per its
-        terms).</p>
-      <p><b>Bandcamp</b> — exact album links drawn straight from MusicBrainz's
-        url-relations, so a Bandcamp album is confirmed by construction — no
-        lookup needed.</p>
-      <p><b>Odesli</b> — fans a confirmed album out to exact links on further
-        services (TIDAL, Amazon Music, Pandora and more).</p>
-      <p class="muted">The house rule: a link or badge only appears when the
-        exact album was confirmed on that service. An album that hasn't been
-        checked yet is <i>unknown</i> — never "unavailable."</p>
-      <p class="muted">The catalog is read-only and offline-first: it lives on the
-        server, and the app itself works without a connection once loaded.</p>
-
-      <!-- The deep-dive door. It used to hang off the welcome card, but the owner
-           took it off the opener (2026-08-07) and FB#97 had already re-pointed the
-           ☰ "About" item at THIS modal — which left /architecture linked from
-           nowhere in the app. This is its honest home: someone reading about how
-           the day is put together is exactly who wants the longer version. Same
-           class as the old link so the two doors look identical; opens in a new
-           tab so your place on the records is kept (VISION: a door, not a
-           corridor). -->
-      <a class="onboard-howitworks" href="/architecture" target="_blank"
-        rel="noopener">How Music Forest works ↗</a>
+      <h4 class="about-h">Why Music Forest Exists (AI-free writing!)</h4>
+      <p>Once in a blue moon, a dazzling flower would burst through the earth of my attention garden (a metaphor for my brain). I would frantically invite everyone to come and see the dazzling flower. It was urgent; the flower would die overnight. Every flower did. I was 29 when I discovered a magic question that kept the flowers alive:</p>
+      <p>"How did we get here?"</p>
+      <p>I needed to understand the ground that grew the flowers.</p>
+      <p>I built Music Forest because I love:</p>
+      <ol class="about-list">
+        <li>Listening to music that is off the beaten path;</li>
+        <li>Sharing with friends and family music they have never heard;</li>
+        <li>Making choices based on my own preferences and curiosity, rather than algorithmic recommendations;</li>
+        <li>Noticing connections;</li>
+        <li>Building simple systems that nurture my capacity for attention.</li>
+      </ol>
+      <p>Music Forest is a ritual of choice you can perform before opening up your regular music listening app.</p>
+      <p>Music Forest gives you albums released on this day in history, one at a time. You can filter for certain tags and decades that are available. For example, you could narrow your options to dungeon synth, elektronika, future jazz, and Australian rock records between 1980 and 2010. The tags update daily with the new list of albums.</p>
+      <p>Your personal notebook logs which albums you listened to and any notes you'd like to include about tracks, contributing artists, and more. Only you can see your notebook because everything is end-to-end encrypted. There is no tracking or algorithmic recommendations based on your choices.</p>
+      <p>The notebook feature is based on years of optimizing a simplified music listening journal. It is a stack that keeps things labeled by date of entry. You can search across all of your own entries. You can tag songs, artists, and more. You can export your notebook in JSON format if you want to get fancy and do your own analysis. Your data is yours and yours alone.</p>
+      <p>If you have feedback for me just reach out in whatever way is convenient for you. This is a big passion project for me so I would love to hear about your experience of Music Forest. If you don't have my contact info, you can use the feedback button in the app menu, or write to me at <a class="pull-link" href="mailto:info@musicforest.lol">info@musicforest.lol</a></p>
+      <p class="about-signoff">In song,<br>Clancy</p>
+      <!-- v355 (owner 2026-10-05): About ends here, at the owner's sign-off — "I want that to be
+           purely non-AI generated." What followed (how the day is put together, where the data
+           comes from, the house rule, the /architecture link) was the app's copy,
+           not the owner's, and went. The source credits it carried live on in the colophon
+           (<footer>, below Privacy · Terms) — the Terms say we credit them in the
+           app, and the cover cache's guardrails name the Cover Art Archive credit. -->
     </div>
   </div>
 </div>
@@ -942,7 +850,6 @@
 <script src="/static/device-trust.js"></script>
 <script src="/static/journal-cache.js"></script>
 <script src="/static/auth-ui.js"></script>
-<script src="/static/migrate.js"></script>
 <!-- PWA (H1.3): register the app-shell service worker. Best-effort; external file
      (not inline) so the strict CSP needs no script nonce. Loads last so it never
      delays the crypto/auth boot. -->

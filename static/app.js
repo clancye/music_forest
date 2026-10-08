@@ -5,7 +5,7 @@
 // service-worker cache name — because the worker can swap its cache to a new build
 // in the background while a resumed PWA keeps running old code, which made a stale
 // page wrongly report "up to date". BUMP THIS WITH sw.js VERSION on any shell change.
-window.__MF_BUILD = "v337";
+window.__MF_BUILD = "v358";
 
 // --- tiny helpers -----------------------------------------------------------
 const $ = (sel) => document.querySelector(sel);
@@ -110,9 +110,11 @@ function clientMode() {
   if (!window.AOTD_HOSTED) return "local";
   return window.AOTD_GUEST ? "guest" : "account";
 }
-function api(path) {
+// Searches carry the same coarse tier flag, so the Log can split them (2026-10-07).
+const SEARCH_OPTS = () => ({ headers: { "X-MF-Mode": clientMode() } });
+function api(path, extra) {
   const md = mdParam();
-  const opts = { headers: { "X-MF-Mode": clientMode() } };
+  const opts = { headers: Object.assign({ "X-MF-Mode": clientMode() }, extra || {}) };
   if (!md) return fetch(path, opts).then((r) => r.json());
   // Append the date param without clobbering any query string the caller already
   // put on the path (e.g. the pool seam's "/api/pool/pick?n=2").
@@ -502,6 +504,7 @@ function applyListenPrefStyle(keys) {
     keys.map((k) => `:not(:has(.links a.${_platClass[k]}))`).join("") +
     " { display: none }";
   el.textContent = ".links a { display: none }\n" + show + "\n" + hideEmptyDoor;
+  recheckAppleArt(document);
 }
 
 // Visual confirmation that toggling your platforms reworked THIS page: a short
@@ -569,17 +572,8 @@ function filteredEmptyHtml(scope, where) {
     <button class="dig-pill" data-dig-escape>
       <span aria-hidden="true">↓</span> Dig the whole ${esc(scope)}</button>
     <p class="empty-sub muted">Dig mode shows everything, including albums with no
-      confirmed link yet — or change your platforms up top.</p>
+      confirmed link yet — or change your platforms beside Listen on Today.</p>
   </div>`;
-}
-
-function setListenPrefNote(keys) {
-  const note = document.getElementById("listenPrefNote");
-  if (!note) return;
-  const fk = FILTERABLE_PLATFORMS.filter((k) => keys.includes(k));
-  note.textContent = fk.length
-    ? "Showing only albums on " + fk.map((k) => _platLabel[k] || k).join(", ") + "."
-    : "Showing every album — choose a service to narrow it down.";
 }
 
 // A filter/selection change restacks what surfaces: drop the cached deck so Today
@@ -587,6 +581,7 @@ function setListenPrefNote(keys) {
 // the active date view.
 function refreshSurfaces() {
   deckState = null;
+  _openWhy = "platforms";              // the Log counts this open as a platform change
   const mode = currentMode();
   if (mode === "decide") loadDeck(true);
   else if (mode === "browse" && browseScope === "day") loadBrowse();
@@ -648,26 +643,37 @@ function recordTags(r) {
 // F31: the full deck filter — genres AND era, composed. The two dimensions AND together
 // (a record must pass both); each is OR within itself. Dig ignores both. This is what
 // the deal + the live count read, so the era facet narrows Today exactly like genres.
-function applyDeckFilters(list) {
-  let out = applyGenreFilter(list);
-  if (digMode) return out;                              // dig is ALWAYS unfiltered
-  if (deckEras.size) out = out.filter((r) => deckEras.has(decadeOf(r)));
+// The YEAR side of Filter on its own — decades (OR'd) AND a span — so each side of the
+// screen can count under the other (owner 2026-10-05: "if 'acoustic' is selected, the
+// 'years' filter should then show how many acoustic records are available"). The Tags
+// tab counts under applyYearFilters; the decade chips count under the tags and the
+// span (decades: false — a decade's own siblings don't narrow it). Dig ignores both.
+function applyYearFilters(list, { decades = true } = {}) {
+  if (digMode) return list;                             // dig is ALWAYS unfiltered
+  let out = list;
+  if (decades && deckEras.size) out = out.filter((r) => deckEras.has(decadeOf(r)));
   if (deckYearFrom != null) out = out.filter((r) => r.year && r.year >= deckYearFrom);
   if (deckYearTo != null) out = out.filter((r) => r.year && r.year <= deckYearTo);
   return out;
 }
 
+function applyDeckFilters(list) {
+  return applyYearFilters(applyGenreFilter(list));
+}
+
+// How many filters are set: the one Filter pill counts both tabs (2026-10-04: Genre and
+// Year became one button), and each tab on the Filter screen counts its own. A year
+// span counts as one, however many years it covers.
 function updateGenreTally() {
-  const gt = document.getElementById("genreTally");
-  if (gt) {
-    const gn = genreTags.size;
-    gt.hidden = gn === 0; gt.textContent = " · " + gn;
-  }
-  const dt = document.getElementById("dateTally");
-  if (dt) {
-    const dn = deckEras.size + ((deckYearFrom != null || deckYearTo != null) ? 1 : 0);
-    dt.hidden = dn === 0; dt.textContent = " · " + dn;
-  }
+  const gn = genreTags.size;
+  const dn = deckEras.size + ((deckYearFrom != null || deckYearTo != null) ? 1 : 0);
+  const set = (id, n) => {
+    const el = document.getElementById(id);
+    if (el) { el.hidden = n === 0; el.textContent = " · " + n; }
+  };
+  set("filterTally", gn + dn);
+  set("sbTagsN", gn);
+  set("sbYearN", dn);
 }
 
 // The Year panel's note carries the live combined count (genre AND date compose), so
@@ -689,13 +695,14 @@ function setGenrePrefNote() {
   setNote("datePrefNote", "Pick a decade or set a year span to narrow today.");
 }
 
-// Re-sync everything that reads the filter state: the Year panel's decade chips and
-// note, and the tallies on both pills. (Until v328 this also drew the Genre popover's
-// chip row; the Genre screen renders itself on open.)
+// Re-sync everything that reads the filter state: the Year tab's decade chips and note,
+// the tallies, and the Filter screen's tray (what's set + "Show N records"). (Until v328
+// this also drew the Genre popover's chip row.)
 function renderGenrePref() {
   renderEraChips();
   setGenrePrefNote();
   updateGenreTally();
+  renderStyleBrowseTray();
 }
 
 // --- The Genre screen (owner 2026-09-24; flat since v332) ----------------------
@@ -728,32 +735,41 @@ function recordTagKeys(r) {
   return keys;
 }
 
+// Every tag on today's records, with how many records carry it UNDER THE YEAR FILTERS
+// (2026-10-05) — so with the 1970s picked, "acoustic" counts 1970s acoustic records,
+// which is exactly what ticking it yields. Labels and spellings come from the whole
+// day, so a tag the year filter empties keeps its name (n: 0; sbOrderedTags lists it
+// only while it's ticked, so it can always be unticked). Cached per year-filter state.
 function styleIndex() {
   if (!deckState || !deckState.all) return null;
-  if (deckState._styles) return deckState._styles;
-  const count = new Map();                  // key -> records today carrying it
-  const spellings = new Map();              // key -> Map(spelling -> records)
-  let untagged = 0;
+  const sig = `${digMode}|${[...deckEras].sort().join()}|${deckYearFrom}|${deckYearTo}`;
+  if (deckState._styles && deckState._stylesSig === sig) return deckState._styles;
+  const spellings = new Map();              // key -> Map(spelling -> records), whole day
   for (const r of deckState.all) {
-    const tags = recordTags(r);
-    if (!tags.size) { untagged++; continue; }
-    const seen = new Set();
-    for (const t of tags) {
+    for (const t of recordTags(r)) {
       const k = tagKey(t);
       if (!k) continue;
       if (!spellings.has(k)) spellings.set(k, new Map());
       const sp = spellings.get(k);
       sp.set(t, (sp.get(t) || 0) + 1);
-      if (!seen.has(k)) { seen.add(k); count.set(k, (count.get(k) || 0) + 1); }
     }
   }
+  const scope = applyYearFilters(deckState.all);
+  const count = new Map();                  // key -> records in scope carrying it
+  let untagged = 0;
+  for (const r of scope) {
+    const keys = recordTagKeys(r);
+    if (!keys.size) { untagged++; continue; }
+    for (const k of keys) count.set(k, (count.get(k) || 0) + 1);
+  }
   // A merged row is labelled with its most common spelling (ties: alphabetical).
-  const tags = [...count.keys()].map((k) => {
+  const tags = [...spellings.keys()].map((k) => {
     const sp = [...spellings.get(k).entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-    return { key: k, label: sp[0][0], n: count.get(k), spellings: sp.map((x) => x[0]) };
+    return { key: k, label: sp[0][0], n: count.get(k) || 0, spellings: sp.map((x) => x[0]) };
   });
-  deckState._styles = { tags, count, untagged, total: deckState.all.length };
+  deckState._styles = { tags, count, untagged, total: scope.length };
+  deckState._stylesSig = sig;
   return deckState._styles;
 }
 
@@ -789,7 +805,9 @@ function sbBand(n) {
 
 // The rows in display order: A–Z by label, or rarest first (then A–Z within a count).
 function sbOrderedTags(idx, order, q) {
-  let tags = idx.tags;
+  // A tag the year filters leave empty is hidden — unless it's ticked, so it can be
+  // unticked (it shows its 0, honestly).
+  let tags = idx.tags.filter((t) => t.n > 0 || genreTags.has(t.key));
   if (q) tags = tags.filter((t) => t.spellings.some((sp) => sp.includes(q)));
   return tags.slice().sort(order === "rare"
     ? (a, b) => a.n - b.n || a.label.localeCompare(b.label)
@@ -845,20 +863,44 @@ function renderStyleBrowse() {
     sort.textContent = order === "rare" ? "Rarest first" : "A–Z";
     sort.setAttribute("aria-label", `Order: ${order === "rare" ? "rarest first" : "A to Z"}. Tap to switch.`);
   }
-  const intro = document.getElementById("sbIntro");
-  if (intro) intro.textContent = `Every tag on today's records, ${
-    order === "rare" ? "rarest first" : "A to Z"}. Tick any to narrow Today.`;
-  renderStyleBrowseTray();
+  renderGenrePref();
+  renderSbTab();
 }
 
-// The tray under the list: what you've ticked (tap to drop) and the live count of what
-// Today now holds — the same composed filter the deck deals from, so year filters count.
+// The Filter screen's two tabs (2026-10-04). Tags shows the list, its find box and its
+// sort; Year shows the decade chips, the span and the day door. The tab you were on is
+// kept for the session, so someone who filters by year comes back to Year.
+let _sbTab = "tags";
+function renderSbTab() {
+  const tags = _sbTab !== "year";
+  for (const b of document.querySelectorAll("[data-sb-tab]")) {
+    const on = b.dataset.sbTab === _sbTab;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-selected", String(on));
+  }
+  const show = (id, v) => { const el = document.getElementById(id); if (el) el.hidden = !v; };
+  show("sbPaneTags", tags);
+  show("sbPaneYear", !tags);
+  show("sbSearch", tags);
+  const sort = document.getElementById("sbSort");
+  if (sort) sort.classList.toggle("is-off", !tags);
+}
+
+// The tray under both tabs: everything that's set (tags, decades, a year span — tap one
+// to drop it) and the live count of what Today now holds, the same composed filter the
+// deck deals from.
+function yearSpanLabel() {
+  return `${deckYearFrom != null ? deckYearFrom : "…"}–${deckYearTo != null ? deckYearTo : "…"}`;
+}
 function renderStyleBrowseTray() {
   const picked = document.getElementById("sbPicked");
   const go = document.getElementById("sbGo");
-  const chips = [...genreTags].map((k) =>
-    `<button type="button" class="genre-chip custom on" data-sb-untag="${esc(k)}"
-      aria-label="Remove ${esc(tagLabel(k))}">${esc(tagLabel(k))}<span class="gc-x" aria-hidden="true">✕</span></button>`);
+  const chip = (attr, label) =>
+    `<button type="button" class="genre-chip custom on" ${attr}
+      aria-label="Remove ${esc(label)}">${esc(label)}<span class="gc-x" aria-hidden="true">✕</span></button>`;
+  const chips = [...genreTags].map((k) => chip(`data-sb-untag="${esc(k)}"`, tagLabel(k)));
+  for (const d of [...deckEras].sort()) chips.push(chip(`data-sb-unera="${esc(d)}"`, d));
+  if (deckYearFrom != null || deckYearTo != null) chips.push(chip("data-sb-unspan", yearSpanLabel()));
   if (picked) { picked.innerHTML = chips.join(""); picked.hidden = !chips.length; }
   if (!go) return;
   const active = genreTags.size || deckEras.size
@@ -928,11 +970,14 @@ function styleBrowsePopstate() {
 
 function wireStyleBrowse() {
   const sheet = document.getElementById("styleBrowse");
-  const open = document.getElementById("genreOpen");
+  const open = document.getElementById("filterOpen");
   if (!sheet || !open) return;
   open.addEventListener("click", openStyleBrowse);
   document.getElementById("sbBack").addEventListener("click", closeStyleBrowse);
   document.getElementById("sbGo").addEventListener("click", closeStyleBrowse);
+  for (const b of document.querySelectorAll("[data-sb-tab]")) {
+    b.addEventListener("click", () => { _sbTab = b.dataset.sbTab; renderSbTab(); });
+  }
   const list = document.getElementById("sbList");
   document.getElementById("sbSort").addEventListener("click", () => {
     setSbOrder(sbOrder() === "rare" ? "az" : "rare");
@@ -992,18 +1037,27 @@ function wireStyleBrowse() {
   });
   document.getElementById("sbPicked").addEventListener("click", (e) => {
     const tag = e.target.closest("[data-sb-untag]");
-    if (tag) sbApply(() => genreTags.delete(tag.dataset.sbUntag));
+    if (tag) { sbApply(() => genreTags.delete(tag.dataset.sbUntag)); return; }
+    const era = e.target.closest("[data-sb-unera]");
+    if (era) { sbApply(() => deckEras.delete(era.dataset.sbUnera)); return; }
+    if (e.target.closest("[data-sb-unspan]")) sbApply(resetYearSpan);
   });
 }
 
 // F31: today's records by decade, from the full day we hold — so the era chips carry
 // real counts even while a filter is active (like the genre chips).
+// Each decade counts under the ticked TAGS and the year SPAN (2026-10-05) — not under
+// the other decades, which it would join, not narrow. `present` is every decade on the
+// whole day, so a chip the tags empty can still be shown (at 0) while it's selected.
 function eraCounts() {
-  const counts = new Map();
-  for (const r of (deckState && deckState.all) || []) {
+  const counts = new Map(), present = new Set();
+  const all = (deckState && deckState.all) || [];
+  for (const r of all) { const d = decadeOf(r); if (d) present.add(d); }
+  for (const r of applyYearFilters(applyGenreFilter(all), { decades: false })) {
     const d = decadeOf(r);
     if (d) counts.set(d, (counts.get(d) || 0) + 1);
   }
+  counts.present = present;
   return counts;
 }
 
@@ -1015,13 +1069,15 @@ function renderEraChips() {
   const row = document.getElementById("eraRow");
   if (!box) return;
   const counts = eraCounts();
-  for (const d of [...deckEras]) if (!counts.has(d)) deckEras.delete(d);
-  const present = [...counts.keys()].sort();
-  if (row) row.hidden = present.length === 0;
-  box.innerHTML = present.map((d) => {
+  // A selected decade the whole day lacks (a new day) is dropped; one the TAGS empty is
+  // kept and shown at 0, so a tick elsewhere never silently unpicks it.
+  for (const d of [...deckEras]) if (!counts.present.has(d)) deckEras.delete(d);
+  const shown = [...counts.present].filter((d) => counts.has(d) || deckEras.has(d)).sort();
+  if (row) row.hidden = shown.length === 0;
+  box.innerHTML = shown.map((d) => {
     const on = deckEras.has(d);
     return `<button type="button" class="genre-chip era-chip${on ? " on" : ""}" data-era="${esc(d)}"
-       aria-pressed="${on}">${esc(d)}<span class="gc-n">${counts.get(d).toLocaleString()}</span></button>`;
+       aria-pressed="${on}">${esc(d)}<span class="gc-n">${(counts.get(d) || 0).toLocaleString()}</span></button>`;
   }).join("");
 }
 
@@ -1031,6 +1087,17 @@ function toggleEra(d) {
   if (deckEras.has(d)) deckEras.delete(d);
   else deckEras.add(d);
   refilterDeck();
+  refreshFilterScreen();
+}
+
+// A year change re-counts the Tags tab; redraw it in place if the screen is open.
+function refreshFilterScreen() {
+  const sheet = document.getElementById("styleBrowse");
+  if (!sheet || sheet.classList.contains("hidden")) return;
+  const list = document.getElementById("sbList");
+  const y = list ? list.scrollTop : 0;
+  renderStyleBrowse();
+  if (list) list.scrollTop = y;
 }
 
 // A genre toggle re-derives the visible deck from the full day we already hold — no
@@ -1051,23 +1118,37 @@ function refilterDeck() {
 // A genre filter that empties today (but the day itself holds records) points to
 // dig — never a blank wall (the honesty-rule guardrail, like the platform filter).
 function renderGenreFilteredEmpty() {
+  if (_firstRun) return;                 // the first-run picker owns #choice
   const wrap = $("#choice");
   if (!wrap) return;
   const parts = [...[...genreTags].map(tagLabel), ...deckEras];
+  if (deckYearFrom != null || deckYearTo != null) parts.push(yearSpanLabel());
   const picks = parts.join(", ");
-  wrap.innerHTML = `<div class="empty">
-    <p class="empty-lead">Nothing today in ${esc(picks)}.</p>
-    <button class="dig-pill" data-clear-genres><span aria-hidden="true">↺</span> Clear filters</button>
-    <p class="empty-sub muted">Today holds records — just not in what you picked. Clear the
-      filter, or <button class="linkish" data-goto-explore>explore the whole catalog →</button></p>
-  </div>`;
+  // Filters first, and only filters (owner 2026-10-05): what's picked, and the two ways
+  // to change it. Nothing else competes with that.
+  wrap.innerHTML = filterSuggestionHtml(`Nothing today in ${esc(picks)}.`);
 }
 
+// "Clear filters" clears everything Filter holds — tags, decades and a year span (the
+// span used to survive it, back when it lived in a separate Year popover).
 function clearGenreFilter() {
-  if (!genreTags.size && !deckEras.size) return;
+  if (!genreTags.size && !deckEras.size && deckYearFrom == null && deckYearTo == null) return;
   genreTags.clear();
   deckEras.clear();
+  resetYearSpan();
   refilterDeck();
+}
+
+// Empty the year span (its two boxes too) without re-deriving the deck — callers do that.
+function resetYearSpan() {
+  for (const id of ["yearFrom", "yearTo"]) {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  }
+  deckYearFrom = null;
+  deckYearTo = null;
+  const yc = document.getElementById("yearRangeClear");
+  if (yc) yc.classList.add("hidden");
 }
 
 // A dismissible popover's tap-outside closer, shared by the platform chooser and the
@@ -1151,23 +1232,19 @@ function wireGenrePref() {
     deckYearTo = parse(yTo);
     if (yClear) yClear.classList.toggle("hidden", deckYearFrom == null && deckYearTo == null);
     refilterDeck();
+    refreshFilterScreen();
   };
   if (yFrom) yFrom.addEventListener("change", readYears);
   if (yTo) yTo.addEventListener("change", readYears);
   if (yClear) yClear.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (yFrom) yFrom.value = "";
-    if (yTo) yTo.value = "";
-    readYears();
+    resetYearSpan();
+    refilterDeck();
+    refreshFilterScreen();
   });
-  const dateBox = document.getElementById("datePref");
-  if (dateBox) {
-    // Refresh the decade chips + note whenever the panel opens (the day may have
-    // changed) — the job the Genre popover's open used to do for both panels.
-    dateBox.addEventListener("toggle", () => { if (dateBox.open) renderGenrePref(); });
-    // Tap outside the open popover to dismiss it — and only dismiss it.
-    closePopoverOnOutsideTap(dateBox);
-  }
+  // (2026-10-04: these controls moved from the Year popover into the Filter screen's Year
+  // tab. The popover's open-refresh and tap-outside closer went with it: opening the
+  // screen redraws the chips — renderStyleBrowse → renderGenrePref.)
 }
 
 // Source-aware provenance (P3): the exact Discogs release or MusicBrainz
@@ -1235,9 +1312,10 @@ function linksHtml(a) {
 // story head (F#10: an opened album leads with listening everywhere, not just the
 // daily pick), replacing the collapsed "Listen" door there — one tap, not
 // tap-to-open-then-tap. Honest states (spinner / copy-search) handled inline.
-function listenBlockHtml(a, { compact = false } = {}) {
+function listenBlockHtml(a, { compact = false, more = false } = {}) {
   const prefs = loadListenPrefs();
   const { primary, chips } = pickListenPlatforms(a.platforms, prefs);
+
   if (!primary) {
     // Honest states, never a fabricated "search on Spotify" button:
     //  - while the door is still resolving (a pool album): a spinner.
@@ -1257,6 +1335,15 @@ function listenBlockHtml(a, { compact = false } = {}) {
     if (!compact && prefs.length && elsewhere.primary) {
       return offPlatformHtml(prefs, elsewhere, a);
     }
+    // v350: the record kept on Today after you changed platforms from its own card can
+    // be on none of them. It still has exact links, so it never says "no confirmed
+    // link": the selector names where it IS and Listen goes there, outlined rather than
+    // green (green is your service), with the selector still there to change your mind.
+    if (compact && more && prefs.length && elsewhere.primary) {
+      const [okey, ocls, ourl, olabel] = elsewhere.primary;
+      return deckListenRow(okey, ocls, ourl, olabel,
+        a._spUnchecked && prefs.includes("spotify") ? "unchecked" : true);
+    }
     return copySearchHtml(a);
   }
   const [pkey, pcls, purl, plabel] = primary;
@@ -1274,6 +1361,7 @@ function listenBlockHtml(a, { compact = false } = {}) {
     // inside the button, so the confirmation never moves the rows below it.
     const tag = openedToday(albumKey(a))
       ? `<span class="opened-tag">✓ in Notebook</span>` : "";
+    if (more) return deckListenRow(pkey, pcls, purl, plabel);
     return `<div class="choice-listen"><div class="listen-chips listen-solo">
       <a class="listen-chip primary ${pcls}" href="${esc(purl)}"${
         listenAttrs(pkey, purl)} target="_blank" rel="noopener">${esc(plabel)}${tag}</a>
@@ -1302,6 +1390,332 @@ function listenBlockHtml(a, { compact = false } = {}) {
   // control now, so this no longer emits copyAlongsideHtml. The function stays — the
   // no-confirmed-link fallback (copySearchHtml) is a different, still-needed thing.
   return `<div class="choice-listen">${primaryBtn}${chipsHtml}</div>`;
+}
+
+// --- MORE WAYS TO LISTEN (v350, owner 2026-10-05, mockup A) --------------------
+// The ⌄ on Today's Listen button opens a sheet with two things: ALSO ON, this record's
+// other confirmed links (exact, like every Listen link — a tap opens it there and
+// leaves an "Opened in ___" entry; nothing else changes), and YOUR LISTENING
+// PLATFORMS, the same choices as the first screen, Everything included. (A third
+// place, ☰ › Select listening platforms, was retired in v354 — owner 2026-10-05.)
+// The difference from that ☰ panel was when it landed: it saved and re-dealt on every
+// tap, so the record on screen could vanish (a corridor). Here nothing moves until the
+// sheet closes, and then the record you're on STAYS (pinned, even if it isn't on your
+// new platforms) while the rest of the day reloads behind it; your choice applies
+// from Next. The order — tap order, or a drag (v354) — sets which service the button
+// names.
+const CHEV_SVG = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+  stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>`;
+let _ls = null;        // { uid, start, sel } while the sheet is open
+// Is Spotify failing today (the day's own response says so — pooldoor.spotify_trouble)?
+// Then a reader who listens there is told, quietly, where it shows (2026-10-07).
+let _spotifyTrouble = false;
+function spotifyTroubleLead() {
+  return _spotifyTrouble && filterPlatformKeys().includes("spotify")
+    ? "Spotify isn't answering today, so today's records couldn't be checked there." : "";
+}
+let _pinNext = null;   // { key, rec, aside, noted }: the record kept on Today (see loadDeck)
+
+// Today's Listen row — every place that draws or repaints it goes here.
+function deckListenHtml(a) {
+  return listenBlockHtml(a, { compact: true, more: true });
+}
+// v352 (owner, mockups round 3 → C): the row is two halves with one job each. On the
+// left, WHERE you listen — the service, a quiet selector that opens More ways to listen;
+// on the right, the green ▶ Listen, which goes there. The selector is as wide as its
+// name (YouTube Music, the longest, still leaves Listen 131px of the 306 on an iPhone
+// mini with iOS's wider text), so the dividing line moves a little from record to
+// record. Listen is the real link: data-listen (the tap count + "Opened in ___"), the
+// app deep link, and the service class the Apple-art rule looks for (a.am).
+// "✓ in Notebook" left the button for the line under the title (deckOpenedHtml).
+function deckListenRow(key, cls, url, label, off = false) {
+  return `<div class="choice-listen"><div class="listen-sel${off ? " is-off" : ""}">
+      <button type="button" class="listen-svc" data-listen-more aria-haspopup="dialog"
+        aria-label="${off === "unchecked" ? `Couldn't check Spotify just now — it's on ${esc(label)}`
+          : off ? `Not on your listening platforms — it's on ${esc(label)}` : `Where you listen: ${esc(label)}`}. More ways to listen"
+        >${esc(label)}${CHEV_SVG}</button>
+      <a class="listen-go ${cls}" href="${esc(url)}"${listenAttrs(key, url)} target="_blank"
+        rel="noopener" aria-label="Listen on ${esc(label)}">Listen</a>
+    </div></div>`;
+}
+// The "✓ in Notebook" mark on the line under the title: today, once you've opened it.
+function deckOpenedHtml(uid) {
+  return openedToday(uid) ? `<span class="dot">·</span><span class="ds-opened">✓ in Notebook</span>` : "";
+}
+// Toggle one tile. Everything clears the services; a service is added at the end of
+// the order (your priority) or taken out.
+function toggleListenSel(sel, key) {
+  if (key === "all") return [];
+  return sel.includes(key) ? sel.filter((k) => k !== key) : sel.concat(key);
+}
+// v354 (owner 2026-10-05: "click and drag or press/hold and reorder the options …
+// to choose priorities"): the tiles stand in your order — your platforms first, as
+// numbered, then the rest in the usual order (Everything is always last). So a tap
+// moves a tile to where its number says, and dragging one changes the number.
+function listenTileOrder(sel) {
+  return sel.concat(CONFIRMED_PLATFORMS.map(([k]) => k).filter((k) => !sel.includes(k)));
+}
+// A drag: one of your platforms to a new place in the order. Only chosen ones move,
+// and the set never changes.
+function moveListenSel(sel, key, to) {
+  const from = sel.indexOf(key);
+  if (from < 0) return sel;
+  const next = sel.slice();
+  next.splice(from, 1);
+  next.splice(Math.max(0, Math.min(next.length, to)), 0, key);
+  return next;
+}
+function sameMembers(x, y) {
+  return x.length === y.length && x.every((k) => y.includes(k));
+}
+function platNameList(keys) {
+  const n = keys.map((k) => _platLabel[k] || k);
+  return n.length < 3 ? n.join(" and ") : n.slice(0, -1).join(", ") + " and " + n[n.length - 1];
+}
+// The line under the tiles: what closing the sheet will do, in plain words. With no
+// record on screen (`platforms` null — opened from the end of the day), there is no
+// "this one" to keep.
+function listenSheetNote(platforms, start, sel, unchecked = []) {
+  if (sel.join() === start.join()) return { changed: false, text: "Only records you can play there will show." };
+  if (sameMembers(sel, start)) return { changed: true, text: `${_platLabel[sel[0]]} comes first now.` };
+  if (!platforms) {
+    return { changed: true, text: sel.length ? `Only records on ${platNameList(sel)} will show.`
+      : "Every record will show." };
+  }
+  if (!sel.length) return { changed: true, text: "Next shows every record. This one stays." };
+  const list = platNameList(sel);
+  if (!pickListenPlatforms(platforms, sel).primary) {
+    // Spotify failed for this one: unknown, not a "no" (2026-10-07).
+    if (unchecked.some((k) => sel.includes(k)))
+      return { changed: true, text: `Spotify couldn't be checked for this one just now, so it stays until you move on. Next shows only records on ${list}.` };
+    return { changed: true, text: `This one isn't on ${list}, so it stays until you move on. Next shows only records on ${list}.` };
+  }
+  return { changed: true, text: `Next shows only records on ${list}. This one stays.` };
+}
+function coarsePointer() {
+  try { return window.matchMedia("(pointer: coarse)").matches; } catch (e) { return false; }
+}
+function listenSheetHtml(a, ls) {
+  const platforms = a ? (a.platforms || {}) : null;
+  let also = "";
+  if (a) {
+    const onButton = pickListenPlatforms(platforms, ls.start).primary
+      || pickListenPlatforms(platforms, []).primary;
+    const chips = CONFIRMED_PLATFORMS
+      .filter(([k]) => platforms[k] && !(onButton && onButton[0] === k))
+      .map(([k, cls, label]) => `<a class="listen-chip ${cls}" href="${esc(platforms[k])}"${
+        listenAttrs(k, platforms[k])} target="_blank" rel="noopener">${esc(label)}</a>`);
+    also = `<p class="lsh-label">Also on</p>
+    ${chips.length ? `<div class="listen-chips lsh-also">${chips.join("")}</div>`
+      : `<p class="lsh-none">Not confirmed anywhere else yet.</p>`}`;
+  }
+  const many = ls.sel.length > 1;
+  const tiles = listenTileOrder(ls.sel).map((k) => {
+    const label = _platLabel[k] || k;
+    const on = ls.sel.includes(k);
+    const n = ls.sel.indexOf(k) + 1;
+    // Several chosen: each carries its place in the order, and can be dragged.
+    const quiet = k === "spotify" && _spotifyTrouble;      // "not answering" (2026-10-07)
+    return `<button type="button" class="lsh-tile${on && many ? " is-movable" : ""}${quiet ? " is-quiet" : ""}" data-ls-plat="${k}"
+      aria-pressed="${on}"${on ? ` data-mark="${many ? n : "✓"}"` : ""}${
+      on && many ? ` aria-label="${esc(label)}${quiet ? ", not answering" : ""}, ${n} of ${ls.sel.length}"` : ""}>${esc(label)}${
+      quiet ? '<small class="lsh-quiet">not answering</small>' : ""}</button>`;
+  }).join("") + `<button type="button" class="lsh-tile" data-ls-plat="all" aria-pressed="${!ls.sel.length}"${
+    ls.sel.length ? "" : ' data-mark="✓"'}>Everything</button>`;
+  const note = listenSheetNote(platforms, ls.start, ls.sel, a && a._spUnchecked ? ["spotify"] : []);
+  if (!note.changed && _spotifyTrouble && ls.sel.includes("spotify"))
+    note.text = "Spotify isn't answering today, so fewer records than usual can be confirmed there. Everything shows them all.";
+  const order = many
+    ? `<p class="lsh-order">${coarsePointer() ? "Hold one and drag it" : "Drag one"} to choose which comes first.</p>`
+    : "";
+  return `${also}
+    <p class="lsh-label">Your listening platforms</p>
+    <div class="lsh-tiles" role="group" aria-label="Your listening platforms">${tiles}</div>
+    ${order}
+    <p class="lsh-hint${note.changed ? " is-changed" : ""}" aria-live="polite">${esc(note.text)}</p>
+    <button type="button" class="lsh-done" data-ls-done>Done</button>`;
+}
+// Opens on Today's record — or, from the end of the day ("Change listening
+// platforms"), with no record at all: then it's just your platforms.
+function openListenSheet() {
+  const sheet = $("#listenSheet");
+  if (!sheet || !deckState) return;
+  const a = deckState.idx < deckState.records.length ? deckState.records[deckState.idx] : null;
+  const start = loadListenPrefs();
+  _ls = { uid: a ? albumKey(a) : null, start, sel: start.slice() };
+  if (a) sheet.dataset.uid = _ls.uid;       // so its links leave an "Opened in ___" entry
+  else delete sheet.dataset.uid;
+  $("#lsTitle").innerHTML = a ? `${esc(a.artist)} — <b>${esc(a.title)}</b>` : "Where you listen";
+  renderListenSheet();
+  sheet.classList.remove("hidden");
+}
+// Redraw the sheet. A tile that changes place (a tap, a drop) glides there from where
+// it was rather than jumping, so you can see where your choice went.
+function renderListenSheet() {
+  const body = $("#lsBody");
+  if (!body || !_ls) return;
+  const was = {};
+  body.querySelectorAll(".lsh-tile").forEach((t) => { was[t.dataset.lsPlat] = t.getBoundingClientRect(); });
+  const a = _ls.uid ? (albumData[_ls.uid] || (deckState && deckState.records[deckState.idx]) || {}) : null;
+  body.innerHTML = listenSheetHtml(a, _ls);
+  if (reducedMotion()) return;
+  const moved = [];
+  body.querySelectorAll(".lsh-tile").forEach((t) => {
+    const r0 = was[t.dataset.lsPlat];
+    if (!r0) return;
+    const r1 = t.getBoundingClientRect();
+    const dx = r0.left - r1.left, dy = r0.top - r1.top;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+    t.style.transition = "none";
+    t.style.transform = `translate(${dx}px, ${dy}px)`;
+    moved.push(t);
+  });
+  if (!moved.length) return;
+  void body.offsetWidth;                    // lock the start positions in
+  for (const t of moved) {
+    t.style.transition = "transform .24s cubic-bezier(.2, .9, .3, 1)";
+    t.style.transform = "";
+    setTimeout(() => { t.style.transition = ""; }, 280);
+  }
+}
+// Every way out (Done, ✕, Esc, a tap above the sheet) applies what the tiles show.
+function closeListenSheet() {
+  const sheet = $("#listenSheet");
+  if (sheet) sheet.classList.add("hidden");
+  const ls = _ls;
+  _ls = null;
+  if (!ls || ls.sel.join() === ls.start.join()) return;
+  const membership = !sameMembers(ls.sel, ls.start);
+  if (membership && ls.uid && deckState && deckState.idx < deckState.records.length) {
+    const rec = deckState.records[deckState.idx];
+    if (albumKey(rec) === ls.uid)
+      _pinNext = { key: deckState.key, rec, aside: deckState.aside, noted: deckState.noted };
+  }
+  // Dig deeper ignores your platforms, so naming some ends it — otherwise the note's
+  // promise ("Next shows only records on …") wouldn't be kept.
+  if (membership && ls.sel.length) digMode = false;
+  commitListenPrefs(ls.sel, membership);
+  // The selector that opened the sheet was redrawn with the row, so the dialog stack has
+  // nothing to hand focus back to (it would stay on a tile in the hidden sheet).
+  // Put it on the new one, as the stack does for every other dialog.
+  const m = document.querySelector("#deckListen [data-listen-more]");
+  if (m) m.focus({ preventScroll: true });
+}
+
+// Drag a numbered tile to a new place in the order: press and hold it (touch), or
+// press and move (a mouse, or a finger that moves before the hold). The lifted tile
+// follows the pointer; the others slide to open the slot it will land in, and every
+// number shows what it will be. Nothing is committed until the drop, and even then
+// only to the sheet — closing it applies, like a tap. A click that trails a drop is
+// swallowed (_lsDropAt): it would land on whatever tile now sits under the pointer,
+// or on the backdrop if the drop was outside the sheet, and toggle or close it.
+// (The same grammar as the old ☰ chooser's list, wirePrefDrag, retired in v354 —
+// in two dimensions now, because the tiles are a grid.)
+let _lsDropAt = 0;
+function wireListenTileDrag(sheet) {
+  let mode = null;                     // null | "pending" | "drag"
+  let el = null, x0 = 0, y0 = 0, timer = null, pid = null;
+  let tiles = [], slots = [], from = 0, to = 0;
+  const centre = (r) => [r.left + r.width / 2, r.top + r.height / 2];
+  const placeOf = (i) => {             // where tile i will sit if the drop happens now
+    if (i === from) return to;
+    if (from < to && i > from && i <= to) return i - 1;
+    if (from > to && i < from && i >= to) return i + 1;
+    return i;
+  };
+  const shift = () => {
+    tiles.forEach((t, i) => {
+      const p = placeOf(i);
+      t.dataset.mark = String(p + 1);
+      if (t === el) return;
+      const dx = slots[p].left - slots[i].left, dy = slots[p].top - slots[i].top;
+      t.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : "";
+    });
+  };
+  const begin = () => {
+    mode = "drag";
+    tiles = Array.from(sheet.querySelectorAll(".lsh-tile.is-movable"));
+    slots = tiles.map((t) => t.getBoundingClientRect());
+    from = to = tiles.indexOf(el);
+    el.classList.add("dragging");
+    el.closest(".lsh-tiles").classList.add("is-sorting");
+  };
+  const dragTo = (x, y) => {
+    const dx = x - x0, dy = y - y0;
+    el.style.transform = `translate(${dx}px, ${dy}px) scale(1.04)`;
+    const [cx, cy] = centre(slots[from]);
+    const px = cx + dx, py = cy + dy;
+    let best = to, bestD = Infinity;
+    slots.forEach((r, i) => {
+      const [sx, sy] = centre(r);
+      const d = (sx - px) ** 2 + (sy - py) ** 2;
+      if (d < bestD) { bestD = d; best = i; }
+    });
+    if (best !== to) { to = best; shift(); }
+  };
+  const move = (e) => {
+    if (e.pointerId !== pid) return;
+    if (mode === "pending") {
+      if (Math.hypot(e.clientX - x0, e.clientY - y0) > 6) { clearTimeout(timer); begin(); }
+      else return;
+    }
+    if (mode === "drag") { e.preventDefault(); dragTo(e.clientX, e.clientY); }
+  };
+  const end = (e) => {
+    if (e && e.pointerId !== pid) return;
+    clearTimeout(timer);
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", end);
+    document.removeEventListener("pointercancel", end);
+    if (mode === "drag" && el && _ls) {
+      const key = el.dataset.lsPlat;
+      el.classList.remove("dragging");
+      const grid = el.closest(".lsh-tiles");
+      if (grid) grid.classList.remove("is-sorting");
+      if (to !== from) _ls.sel = moveListenSel(_ls.sel, key, to);
+      renderListenSheet();             // glides the lifted tile home from where it was let go
+      const again = sheet.querySelector(`[data-ls-plat="${key}"]`);
+      if (again) again.focus({ preventScroll: true });
+      _lsDropAt = Date.now();
+    }
+    mode = null; el = null; tiles = []; pid = null;
+  };
+  sheet.addEventListener("pointerdown", (e) => {
+    if (e.button != null && e.button > 0) return;      // primary button / touch only
+    const t = e.target.closest(".lsh-tile.is-movable");
+    if (!t || mode) return;
+    mode = "pending"; el = t; x0 = e.clientX; y0 = e.clientY; pid = e.pointerId;
+    // A finger lifts it by holding still; a mouse only by moving (a slow click is a click).
+    if (e.pointerType !== "mouse") timer = setTimeout(() => { if (mode === "pending") begin(); }, 260);
+    document.addEventListener("pointermove", move, { passive: false });
+    document.addEventListener("pointerup", end);
+    document.addEventListener("pointercancel", end);
+  });
+  // A held tile mustn't open the callout menu or select its name.
+  sheet.addEventListener("contextmenu", (e) => {
+    if (e.target.closest && e.target.closest(".lsh-tile.is-movable")) e.preventDefault();
+  });
+}
+
+function wireListenSheet() {
+  const sheet = $("#listenSheet");
+  if (!sheet) return;
+  document.addEventListener("click", (e) => {
+    if (e.target.closest && e.target.closest("[data-listen-more]")) openListenSheet();
+  });
+  sheet.addEventListener("click", (e) => {
+    if (Date.now() - _lsDropAt < 400) return;          // the click that trails a drop
+    if (e.target === sheet || e.target.closest("[data-ls-done]")) { closeListenSheet(); return; }
+    const t = e.target.closest("[data-ls-plat]");
+    if (t && _ls) {
+      _ls.sel = toggleListenSel(_ls.sel, t.dataset.lsPlat);
+      renderListenSheet();
+      const again = sheet.querySelector(`[data-ls-plat="${t.dataset.lsPlat}"]`);
+      if (again) again.focus({ preventScroll: true });   // keep a keyboard user's place
+    }
+  });
+  $("#lsClose").addEventListener("click", closeListenSheet);
+  wireListenTileDrag(sheet);
 }
 
 // Honest fallback for an album we can't confirm a link for (owner's call, F#10):
@@ -1352,7 +1766,13 @@ function copyAlongsideHtml(a) {
 // (these come from the same confirmed `platforms` map, just off your prefs). Only the
 // album-details door shows this; the keep reveal stays minimal.
 function offPlatformHtml(prefs, elsewhere, a) {
-  const yours = prefs.map((k) => _platLabel[k]).filter(Boolean);
+  // A Spotify lookup that failed is unknown, not a "no" (2026-10-07, the honesty rule).
+  const unchecked = a && a._spUnchecked && prefs.includes("spotify");
+  const yours = prefs.filter((k) => !(unchecked && k === "spotify"))
+    .map((k) => _platLabel[k]).filter(Boolean);
+  const lead = !unchecked ? `Not on ${esc(orList(yours))} — but it's here:`
+    : yours.length ? `Couldn't check Spotify just now, and it's not on ${esc(orList(yours))} — it's here:`
+    : "Couldn't check Spotify just now — it's here:";
   const found = [elsewhere.primary, ...elsewhere.chips];   // [key, cls, url, label]
   const chips = found.map(([key, cls, url, label]) =>
     `<a class="listen-chip ${cls}" href="${esc(url)}"${listenAttrs(key, url)}
@@ -1360,7 +1780,7 @@ function offPlatformHtml(prefs, elsewhere, a) {
   // The copy earns its place most here: we've just said it ISN'T on the services you
   // use, so the string to search with is the one thing you actually want.
   return `<div class="choice-listen off-platform">
-    <p class="choice-looking muted">Not on ${esc(orList(yours))} — but it's here:</p>
+    <p class="choice-looking muted">${lead}</p>
     <div class="listen-chips">
       ${chips}
     </div>
@@ -1685,12 +2105,76 @@ function saveAt(uid) {
 // entry, a new day, or it's since been kept/skipped (it's filtered out of `records`
 // before this runs) or dropped out of the pool. Deliberately absorbing: a resume
 // that can't be honoured is a fresh deal, never an error.
+// READY FIRST (owner 2026-10-05: "select the fastest one we can find whenever the app
+// first opens … regardless of whether they are a guest or not"). The first card of a
+// fresh visit is a record whose cover and Listen links are ALREADY in the day's list —
+// resolveDoor's own test — so the card is complete the moment the day lands, with no
+// links lookup behind a spinner. It's the first such record within the deal's opening
+// stretch, so the deal's balance barely moves; a day without one is left as dealt.
+function doorNeeded(a) {
+  const have = a.platforms || {};
+  return !(a.cover && have.spotify && have.youtube);
+}
+function readyFirst(list, look = 40) {
+  const i = list.slice(0, look).findIndex((r) => !doorNeeded(r) && deckCoverShows(r));
+  if (i <= 0) return list;
+  return [list[i], ...list.slice(0, i), ...list.slice(i + 1)];
+}
+
 function resumeAt(list) {
   const uid = loadAt();
   if (!uid) return list;
   const i = list.findIndex((r) => albumKey(r) === uid);
   if (i <= 0) return list;                 // absent, or already first
   return [list[i], ...list.slice(0, i), ...list.slice(i + 1)];
+}
+
+// THE FIRST CARD (v348, owner 2026-10-05). The day's full list is ~600 KB behind ~1.1 s
+// of server time, and the first card used to wait for all of it. /api/pool/first
+// answers with a few ready records from a set the server keeps warm (your saved place
+// first, when you have one), so the card can be drawn while the day is still on its
+// way. That card is PROVISIONAL, a one-record deck, until the day lands; then the same
+// record leads the full deal (pinned, not redrawn under you), and a Next or a note on
+// it in between carries over. The server only offers candidates: what you've already
+// met today never leaves your device, so the pick is made here.
+let _fastFirst = null;   // { seq } of the load whose provisional card is showing
+function firstCardEndpoint(at) {
+  const u = new URL(dayEndpoint(), location.origin);
+  u.pathname = "/api/pool/first";
+  if (at) u.searchParams.set("uid", at);
+  return u.pathname + u.search;
+}
+function pickFirstCard(albums, at, met) {
+  const list = (albums || []).filter((r) => r && !met.has(albumKey(r)));
+  if (at && list.length && albumKey(list[0]) === at) return list[0];   // your place
+  return list.find((r) => !doorNeeded(r) && deckCoverShows(r)) || null;
+}
+// Warm the next card's cover now, quietly, so Next lands as fast as the first did.
+function warmUpNext() {
+  const upNext = deckState && deckState.records[deckState.idx + 1];
+  if (upNext && isRemoteUrl(upNext.cover) && deckCoverShows(upNext)) {
+    const warm = new Image();
+    warm.fetchPriority = "low";
+    warm.src = caaThumb(upNext.cover);
+  }
+}
+function pinFirst(list, rec) {
+  const k = albumKey(rec);
+  return [rec, ...list.filter((r) => albumKey(r) !== k)];
+}
+async function fastFirstCard(seq, key) {
+  if (!poolOn() || digMode || _firstRun || filtersActive()) return;
+  let data;
+  try { data = await api(firstCardEndpoint(loadAt())); } catch (e) { return; }
+  // Only for this same load, while the day is still on its way.
+  if (seq !== _deckSeq || !_deckLoading || _firstRun) return;
+  noteCachedCovers(data && data.albums);
+  const rec = pickFirstCard(data && data.albums, loadAt(), loadMet());
+  if (!rec) return;
+  _fastFirst = { seq };
+  deckState = { key, all: [rec], records: [rec], idx: 0, noted: new Set(), aside: [],
+                provisional: true };
+  renderDeck();
 }
 
 // Owner, on device 2026-10-03: the loading card was laid out differently from the
@@ -1700,6 +2184,12 @@ function resumeAt(list) {
 // deck-buttons' two buttons), shimmering in place of their content. Every height and
 // margin is inherited from the real rule rather than restated here, which is the only
 // way they can't drift apart again. Keep the two in step if the card's shape changes.
+// A fresh deal: back to your place if you have one today (resumeAt), else ready first.
+function dealFresh(dealt) {
+  const at = loadAt();
+  return at && dealt.some((r) => albumKey(r) === at) ? resumeAt(dealt) : readyFirst(dealt);
+}
+
 function deckLoadingHtml() {
   return `<article class="deck-card skeleton" aria-hidden="true">
     <div class="deck-cover"><div class="cover skel"></div></div>
@@ -1725,10 +2215,35 @@ function deckLoadingHtml() {
 // state on the very first failure. Retry a few times with a short backoff behind the
 // skeleton before giving up. A read with no side effects, so a retry is always safe.
 const DAY_RETRY_DELAYS = [1200, 3500];   // after attempt 1, then attempt 2 (≈4.7s total)
+// What kind of open this day fetch is, for the operator's Log (2026-10-07, owner: "keep
+// track of all of this so we can understand where the data comes from … unique opens
+// versus the same user opens"). One coarse word, never an identity: "first" — this
+// device's first fetch of its own local day (the only date kept is the device's, in its
+// own storage, so the count of firsts is how many devices opened the app, with nothing
+// sent that could tell them apart); "platforms" — a change of listening platforms
+// re-dealt the day; "reload"; or "again" — any other open later the same day.
+const OPEN_DAY_KEY = "mf-open-day";
+let _openWhy = null;          // set by refreshSurfaces for a platform change
+let _openedThisPage = false;  // a page's first day fetch can be a reload
+function openKind() {
+  const why = _openWhy; _openWhy = null;
+  const firstFetch = !_openedThisPage; _openedThisPage = true;
+  let last = null;
+  try { last = localStorage.getItem(OPEN_DAY_KEY); } catch (e) { /* storage blocked */ }
+  if (last !== todayFull()) {
+    try { localStorage.setItem(OPEN_DAY_KEY, todayFull()); } catch (e) { /* counts as first again */ }
+    return "first";
+  }
+  if (why) return why;
+  let nav = "";
+  try { nav = (performance.getEntriesByType("navigation")[0] || {}).type || ""; } catch (e) { /* old browser */ }
+  return firstFetch && nav === "reload" ? "reload" : "again";
+}
 async function loadDayWithRetry() {
   let lastErr;
+  const kind = openKind();            // once per load: a retry is the same open
   for (let i = 0; i <= DAY_RETRY_DELAYS.length; i++) {
-    try { return await api(dayEndpoint()); }
+    try { return await api(dayEndpoint(), { "X-MF-Open": kind }); }
     catch (e) {
       lastErr = e;
       if (i < DAY_RETRY_DELAYS.length)
@@ -1738,32 +2253,80 @@ async function loadDayWithRetry() {
   throw lastErr;
 }
 
+// Two loads can overlap — a platform change while the day is still arriving, or Start
+// on the first-run picker with services chosen while the unfiltered day is still in
+// flight. The NEWEST load wins: an older one that lands later is dropped, where before
+// whichever finished last overwrote the deck. _deckLoading says one is in flight.
+let _deckSeq = 0;
+let _deckLoading = false;
+
 async function loadDeck(force = false) {
   const key = mdParam();
+  if (_mode === "decide") setSubtitleFor("decide", key);   // the masthead names this day
   if (!force && deckState && deckState.key === key && deckState.all && deckState.all.length) {
     renderGenrePref();
     if (deckState.records.length) renderDeck();
     else renderGenreFilteredEmpty();
     return;
   }
-  const wrap = $("#choice");
-  if (wrap) wrap.innerHTML = deckLoadingHtml();
+  // FIRST RUN: the picker owns #choice until Start. The day still loads behind it, so
+  // Start can deal at once, but nothing here may paint over it — and every write
+  // re-checks, because a load begun under the picker can land after Start.
+  const paint = (html) => {
+    const w = $("#choice");
+    if (!w || _firstRun) return null;
+    w.innerHTML = html;
+    return w;
+  };
+  // v350: platforms changed from the record's own card (the listen sheet) — that record
+  // stays on screen as a provisional one-record deck (the first card's machinery), its
+  // button repainted for your new platforms, and leads the new deal; nothing blanks.
+  const pin = _pinNext && _pinNext.key === key ? _pinNext : null;
+  _pinNext = null;
+  if (!pin) paint(deckLoadingHtml());
+  const seq = ++_deckSeq;
+  _deckLoading = true;
+  if (pin) {
+    _fastFirst = { seq };
+    deckState = { key, all: [pin.rec], records: [pin.rec], idx: 0,
+                  noted: pin.noted || new Set(), aside: pin.aside || [], provisional: true };
+    repaintChoiceListen();
+    updateSetAsideBar();
+  } else {
+    fastFirstCard(seq, key);                      // the first card, ahead of the day
+  }
   let data;
   try {
     data = await loadDayWithRetry();
   } catch (e) {
+    if (seq !== _deckSeq) return;                 // a newer load owns the deck now
+    _deckLoading = false;
+    // A provisional first card stays up (you may be reading it); the retry waits
+    // behind it, where the rest of the day would have been.
+    if (deckState && deckState.provisional && _fastFirst && _fastFirst.seq === seq) {
+      deckState.loadFailed = true;
+      if (deckState.idx >= deckState.records.length) renderDeck();
+      return;
+    }
     // Out of retries — likely a deploy's 502 window outlasting them. Offer a real
     // tappable retry (wired with addEventListener; the CSP forbids inline handlers)
     // rather than a dead "try again" sentence.
-    if (wrap) {
-      wrap.innerHTML =
-        `<div class="empty">Couldn't load today's records.
-          <button type="button" class="linklike" id="deckRetry">Try again</button></div>`;
-      const rb = wrap.querySelector("#deckRetry");
-      if (rb) rb.addEventListener("click", () => loadDeck(true));
-    }
+    const w = paint(`<div class="empty">Couldn't load today's records.
+          <button type="button" class="linklike" id="deckRetry">Try again</button></div>`);
+    const rb = w && w.querySelector("#deckRetry");
+    if (rb) rb.addEventListener("click", () => loadDeck(true));
     return;
   }
+  if (seq !== _deckSeq) return;                   // superseded while it was in flight
+  _deckLoading = false;
+  _spotifyTrouble = !!data.spotify_trouble;
+  noteDayLinks(data.albums);
+  noteCachedCovers(data.albums);
+  // The provisional first card this load drew, if any: `cur` is it while it's still on
+  // screen (undefined once you've moved past it with Next or a note).
+  const prov = (deckState && deckState.provisional && _fastFirst && _fastFirst.seq === seq)
+    ? deckState : null;
+  const cur = prov ? prov.records[prov.idx] : undefined;
   // Dedup defensively by album key (the server already collapses clustered dups, but
   // never show the same record twice within one response), then drop records you've
   // already met today so a reload doesn't re-serve what you kept or shelved (D6).
@@ -1780,22 +2343,22 @@ async function loadDeck(force = false) {
   // Everything today was already met (not a thin date): show the calm end-of-day
   // state, not the "no records with a known date" empty. deckState.all is empty, so
   // renderDeck falls straight through to deckEndHtml.
-  if (rawCount && !records.length) {
+  if (rawCount && !records.length && !cur) {
     deckState = { key, all: [], records: [], idx: 0, noted: new Set(), aside: [] };
     renderGenrePref();
     renderDeck();
     return;
   }
-  if (!records.length) {
+  if (!records.length && !cur) {
     deckState = null;
     updateSetAsideBar();
     // Under the opt-in filter an empty day means "nothing on your platforms" — never
     // a dead end: point to dig (always unfiltered). Otherwise it's a genuinely thin
     // date; point out to Explore, never a blank wall (VISION guardrail).
-    if (wrap) wrap.innerHTML = data.filtered
-      ? filteredEmptyHtml("day", "for today")
-      : `<div class="empty">No records with a known date today.
-         <button class="linkish" data-goto-explore>Explore the catalog →</button></div>`;
+    paint(data.filtered
+      ? platformSuggestionHtml(spotifyTroubleLead() || "Nothing today on your listening platforms.")
+      : `<div class="deck-end"><p class="deck-end-lead">We don't have any records from ${
+          esc(mdDisplay(key))} in our database.</p></div>`);
     return;
   }
   // Keep the full day (`all`) so the genre filter can re-derive the visible deck
@@ -1803,11 +2366,16 @@ async function loadDeck(force = false) {
   // resumeAt only on this FRESH-BUILD path: the same-session early return above
   // already has your place, and a filter change (which re-deals via the other
   // dealOrder call site) is a deliberate "show me something else".
+  // The first card already drawn leads the deal (the same object, so nothing on it is
+  // redrawn); once you've moved past it, the deal starts ready-first as usual.
+  const dealt = dealOrder(applyDeckFilters(records));
   deckState = { key, all: records,
-                records: resumeAt(dealOrder(applyDeckFilters(records))),
-                idx: 0, noted: new Set(), aside: [] };
+                records: cur ? pinFirst(dealt, cur) : prov ? readyFirst(dealt) : dealFresh(dealt),
+                idx: 0, noted: prov ? prov.noted : new Set(), aside: prov ? prov.aside : [] };
   renderGenrePref();
-  if (deckState.records.length) renderDeck();
+  const onScreen = cur && $("#choice .deck-card[data-uid]");
+  if (onScreen && onScreen.dataset.uid === albumKey(cur)) { updateSetAsideBar(); warmUpNext(); }
+  else if (deckState.records.length) renderDeck();
   else renderGenreFilteredEmpty();
 }
 
@@ -1827,10 +2395,20 @@ function enterToday() {
 // state that still points somewhere (Notebook, the set-aside pile, dig) — never a
 // blank wall (VISION guardrail).
 function renderDeck() {
+  if (_firstRun) { renderFirstRun(); return; }
   const wrap = $("#choice");
   if (!wrap || !deckState) return;
   updateSetAsideBar();
   if (deckState.idx >= deckState.records.length) {
+    // A provisional first card was all we had: the rest of the day is still coming.
+    if (deckState.provisional) {
+      wrap.innerHTML = deckState.loadFailed ? `<div class="empty">Couldn't load today's records.
+          <button type="button" class="linkish" id="deckRetry">Try again</button></div>`
+        : deckLoadingHtml();
+      const rb = wrap.querySelector("#deckRetry");
+      if (rb) rb.addEventListener("click", () => loadDeck(true));
+      return;
+    }
     saveAt(null);              // deck's done — there's no record to come back to
     wrap.innerHTML = deckEndHtml();
     return;
@@ -1849,10 +2427,11 @@ function renderDeck() {
         <div class="deck-cover">${coverHtml(a)}</div>
         <div class="deck-meta">
           <p class="deck-title">${artistLink(a.artist)} — <b>${esc(a.title)}</b></p>
-          <p class="deck-sub">${deckMeta(a)}</p>
+          <p class="deck-sub"><span class="ds-facts">${deckMeta(a)}</span><span id="deckOpened"
+            class="ds-mark">${deckOpenedHtml(key)}</span></p>
         </div>
       </div>
-      <div id="deckListen" class="deck-listen">${listenBlockHtml(a, { compact: true })}</div>
+      <div id="deckListen" class="deck-listen">${deckListenHtml(a)}</div>
       <!-- v329 (owner 2026-10-03): Keep is retired. Writing a note is how a record
            becomes yours, and tapping Listen leaves an "opened" entry on its own, so
            the pair is Write a note + Next (Skip until v331). Write a note sits where
@@ -1864,6 +2443,7 @@ function renderDeck() {
       </div>
     </article>`;
   observeArt(wrap, { eager: 2 });
+  warmUpNext();
   // Fan out the confirmed door (like the keep reveal) and repaint just the listen
   // row when Spotify/YouTube/etc. resolve — never leave the spinner spinning. One
   // button, your #1 confirmed platform (compact): the pool is already filtered to
@@ -1872,7 +2452,8 @@ function renderDeck() {
     a._doorPending = false;
     if (deckState && deckState.records[deckState.idx] === a) {
       const el = $("#deckListen");
-      if (el) el.innerHTML = listenBlockHtml(albumData[key] || a, { compact: true });
+      if (el) el.innerHTML = deckListenHtml(albumData[key] || a);
+      recheckAppleArt($("#choice"));
     }
   });
   // The composer is the one choke point for writing (guest cap included); saving a
@@ -1882,40 +2463,47 @@ function renderDeck() {
     openNoteModal(key);
   });
   $("#setAsideBtn").addEventListener("click", setAsideCurrent);
-  maybeStartTour();     // the first-run guided tour (once/device)
 }
 
 // End of the finite deck — you've seen every record for today. Calm, and always a
 // door out: what you wrote about (Notebook), the pile you set aside, or dig for more.
 // (v329: counted notes, not keeps — Keep is retired.)
+// OUT OF RECORDS (owner 2026-10-05). "The first check should be for filters and a
+// suggestion to change filters should be the only thing seen. Then if truly no filters
+// are selected, the message should just read 'We don't have any more records from
+// Month Day in our database'" — keeping only the dig-deeper line under it. The "you
+// didn't write about any" and "look again at the ones you've seen" lines are gone.
+// Filters, in order: Filter's tags / years, then your listening platforms. Dig mode
+// ignores every filter, so in dig there is only ever the plain message.
+function filterSuggestionHtml(lead) {
+  return `<div class="deck-end deck-end-filtered">
+    <p class="deck-end-lead">${lead}</p>
+    <div class="deck-end-actions">
+      <button type="button" class="dig-pill" data-change-filters>Change filters</button>
+      <button type="button" class="linkish" data-clear-genres>Clear filters</button>
+    </div></div>`;
+}
+function platformSuggestionHtml(lead) {
+  return `<div class="deck-end deck-end-filtered">
+    <p class="deck-end-lead">${lead}</p>
+    <div class="deck-end-actions">
+      <button type="button" class="dig-pill" data-change-platforms>Change listening platforms</button>
+      <button type="button" class="linkish" data-clear-platforms>See every record</button>
+    </div></div>`;
+}
+function filtersActive() {
+  return !digMode && !!(genreTags.size || deckEras.size || deckYearFrom != null || deckYearTo != null);
+}
 function deckEndHtml() {
-  const aside = (deckState && deckState.aside.length) || 0;
-  const noted = (deckState && deckState.noted && deckState.noted.size) || 0;
-  const keptLine = noted
-    ? `<p>You wrote about ${noted} — <button class="linkish" data-goto-notebook>see them in your Notebook →</button></p>`
-    : `<p>You didn't write about any today — that's fine. Nothing has to be written.</p>`;
-  const asideLine = aside
-    ? `<p><button class="linkish" data-open-aside>Look again at the ${aside} you've seen →</button></p>`
-    : "";
-  // A thin platform-filtered day is the #1 way Today dead-ends fast: you filter to
-  // a service (Spotify/Apple confirm few records), set the one or two aside, and
-  // land here — feeling stuck. Name the filter honestly and offer to clear it,
-  // rather than leaving only the generic dig line. (Dig ignores the filter, so the
-  // hint only shows when the filter is what thinned the day.)
-  const platKeys = filterPlatformKeys();
-  const thinFiltered = platKeys.length && deckState && deckState.all.length <= 8;
-  const platLine = thinFiltered
-    ? `<p class="deck-end-filter">Only <b>${deckState.all.length}</b> of today's records
-       ${deckState.all.length === 1 ? "is" : "are"} confirmed on
-       ${esc(platKeys.map((k) => _platLabel[k] || k).join(", "))} — that's what made this
-       so short. <button class="linkish" data-clear-platforms>See every record today →</button></p>`
-    : "";
+  if (filtersActive()) return filterSuggestionHtml("No more records today match your filters.");
+  if (!digMode && filterPlatformKeys().length)
+    return platformSuggestionHtml(spotifyTroubleLead() || "No more records today on your listening platforms.");
   const digLine = (poolOn() && !digMode)
     ? `<p class="muted"><button class="linkish" data-dig-escape>Dig deeper — include records with no confirmed way to listen yet →</button></p>`
     : "";
   return `<div class="deck-end">
-    <p class="deck-end-lead">That's every record released on ${esc(mdDisplay(mdParam()))}.</p>
-    ${keptLine}${asideLine}${platLine}${digLine}
+    <p class="deck-end-lead">We don't have any more records from ${esc(mdDisplay(mdParam()))} in our database.</p>
+    ${digLine}
   </div>`;
 }
 
@@ -1987,7 +2575,8 @@ function repaintChoiceListen() {
   const dk = document.getElementById("deckListen");
   if (dk && deckState && deckState.idx < deckState.records.length) {
     const a = deckState.records[deckState.idx];
-    dk.innerHTML = listenBlockHtml(albumData[albumKey(a)] || a, { compact: true });
+    dk.innerHTML = deckListenHtml(albumData[albumKey(a)] || a);
+    recheckAppleArt($("#choice"));
   }
 }
 
@@ -2238,7 +2827,7 @@ async function runSearch() {
   const field = $("#fieldFilter").value;
   if (field) params.set("field", field);
   try {
-    const r = await fetch("/api/search?" + params);
+    const r = await fetch("/api/search?" + params, SEARCH_OPTS());
     // A failed search must not read as an empty one. Without this, a 5xx with a JSON
     // body parses cleanly and renders "0 matches" — the app confidently telling you
     // the catalog holds nothing, which is the same false-empty shape as FB#92/#104.
@@ -2388,9 +2977,8 @@ async function runExploreDay(mmdd) {
   if (!body || !mmdd) return;
   exploreDay = mmdd;
   const inp = document.getElementById("forestSearchInput");
-  if (inp) inp.value = "";                          // day + text are mutually exclusive
-  const clr = document.getElementById("forestDayClear");
-  if (clr) clr.classList.remove("hidden");
+  if (inp) { inp.value = ""; refreshSearchClear(inp); }   // day + text are mutually exclusive
+  renderBarChips();
   const pretty = formatMD(mmdd);
   body.innerHTML = `<div class="empty">Looking for records from ${esc(pretty)}…</div>`;
   let data;
@@ -2403,6 +2991,7 @@ async function runExploreDay(mmdd) {
   }
   if (exploreDay !== mmdd) return;                  // a newer pick / a text search took over
   const albums = data.albums || [];
+  noteCachedCovers(albums);
   if (!albums.length) {
     body.innerHTML = `<div class="empty">No records on file released on
       ${esc(pretty)}, any year.</div>`;
@@ -2423,28 +3012,24 @@ async function runExploreDay(mmdd) {
 function exitExploreDay(silent) {
   if (!exploreDay) return;
   exploreDay = null;
-  const clr = document.getElementById("forestDayClear");
-  if (clr) clr.classList.add("hidden");
-  const dm = document.getElementById("forestDayMonth");
-  if (dm) dm.value = "";
-  const dd = document.getElementById("forestDayDay");
-  if (dd) dd.value = "";
+  renderBarChips();
   if (!silent) {
     const inp = document.getElementById("forestSearchInput");
     runExploreSearch(inp ? inp.value : "");
   }
 }
 
-// Today's "A specific day" pill: jump to Explore and open the day picker there, so the
-// birthday flow lives on the pull surface, not Today's live-availability deck.
+// Filter's "See a specific day →": go to Search and open its bar for a day. Since v353
+// the bar understands days ("oct 5", "10/5"), so the old month/day row is gone; the
+// placeholder says what to type until the bar is left.
 function gotoSpecificDay() {
   setMode("forest");
-  // Reveal the day-row (hidden by default on Explore, owner 2026-07-26) — this pull is
-  // the only way in, so it appears where it's asked for rather than parked under search.
-  const row = document.getElementById("forestDayRow");
-  if (row) row.classList.remove("hidden");
-  const inp = document.getElementById("forestDayMonth");
-  if (inp) { try { inp.focus(); } catch (e) { /* focus is enough */ } }
+  const inp = document.getElementById("forestSearchInput");
+  if (!inp) return;
+  const was = inp.placeholder;
+  inp.placeholder = "Type a day, like oct 5…";
+  inp.addEventListener("blur", () => { inp.placeholder = was; }, { once: true });
+  try { inp.focus(); } catch (e) { /* focus is enough */ }
 }
 
 function loadForest() {
@@ -2496,6 +3081,7 @@ function artistHitRow(a) {
 async function runExploreSearch(term) {
   const body = $("#forestBody");
   const q = (term || "").trim();
+  if (barDay(q)) return;                    // a day: the bar offers it (renderBarSugg)
   if (q) exitExploreDay(true);              // a text search supersedes the day browse
   if (!q) {
     if (exploreDay) return;                 // day mode with an empty box: keep the day view
@@ -2508,7 +3094,7 @@ async function runExploreSearch(term) {
     // FB#37: search album titles AND track titles ("golden years" → the song, and
     // its album). Tracks degrade to [] when tracks_fts isn't built — never an error.
     const [albumsR, tracksR] = await Promise.allSettled([
-      fetch("/api/search?" + new URLSearchParams({ q })).then((r) => r.json()),
+      fetch("/api/search?" + new URLSearchParams({ q }), SEARCH_OPTS()).then((r) => r.json()),
       fetch("/api/track/search?" + new URLSearchParams({ q, limit: 8 })).then((r) => r.json()),
     ]);
     // Latest-wins: a slower earlier/broader query must not clobber the newest one
@@ -2582,6 +3168,14 @@ const artObserver = ("IntersectionObserver" in window)
 // network for a huge catalog. The remainder still loads lazily on scroll.
 function observeArt(scope, opts = {}) {
   const root = scope || document;
+  // The genuinely missing covers, found BEFORE the hotlinked ones below start loading.
+  // Those stay .placeholder until their image arrives, so asking afterwards swept them
+  // in too, and /api/art/ensure answered with the catalog's own cover, which can be a
+  // different image: a Today card's Cover Art Archive cover was swapped for Apple's a
+  // moment later (and, with v348's Apple rule, wiped). An Apple cover held back by that
+  // rule isn't missing either.
+  const els = Array.from(root.querySelectorAll(
+    ".cover.placeholder[data-rid]:not([data-cover]):not([data-apple-art])"));
   // Remote hotlinked covers (F13): apply them now, with a dead-link fallback.
   root.querySelectorAll(".cover.placeholder[data-cover]").forEach((el) => {
     const url = el.dataset.cover;
@@ -2589,8 +3183,6 @@ function observeArt(scope, opts = {}) {
     applyCover(el.dataset.rid, url, el);
   });
   // The rest are genuinely missing — lazy-fetch them on demand.
-  const els = Array.from(
-    root.querySelectorAll(".cover.placeholder[data-rid]:not([data-cover])"));
   let rest = els;
   if (opts.eager) {
     rest = els.slice(opts.eager);
@@ -2662,29 +3254,132 @@ function markNoArt(rid) {
     .forEach((el) => el.classList.add("no-art"));
 }
 
+// SPEED (owner 2026-10-05: "the load time on that first album is really important …
+// right now it takes about 5-10 seconds and we lose people in that time"). Measured on
+// October 5's records: Cover Art Archive's `/front` is the ORIGINAL upload — 0.4 to
+// 24 MB (one took 64 s) for a 306px square, and the card waited for all of it. CAA
+// serves sized thumbnails at the same address + `-250` / `-500` (~50–125 KB, ~1–1.5 s,
+// most of it the archive's two redirects). Ask for those; a cover CAA hasn't sized
+// (it answers 500 for a few) falls back to the original, and only then to the
+// placeholder. Anything that isn't a CAA front passes through untouched.
+//
+// COVER CACHE (v347, covercache.py): the host keeps its own copy of the 500px thumbnail
+// for today's and tomorrow's records, and the day's list marks those `cover_cached`.
+// caaThumb() asks our server for them — one same-origin GET instead of the archive's
+// two redirects — and applyCover() falls back to the archive if our copy has gone.
+const CAA_FRONT = /^(https?:\/\/coverartarchive\.org\/(release|release-group)\/([0-9a-f-]{36})\/front)(?:-\d+)?$/i;
+const _cachedCovers = new Set();   // "<kind>/<mbid>" the server said it holds
+function noteCachedCovers(list) {
+  (list || []).forEach((a) => {
+    const m = a && a.cover_cached && CAA_FRONT.exec(a.cover || "");
+    if (m) _cachedCovers.add(`${m[2]}/${m[3]}`.toLowerCase());
+  });
+}
+function caaSized(url, size = 500) {
+  const m = CAA_FRONT.exec(url || "");
+  return m ? `${m[1]}-${size}` : url;
+}
+function caaThumb(url, size = 500) {
+  const m = CAA_FRONT.exec(url || "");
+  if (!m) return url;
+  const key = `${m[2]}/${m[3]}`.toLowerCase();
+  return size === 500 && _cachedCovers.has(key) ? `/covers/${key}-500.jpg` : `${m[1]}-${size}`;
+}
+
+// APPLE ARTWORK (v348, owner 2026-10-05: option A). Apple allows its artwork only to
+// promote what's in its store, beside an Apple Music link. So an Apple cover shows only
+// where that record's Apple Music link is on screen in the same card: the Today card
+// when its Listen button is Apple Music, Album details when Apple Music is its Listen
+// button (or "Other ways to listen" is open), a Search card once its ♫ Listen is open.
+// Everywhere else (the Notebook, Seen, the trail, a card whose button names another
+// service) the card keeps its placeholder. Measured that day: ~10% of a crawled day's
+// records have only Apple art, every one with an Apple link, and with "Everything" the
+// Today card's button is Apple Music for 91–100% of them. The share card never uses it.
+const APPLE_ART = /^https?:\/\/(?:[a-z0-9-]+\.)*(?:mzstatic|apple)\.com\//i;
+function isAppleArt(url) {
+  return APPLE_ART.test(url || "");
+}
+// The card a cover shares with its Listen links.
+const ART_SCOPE = ".deck-card, .story-head-row, .card";
+function appleLinkShown(el) {
+  const scope = el && el.closest ? el.closest(ART_SCOPE) : null;
+  if (!scope) return false;
+  return Array.from(scope.querySelectorAll("a.am")).some((l) =>
+    !l.closest("details:not([open])") && getComputedStyle(l).display !== "none");
+}
+// Back to the card's own placeholder (the label it was drawn with), not "no art found":
+// the art exists, it just isn't ours to show here.
+function hideAppleArt(el, rid) {
+  if (el.classList.contains("placeholder")) return;
+  el.classList.add("placeholder");
+  el.style.backgroundImage = "";
+  el.style.setProperty("--ph-hue", phHue(rid));
+  el.textContent = coverLabel(albumIndex[rid] || {});
+}
+// A card's links changed (the door filled in, a fold opened, your platforms changed):
+// show or hide its Apple cover to match.
+function recheckAppleArt(root) {
+  if (!root || !root.querySelectorAll) return;
+  root.querySelectorAll(".cover[data-apple-art]").forEach((el) => {
+    const showing = !el.classList.contains("placeholder");
+    if (appleLinkShown(el)) { if (!showing) applyCover(el.dataset.rid, el.dataset.appleArt, el); }
+    else if (showing) hideAppleArt(el, el.dataset.rid);
+  });
+}
+// The Today card shows its cover only when it isn't Apple's, or its one Listen button is
+// Apple Music — what readyFirst() and the first card need to know before drawing it.
+function deckCoverShows(a) {
+  if (!a || !a.cover) return false;
+  if (!isAppleArt(a.cover)) return true;
+  const p = pickListenPlatforms(a.platforms, loadListenPrefs()).primary;
+  return !!(p && p[0] === "apple");
+}
+document.addEventListener("toggle", (e) => {
+  const d = e.target;
+  if (d && d.tagName === "DETAILS") recheckAppleArt(d.closest(ART_SCOPE));
+}, true);
+
 function applyCover(rid, cover, only) {
   const targets = only ? [only]
     : document.querySelectorAll(`.cover[data-rid="${rid}"]`);
-  const reveal = (el) => {
+  const reveal = (el, src) => {
+    if (el.dataset.appleArt && !appleLinkShown(el)) { hideAppleArt(el, rid); return; }
     el.classList.remove("placeholder", "no-art");
-    el.style.backgroundImage = `url('${cssUrl(cover)}')`;
+    el.style.backgroundImage = `url('${cssUrl(src)}')`;
     el.textContent = "";
     // Remember the resolved cover on the album data so every OTHER surface — the
     // story modal especially — renders the SAME image instead of re-resolving to a
-    // different one (feedback #65: deck cover ≠ details cover).
-    if (albumData[rid] && albumData[rid].cover !== cover) albumData[rid].cover = cover;
+    // different one (feedback #65: deck cover ≠ details cover). Our cached copy is
+    // remembered as the archive's address: it's the same image, and /covers/ only
+    // lives for a day or two, so it must never reach a note or the Notebook.
+    const keep = src.startsWith("/covers/") ? caaSized(cover) : src;
+    if (albumData[rid] && albumData[rid].cover !== keep) albumData[rid].cover = keep;
   };
   targets.forEach((el) => {
+    if (isAppleArt(cover)) {
+      el.dataset.appleArt = cover;
+      if (!appleLinkShown(el)) { hideAppleArt(el, rid); return; }
+    }
     // Hotlinked covers can be slow, 404, or expire. Load first, reveal after:
     // stripping the placeholder text before the image arrives left a card with
     // no art AND no words while a dead/slow link dangled (feedback #15).
     if (isRemoteUrl(cover)) {
-      const probe = new Image();
-      probe.onload = () => reveal(el);
-      probe.onerror = () => markPlaceholder(el, rid);
-      probe.src = cover;
+      // The record on Today's card is the one someone is waiting on: fetch it first.
+      const urgent = !!(el.closest && el.closest(".deck-cover"));
+      const load = (src, onFail) => {
+        const probe = new Image();
+        if (urgent) probe.fetchPriority = "high";
+        probe.onload = () => reveal(el, src);
+        probe.onerror = onFail;
+        probe.src = src;
+      };
+      // Our copy, then the archive's thumbnail, then its original, then the placeholder.
+      const tries = [...new Set([caaThumb(cover), caaSized(cover), cover])];
+      const next = (i) => (i < tries.length
+        ? load(tries[i], () => next(i + 1)) : markPlaceholder(el, rid));
+      next(0);
     } else {
-      reveal(el);
+      reveal(el, cover);
     }
   });
 }
@@ -3075,7 +3770,7 @@ async function noteAttachSearch(q) {
   if (!q) { box.innerHTML = ""; _noteAttachItems = []; return; }
   const params = new URLSearchParams({ q });
   const [albumsR, peopleR, tracksR] = await Promise.allSettled([
-    fetch("/api/search?" + params).then((r) => r.json()),
+    fetch("/api/search?" + params, SEARCH_OPTS()).then((r) => r.json()),
     fetch("/api/person/search?" + params).then((r) => r.json()),
     fetch("/api/track/search?" + params).then((r) => r.json()),
   ]);
@@ -3529,7 +4224,10 @@ function refreshSearchClear(input) {
 
 async function loadTrail(force = false) {
   if (_trailLoading && !force) return _trailLoading;
-  const q = $("#journalSearch").value.trim();
+  // v353: a date-like entry in the bar ("oct", "last week") is offered as a range, not
+  // searched as words — the trail stays put under the suggestions until one is picked.
+  const typed = $("#journalSearch").value.trim();
+  const q = nbDateLike(typed) ? "" : typed;
   const seq = ++_trailSeq;
   // FB#107: never show a blank shelf on the first cold paint. On the very first open
   // (a fresh update, no notebook rendered yet) the /api/journal read hangs on the
@@ -3556,7 +4254,9 @@ async function loadTrail(force = false) {
       // slow fetch can't clobber fresher results (e.g. clearing the box).
       if (seq !== _trailSeq) return;
       _trailUnreadable = +journal.unreadable || 0;
-      const entries = buildTrailEntries(journal, choicesResp, q, openedResp);
+      const all = buildTrailEntries(journal, choicesResp, q, openedResp);
+      if (!q) _trailDays = all.map((e) => localDayOf(e.at)).filter(Boolean);   // for the counts
+      const entries = trailInDateRange(all, nbDateRange());
       // Resolve albums the trail needs but the feed didn't hydrate (it only hydrates
       // by numeric release_id): a track note's album cover (FB#56), and an album note
       // whose stored snapshot has no name — MB-only ('m:') albums have a null
@@ -3589,6 +4289,307 @@ async function loadTrail(force = false) {
 // day doesn't get a row of its own — it rides on that note as an "Opened in ___" line,
 // so the day reads as one thing you did, not two. Same-day duplicates (a tap on two
 // devices) fold to the earliest. Filtered by ?q= on the client, like choices.
+// FILTER BY DATE (owner 2026-10-05): the notebook's From / To pickers. Either end may be
+// open; a reversed pair is read the right way round rather than matching nothing.
+// Dates compare as YYYY-MM-DD strings in the reader's own day (localDayOf), the same
+// day the trail's headings show.
+function nbDateRange() {
+  const f = ($("#nbFrom") || {}).value || "", t = ($("#nbTo") || {}).value || "";
+  return f && t && f > t ? { from: t, to: f } : { from: f, to: t };
+}
+function trailInDateRange(entries, range) {
+  if (!range.from && !range.to) return entries;
+  return entries.filter((e) => {
+    const d = localDayOf(e.at);
+    return d && (!range.from || d >= range.from) && (!range.to || d <= range.to);
+  });
+}
+function nbDateLabel(ymd) {
+  const [y, m, d] = String(ymd).split("-").map(Number);
+  return y ? new Date(y, m - 1, d).toLocaleDateString(undefined,
+    { month: "short", day: "numeric", year: "numeric" }) : "";
+}
+
+// --- THE BOTTOM BAR: dates in the search (v353, owner 2026-10-05, mockups N1 + S1) ----
+// One bar per tab, at the foot (index.html #bottomBar). It understands dates:
+//   * Notebook — a date-like entry is offered as ranges, with how many of your entries
+//     each holds (only ranges that hold something): "oct" → October 2026 / October 2025,
+//     "oct 5", "10/5", "5 oct", "2025", "today", "last week", "this month", a range like
+//     "sep 1 - oct 5", or just "dates" for "Pick dates…" (the old From/To). A picked
+//     range is a chip in the bar; words typed beside it search within it.
+//   * Search — a day ("oct 5", "10/5") is offered as the records released then, any
+//     year (runExploreDay, F33's day search, which used to hide behind Filter).
+// The parsers are pure (tests/js/bar-dates.test.mjs); the state is _nbRange + the
+// hidden #nbFrom/#nbTo that nbDateRange() already reads, and exploreDay.
+let _nbRange = null;       // { label, from, to } — the Notebook's picked range
+let _trailDays = [];       // the local day of every entry in the last unfiltered read
+let _barPicking = false;   // the Notebook's "Pick dates…" row is open
+const BAR_MONTHS = ["january", "february", "march", "april", "may", "june", "july",
+  "august", "september", "october", "november", "december"];
+const BAR_MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const BAR_CAL = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>`;
+function barMonth(w) {
+  w = String(w || "").toLowerCase().replace(/\.$/, "");
+  return w.length >= 3 ? BAR_MONTHS.findIndex((m) => m.startsWith(w)) : -1;
+}
+function barYmd(y, m, d) {
+  return `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+function barDaysIn(y, m) { return new Date(y, m + 1, 0).getDate(); }
+function barDayLabel(ymd) {
+  const [y, m, d] = String(ymd).split("-").map(Number);
+  return `${BAR_MON[m - 1]} ${d}, ${y}`;
+}
+function barMonthLabel(y, m) { return `${BAR_MONTHS[m][0].toUpperCase()}${BAR_MONTHS[m].slice(1)} ${y}`; }
+// One date expression → candidate ranges, one per year to consider (newest first).
+function barOneDate(text, years) {
+  const t = String(text || "").trim().toLowerCase();
+  const out = [];
+  let m;
+  if ((m = t.match(/^((?:19|20)\d\d)$/))) {
+    out.push({ label: `All of ${m[1]}`, from: `${m[1]}-01-01`, to: `${m[1]}-12-31` });
+  } else if ((m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) {
+    const mi = +m[2] - 1, d = +m[3];
+    if (mi >= 0 && mi < 12 && d >= 1 && d <= barDaysIn(+m[1], mi)) {
+      const ymd = barYmd(+m[1], mi, d);
+      out.push({ label: barDayLabel(ymd), from: ymd, to: ymd });
+    }
+  } else if ((m = t.match(/^([a-z]+)\.?(?:\s+(\d{1,2}))?(?:,?\s+((?:19|20)\d\d))?$/))
+             || (m = t.match(/^(\d{1,2})\s+([a-z]+)\.?(?:,?\s+((?:19|20)\d\d))?$/))) {
+    const dayFirst = /^\d/.test(t);
+    const mi = barMonth(dayFirst ? m[2] : m[1]);
+    const d = dayFirst ? m[1] : m[2];
+    if (mi >= 0) {
+      for (const y of (m[3] ? [+m[3]] : years)) {
+        if (d) {
+          if (+d >= 1 && +d <= barDaysIn(y, mi)) {
+            const ymd = barYmd(y, mi, +d);
+            out.push({ label: barDayLabel(ymd), from: ymd, to: ymd });
+          }
+        } else {
+          out.push({ label: barMonthLabel(y, mi), from: barYmd(y, mi, 1), to: barYmd(y, mi, barDaysIn(y, mi)) });
+        }
+      }
+    }
+  } else if ((m = t.match(/^(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2}|\d{4}))?$/))) {
+    const mi = +m[1] - 1, d = +m[2];
+    const ys = m[3] ? [m[3].length === 2 ? 2000 + +m[3] : +m[3]] : years;
+    for (const y of ys) {
+      if (mi >= 0 && mi < 12 && d >= 1 && d <= barDaysIn(y, mi)) {
+        const ymd = barYmd(y, mi, d);
+        out.push({ label: barDayLabel(ymd), from: ymd, to: ymd });
+      }
+    }
+  }
+  return out;
+}
+// The Notebook's reading of the bar: relative words, one date, or "A - B" / "A to B".
+function barDateRanges(q, today, years) {
+  const t = String(q || "").trim().toLowerCase();
+  if (!t) return [];
+  const T = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const add = (n) => { const x = new Date(T); x.setDate(x.getDate() + n); return x; };
+  const iso = (d) => barYmd(d.getFullYear(), d.getMonth(), d.getDate());
+  const mon = (T.getDay() + 6) % 7;                       // days since Monday
+  const ty = T.getFullYear(), tm = T.getMonth();
+  const lm = tm === 0 ? 11 : tm - 1, lmy = tm === 0 ? ty - 1 : ty;
+  const rel = [
+    ["today", "Today", iso(T), iso(T)],
+    ["yesterday", "Yesterday", iso(add(-1)), iso(add(-1))],
+    ["this week", "This week", iso(add(-mon)), iso(T)],
+    ["last week", "Last week", iso(add(-mon - 7)), iso(add(-mon - 1))],
+    ["this month", "This month", barYmd(ty, tm, 1), iso(T)],
+    ["last month", "Last month", barYmd(lmy, lm, 1), barYmd(lmy, lm, barDaysIn(lmy, lm))],
+    ["this year", "This year", `${ty}-01-01`, iso(T)],
+    ["last year", "Last year", `${ty - 1}-01-01`, `${ty - 1}-12-31`],
+  ];
+  if (t.length >= 3) {
+    const hits = rel.filter(([w]) => w.startsWith(t));
+    if (hits.length) return hits.map(([, label, from, to]) => ({ label, from, to }));
+  }
+  const span = t.match(/^(.+?)\s*(?:-|–|—|\bto\b|\buntil\b)\s*(.+)$/);
+  if (span && !/^\d{4}-\d{1,2}-\d{1,2}$/.test(t) && !/^\d{1,2}-\d{1,2}(?:-\d{2,4})?$/.test(t)) {
+    const out = [];
+    for (const y of years) {
+      const a = barOneDate(span[1], [y])[0];
+      let b = barOneDate(span[2], [y])[0];
+      if (a && b && b.to < a.from) b = barOneDate(span[2], [y + 1])[0];   // dec 1 - jan 5
+      if (a && b) out.push({ label: `${a.label} – ${b.label}`, from: a.from, to: b.to });
+    }
+    if (out.length) return out;
+  }
+  return barOneDate(t, years);
+}
+// Search's reading: a calendar day, any year → "MM-DD", else null.
+function barDay(q) {
+  const t = String(q || "").trim().toLowerCase();
+  let m = t.match(/^([a-z]+)\.?\s+(\d{1,2})$/) || t.match(/^(\d{1,2})\s+([a-z]+)\.?$/);
+  if (m) {
+    const dayFirst = /^\d/.test(t);
+    const mi = barMonth(dayFirst ? m[2] : m[1]), d = +(dayFirst ? m[1] : m[2]);
+    if (mi >= 0 && d >= 1 && d <= barDaysIn(2024, mi)) return barYmd(2024, mi, d).slice(5);
+    return null;
+  }
+  m = t.match(/^(\d{1,2})[/.-](\d{1,2})$/);
+  if (m && +m[1] >= 1 && +m[1] <= 12 && +m[2] >= 1 && +m[2] <= barDaysIn(2024, +m[1] - 1))
+    return barYmd(2024, +m[1] - 1, +m[2]).slice(5);
+  return null;
+}
+// Years a Notebook date could mean: the ones your entries reach, newest first, always
+// with this year.
+function barYears() {
+  const ys = new Set(_trailDays.map((d) => +d.slice(0, 4)));
+  ys.add(new Date().getFullYear());
+  return [...ys].sort((a, b) => b - a);
+}
+function nbDateLike(q) {
+  const t = String(q || "").trim().toLowerCase();
+  return /^dates?$/.test(t) || barDateRanges(t, new Date(), barYears()).length > 0;
+}
+function barCount(r) { return _trailDays.filter((d) => d >= r.from && d <= r.to).length; }
+function barInput() { return _mode === "forest" ? $("#forestSearchInput") : $("#journalSearch"); }
+
+function setNbRange(r) {
+  _nbRange = r;
+  const f = $("#nbFrom"), t = $("#nbTo");
+  if (f) f.value = r ? r.from : "";
+  if (t) t.value = r ? r.to : "";
+  renderBarChips();
+  loadTrail(true);
+}
+function renderBarChips() {
+  const chip = (label, which, what) => `<span class="bar-chip-label">${esc(label)}</span><button
+    type="button" class="bar-chip-x" data-chip-clear="${which}" aria-label="Clear ${what}">✕</button>`;
+  const nb = $("#nbDateChip"), dc = $("#dayChip");
+  if (nb) {
+    nb.classList.toggle("hidden", !(_mode === "journal" && _nbRange));
+    nb.innerHTML = _nbRange ? chip(_nbRange.label, "nb", "the dates") : "";
+  }
+  if (dc) {
+    const [mm, dd] = (exploreDay || "").split("-").map(Number);
+    dc.classList.toggle("hidden", !(_mode === "forest" && exploreDay));
+    dc.innerHTML = exploreDay ? chip(`${BAR_MON[mm - 1]} ${dd}`, "day", "the day") : "";
+  }
+  const js = $("#journalSearch");
+  if (js) js.placeholder = _nbRange ? "Find words…" : "Find in your notebook…";
+}
+function hideBarSugg() {
+  const box = $("#barSugg");
+  if (box) { box.classList.add("hidden"); box.innerHTML = ""; }
+  _barPicking = false;
+}
+// What the bar offers for what's typed (or nothing). Rows carry their pick in data-*.
+function renderBarSugg() {
+  const box = $("#barSugg"), inp = barInput();
+  if (!box || !inp || document.activeElement !== inp && !box.contains(document.activeElement)) {
+    if (box && !_barPicking) hideBarSugg();
+    return;
+  }
+  const q = inp.value.trim();
+  let html = "";
+  if (_mode === "forest") {
+    const md = barDay(q);
+    if (md && md !== exploreDay) {
+      html = `<p class="bs-lab">A day</p><button type="button" class="bs-row is-first" data-bs-day="${md}"
+        >${BAR_CAL}Records released on ${esc(formatMD(md))}<span class="bs-n">any year</span></button>`;
+    }
+  } else if (_mode === "journal" && (nbDateLike(q) || _barPicking)) {
+    const ranges = /^dates?$/i.test(q) ? [] : barDateRanges(q, new Date(), barYears())
+      .map((r) => ({ ...r, n: barCount(r) }));
+    const hits = ranges.filter((r) => r.n > 0);
+    html = `<p class="bs-lab">Narrow by date</p>`
+      + hits.map((r, i) => `<button type="button" class="bs-row${i ? "" : " is-first"}" data-bs-from="${r.from}"
+          data-bs-to="${r.to}" data-bs-label="${esc(r.label)}">${BAR_CAL}${esc(r.label)}<span class="bs-n">${
+          r.n} ${r.n === 1 ? "entry" : "entries"}</span></button>`).join("")
+      + (ranges.length && !hits.length
+        ? `<p class="bs-none">Nothing in your notebook from ${esc(ranges[0].label)}.</p>` : "")
+      + (_barPicking
+        ? `<div class="bs-pickrow"><input type="date" id="bsFrom" aria-label="From date"
+            value="${esc((_nbRange && _nbRange.from) || "")}"><span aria-hidden="true">–</span><input
+            type="date" id="bsTo" aria-label="To date" value="${esc((_nbRange && _nbRange.to) || "")}"
+            ><button type="button" data-bs-apply>Done</button></div>`
+        : `<button type="button" class="bs-row${hits.length ? "" : " is-first"}" data-bs-pick>${BAR_CAL}Pick dates…</button>`);
+  }
+  box.innerHTML = html;
+  box.classList.toggle("hidden", !html);
+}
+// Enter / the keyboard's search key: take the first offer, if there is one.
+function pickFirstBarSugg() {
+  const first = $("#barSugg:not(.hidden) .bs-row.is-first");
+  if (!first) return false;
+  first.click();
+  return true;
+}
+function wireBottomBar() {
+  const box = $("#barSugg");
+  const js = $("#journalSearch"), fs = $("#forestSearchInput");
+  if (!box || !js || !fs) return;
+  [js, fs].forEach((inp) => {
+    inp.addEventListener("input", renderBarSugg);
+    inp.addEventListener("focus", renderBarSugg);
+    inp.addEventListener("blur", () => setTimeout(() => {
+      if (!box.contains(document.activeElement) && !_barPicking) hideBarSugg();
+    }, 120));
+  });
+  js.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && pickFirstBarSugg()) e.preventDefault();
+  });
+  [js, fs].forEach((inp) => inp.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !box.classList.contains("hidden")) { e.stopPropagation(); hideBarSugg(); }
+  }));
+  // A press on an offer must not take the focus (the keyboard would drop) — except in
+  // the date fields, which need it.
+  box.addEventListener("pointerdown", (e) => {
+    if (!e.target.closest("input")) e.preventDefault();
+  });
+  box.addEventListener("click", (e) => {
+    const day = e.target.closest("[data-bs-day]");
+    if (day) { hideBarSugg(); runExploreDay(day.dataset.bsDay); return; }
+    const r = e.target.closest("[data-bs-from]");
+    if (r) {
+      js.value = ""; refreshSearchClear(js); hideBarSugg();
+      setNbRange({ label: r.dataset.bsLabel, from: r.dataset.bsFrom, to: r.dataset.bsTo });
+      return;
+    }
+    if (e.target.closest("[data-bs-pick]")) { _barPicking = true; renderBarSugg(); return; }
+    if (e.target.closest("[data-bs-apply]")) {
+      let f = ($("#bsFrom") || {}).value || "", t = ($("#bsTo") || {}).value || "";
+      if (f && t && f > t) [f, t] = [t, f];
+      js.value = ""; refreshSearchClear(js); hideBarSugg();
+      if (!f && !t) { setNbRange(null); return; }
+      const label = f && t ? (f === t ? barDayLabel(f) : `${barDayLabel(f)} – ${barDayLabel(t)}`)
+        : f ? `From ${barDayLabel(f)}` : `Until ${barDayLabel(t)}`;
+      setNbRange({ label, from: f || "0000-01-01", to: t || "9999-12-31" });
+    }
+  });
+  // A chip's ✕: the Notebook's range, or Search's day.
+  $("#bottomBar").addEventListener("click", (e) => {
+    const x = e.target.closest("[data-chip-clear]");
+    if (!x) return;
+    if (x.dataset.chipClear === "nb") setNbRange(null);
+    else exitExploreDay(false);
+    const inp = barInput();
+    if (inp) { try { inp.focus(); } catch (err) {} }
+  });
+  wireKeyboardLift();
+}
+// The keyboard: iOS shrinks the VISUAL viewport and leaves fixed elements where they
+// were, so a bar at the foot would sit behind it. Measure the keyboard from the visual
+// viewport and let the bar ride on it (--kb, body.kb-open; CSS hides the dock it covers).
+function wireKeyboardLift() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const update = () => {
+    const kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+    document.documentElement.style.setProperty("--kb", kb + "px");
+    document.body.classList.toggle("kb-open", kb > 80);
+  };
+  vv.addEventListener("resize", update);
+  vv.addEventListener("scroll", update);
+  update();
+}
+
 function localDayOf(iso) {
   const d = new Date(iso || "");
   if (isNaN(d)) return "";
@@ -3734,8 +4735,17 @@ function trailOpenedEntry(e) {
 // (owner's call), and only a convenience, so storage failing just means "shown".
 const SHOW_OPENED_KEY = "mf-notebook-show-opened/v1";
 function showOpened() {
+  // Owner, 2026-10-05: on by default, and the switch lives in ☰ › Settings — which only
+  // an account's menu has. So a guest always sees them; an "off" saved before the pill
+  // went can't strand a guest with no way back.
+  if (window.AOTD_GUEST) return true;
   try { return localStorage.getItem(SHOW_OPENED_KEY) !== "0"; } catch (e) { return true; }
 }
+// ☰ › Settings drives the switch (auth-ui.js); it lives there, the state lives here.
+window.AOTDShowOpened = {
+  get: () => showOpened(),
+  set: (on) => { setShowOpened(!!on); if (currentMode() === "journal") loadTrail(true); },
+};
 function setShowOpened(on) {
   try { localStorage.setItem(SHOW_OPENED_KEY, on ? "1" : "0"); } catch (e) { /* session only */ }
 }
@@ -3875,26 +4885,23 @@ function renderTrail(entries) {
         </div>`;
       return;
     }
-    box.innerHTML = q
-      ? `<div class="empty">Nothing in your notebook matches “${esc(q)}”.</div>`
+    const r = nbDateRange();
+    const span = r.from && r.to ? `between ${nbDateLabel(r.from)} and ${nbDateLabel(r.to)}`
+      : r.from ? `since ${nbDateLabel(r.from)}` : r.to ? `up to ${nbDateLabel(r.to)}` : "";
+    box.innerHTML = q || span
+      ? `<div class="empty">Nothing in your notebook${
+          q ? ` matches “${esc(q)}”` : ""}${span ? ` ${span}` : ""}.</div>`
       : `<div class="empty trail-empty">Your field notebook is empty.<br>
           Write down what you notice — it takes root here. Records you open with
           Listen show up here too.
-          <span class="te-empty-hint muted">Tap ✎ Write a note below to start.</span></div>`;
+          <span class="te-empty-hint muted">Tap + below to start.</span></div>`;
     return;
   }
   // FB#94: are we looking at matches rather than the whole notebook? Read from the
   // box (not the entries) so an empty-but-active search is still "searching".
   const searching = !!($("#journalSearch") && $("#journalSearch").value.trim());
-  // v9: the toggle shows only when there's something for it to act on.
+  // v9: opened records can be hidden — since 2026-10-05 from ☰ › Settings, not a pill.
   const hideOpened = !showOpened();
-  const anyOpened = entries.some((e) => e.kind === "opened");
-  const tog = $("#openedToggle");
-  if (tog) {
-    tog.hidden = !anyOpened;
-    tog.classList.toggle("on", !hideOpened);
-    tog.setAttribute("aria-pressed", String(!hideOpened));
-  }
   // A hidden open still counts toward its day's "N opened hidden" line, so nothing
   // seems to vanish — the count is written once each day's entries are done.
   let html = "", lastDay = null, hiddenInDay = 0;
@@ -5014,6 +6021,9 @@ async function resolveDoor(uid) {
   if (door.apple_music_url) a.apple_music_url = door.apple_music_url;
   if (door.spotify_url) a.spotify_url = door.spotify_url;
   if (door.youtube_url) a.youtube_url = door.youtube_url;
+  // 2026-10-07: did Spotify actually answer for this record? "unchecked" means the
+  // lookup failed or is paused — then the app says it couldn't check, never "not on".
+  a._spUnchecked = door.spotify_status === "unchecked";
   a._doorFilled = true;
   albumData[uid] = a;
   return true;
@@ -5576,7 +6586,7 @@ function navKey(nav) {
 }
 
 const MODE_LABELS = {
-  decide: "Today", forest: "Explore", browse: "Browse",
+  decide: "Today", forest: "Search", browse: "Browse",
   journal: "Notebook",   // the tab label; the mode key stays `journal` in code
 };
 
@@ -6145,7 +7155,7 @@ function renderWanderMap() {
 function trailThumbHtml(nav) {
   if (!nav || nav.t !== "story") return "";
   const a = albumData[nav.rid];
-  if (!a || !a.cover) return "";
+  if (!a || !a.cover || isAppleArt(a.cover)) return "";   // no Apple link on the trail
   // Owner's trail-map notes, 2026-08-07: covers arrive slowly here even for
   // albums seen minutes ago.
   // NOT a cache-key problem — the trail and the deck read the same
@@ -6159,7 +7169,7 @@ function trailThumbHtml(nav) {
   // Eager is right here regardless of the ordering: a trail is bounded by how
   // far you have wandered, and these are 30-40px thumbs of images the session
   // has already downloaded.
-  return `<img class="wthumb" src="${esc(a.cover)}" alt="">`;
+  return `<img class="wthumb" src="${esc(caaThumb(a.cover, 250))}" alt="">`;
 }
 
 // T6: the session-long history list. Most-recent first, collapsed so each
@@ -6225,22 +7235,221 @@ function replayHistory(key) {
 // and Explore it says nothing at all — those surfaces name themselves in the tab
 // that's lit. The tagline itself isn't retired, it moved: it still opens the first-run
 // welcome and leads the About door. (BRAND.md's tagline section records the new home.)
-const SUBTITLE_BY_MODE = { decide: "Released on this day in history" };
+//
+// 2026-10-04 (owner): the line names the DAY now — "Released on October 4" — and is the
+// whole masthead's text: the wordmark went, leaving the mark in a circle beside this
+// line (see the BRAND note in index.html). It's the DECK's day, not the clock's: a deck
+// left open past midnight still shows yesterday's records until it reloads, and the
+// line has to describe what's on the screen. loadDeck passes the day it's loading.
+function subtitleText(mode, md) {
+  if (mode !== "decide") return "";
+  return `Released on ${mdDisplay(md || (deckState && deckState.key) || mdParam())}`;
+}
 
-function setSubtitleFor(mode) {
+function setSubtitleFor(mode, md) {
   const el = $("#subtitle");
   if (!el) return;
-  const text = SUBTITLE_BY_MODE[mode] || "";
-  // FB#105 (2026-08-07): this line can collapse again. It used to stay in flow on
-  // every surface \u2014 blank ones carried a non-breaking space \u2014 purely to stop the tabs
-  // jumping 25px between surfaces (FB#100/#101, owner on prod: they "should remain
-  // constant"), because back then the tabs sat BELOW this line and anything that
-  // collapsed above them moved them. The tabs now lead the header, so nothing under
-  // them can shift them and the placeholder is dead weight: it was costing Notebook
-  // and Explore a 19px empty line for a problem those surfaces no longer have.
-  // Verified at 411x826 \u2014 the tabs hold top 26 with this line full, blank, or removed.
+  const text = subtitleText(mode, md);
+  // FB#105 (2026-08-07): this line collapses on Notebook and Explore. The tabs sit in
+  // a fixed dock at the foot, so nothing up here can shift them.
   el.textContent = text;
   el.classList.toggle("hidden", !text);
+}
+
+// --- The dock: one gliding indicator, a swipe between tabs, a ready search box ---
+// Owner, 2026-10-04: "swipe to the left and right on mobile to navigate between the
+// tabs. It should slide and snap and be a fun user experience."
+// v354: the ☰ is the fourth tab when a menu is mounted (auth-ui), so the order is
+// read from the dock rather than fixed: every tab that isn't hidden, left to right.
+function tabOrder() {
+  return Array.from(document.querySelectorAll(".tabs .tab"))
+    .filter((t) => !t.classList.contains("hidden")).map((t) => t.dataset.mode);
+}
+
+// The dock's sage bar: ONE element sliding to the lit tab, so a tap glides it and a
+// swipe can drag it part-way. Hidden on a surface with no tab. The tabs aren't all one
+// width since v354 (the ☰ is narrow), so the bar is placed from the tabs' own boxes —
+// a fractional `pos` (mid-swipe) blends the two neighbours' left edge and width, and
+// the bar narrows as it glides onto the ☰.
+let _tabPos = 0;
+function placeTabIndicator(pos) {
+  const tabs = document.querySelector(".tabs");
+  if (!tabs) return;
+  tabs.classList.toggle("no-ind", pos < 0);
+  if (pos < 0) return;
+  _tabPos = pos;
+  const els = Array.from(tabs.querySelectorAll(".tab")).filter((t) => !t.classList.contains("hidden"));
+  if (!els.length) return;
+  const i = Math.max(0, Math.min(els.length - 1, Math.floor(pos)));
+  const j = Math.min(els.length - 1, i + 1);
+  const f = Math.max(0, Math.min(1, pos - i));
+  const a = els[i], b = els[j];
+  tabs.style.setProperty("--ind-x", (a.offsetLeft + (b.offsetLeft - a.offsetLeft) * f) + "px");
+  tabs.style.setProperty("--ind-w", (a.offsetWidth + (b.offsetWidth - a.offsetWidth) * f) + "px");
+}
+// The boxes change when the ☰ tab appears or goes, and when the window turns.
+function wireTabIndicator() {
+  if (typeof ResizeObserver !== "function") return;
+  const ro = new ResizeObserver(() => {
+    if (!document.querySelector(".tabs.is-dragging")) placeTabIndicator(_tabPos);
+  });
+  document.querySelectorAll(".tabs .tab").forEach((t) => ro.observe(t));
+}
+
+// (v342 focused Notebook's and Search's box on arrival; the owner turned it off the
+// next day — the keyboard took half the screen every time.)
+
+// Where a released swipe goes: "commit" to the neighbour, or "back" to where it was.
+// Past ~28% of the width, or a flick (≥0.45 px/ms, same way, past 24px), commits — if
+// there IS a neighbour that way. Pure, so the test can pin the feel.
+function swipeOutcome(dx, vx, width, hasTarget) {
+  if (!hasTarget || !dx) return "back";
+  const far = Math.abs(dx) > width * 0.28;
+  const flick = Math.abs(vx) >= 0.45 && Math.sign(vx) === Math.sign(dx) && Math.abs(dx) > 24;
+  return far || flick ? "commit" : "back";
+}
+
+let _swipeBusy = false;          // a settle animation is running
+// What slides: the surface and the masthead row above it (the day, or the search
+// box), so the whole page moves as one. The ☰ and the dock stay put.
+function swipeEls() {
+  return [$("#main"), document.querySelector("header .brand")].filter(Boolean);
+}
+function setSwipeX(x, ms, ease) {
+  const W = window.innerWidth || 1;
+  const fade = Math.min(0.4, Math.abs(x) / W * 0.6);
+  for (const el of swipeEls()) {
+    el.style.transition = ms ? `transform ${ms}ms ${ease}, opacity ${ms}ms ${ease}` : "none";
+    el.style.transform = x ? `translate3d(${x}px, 0, 0)` : "";
+    el.style.opacity = x ? String(1 - fade) : "";
+  }
+}
+// Hand the page back exactly as it was: a transform left on #main would re-anchor every
+// position:fixed child inside it.
+function clearSwipeX() {
+  for (const el of swipeEls()) {
+    el.style.transition = ""; el.style.transform = ""; el.style.opacity = "";
+    el.style.willChange = "";
+  }
+}
+// The neighbour's NAME rides in with the drag ("Notebook" from the right as Today
+// slides left), so the space the page uncovers says where letting go will take you.
+// It reaches full strength exactly at the commit distance — a visible "now".
+let _swipePeek = null;
+function showSwipePeek(dx, label) {
+  if (!_swipePeek) {
+    _swipePeek = document.createElement("div");
+    _swipePeek.className = "swipe-peek";
+    _swipePeek.setAttribute("aria-hidden", "true");
+    document.body.appendChild(_swipePeek);
+  }
+  const W = window.innerWidth || 1;
+  if (!label || !dx) { _swipePeek.style.opacity = "0"; return; }
+  _swipePeek.textContent = label;
+  _swipePeek.classList.toggle("from-left", dx > 0);
+  _swipePeek.style.transform = `translate3d(${dx}px, -50%, 0)`;
+  _swipePeek.style.opacity = String(Math.min(1, Math.abs(dx) / (W * 0.28)));
+}
+function hideSwipePeek() { if (_swipePeek) _swipePeek.style.opacity = "0"; }
+
+function settleSwipe(x, ms, ease, done) {
+  _swipeBusy = true;
+  setSwipeX(x, ms, ease);
+  let finished = false;
+  const fin = () => {
+    if (finished) return;
+    finished = true;
+    clearSwipeX();
+    _swipeBusy = false;
+    if (done) done();
+  };
+  setTimeout(fin, ms + 60);     // transitionend can be skipped (a hidden tab, a cut)
+}
+
+function wireTabSwipe() {
+  if (!("ontouchstart" in window)) return;          // phones and tablets only
+  // Things with their own gesture, or nothing to do with tabs.
+  // (The floating Feedback chip only: in the hosted build it's a row on the menu page,
+  // and a swipe that starts on it is a swipe like any other.)
+  const SKIP = "input, textarea, select, [contenteditable], .date-rail, "
+    + ".tabs-row, .mf-hint, body > #feedbackBtn, [data-noswipe]";
+  const EDGE = 24;      // the system's own edge swipes (back / forward) start here
+  const blocked = (target) => {
+    if (document.querySelector(".modal:not(.hidden), .set-aside-sheet:not(.hidden)")) return true;
+    if (target.closest && target.closest(SKIP)) return true;
+    // A row that scrolls sideways keeps its own swipe.
+    for (let el = target; el && el !== document.body; el = el.parentElement) {
+      if (el.scrollWidth > el.clientWidth + 1) {
+        const ox = getComputedStyle(el).overflowX;
+        if (ox === "auto" || ox === "scroll") return true;
+      }
+    }
+    return false;
+  };
+  const reduce = () => reducedMotion();
+  let g = null;         // the gesture in progress
+  document.addEventListener("touchstart", (e) => {
+    g = null;
+    if (_swipeBusy || e.touches.length !== 1) return;
+    const order = tabOrder();
+    const idx = order.indexOf(currentMode());
+    const t = e.touches[0];
+    const W = window.innerWidth;
+    if (idx < 0 || t.clientX < EDGE || t.clientX > W - EDGE || blocked(e.target)) return;
+    g = { x0: t.clientX, y0: t.clientY, idx, order, lock: null, dx: 0,
+          lastX: t.clientX, lastT: e.timeStamp, vx: 0 };
+  }, { passive: true });
+  document.addEventListener("touchmove", (e) => {
+    if (!g) return;
+    const t = e.touches[0];
+    const dx = t.clientX - g.x0, dy = t.clientY - g.y0;
+    if (!g.lock) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      if (Math.abs(dx) <= Math.abs(dy) * 1.2) { g = null; return; }   // a scroll: not ours
+      g.lock = "x";
+      for (const el of swipeEls()) el.style.willChange = "transform, opacity";
+      document.querySelector(".tabs")?.classList.add("is-dragging");
+    }
+    if (e.cancelable) e.preventDefault();          // ours now: no scroll under the finger
+    const dt = e.timeStamp - g.lastT;
+    if (dt > 0) g.vx = 0.7 * ((t.clientX - g.lastX) / dt) + 0.3 * g.vx;
+    g.lastX = t.clientX; g.lastT = e.timeStamp;
+    const W = window.innerWidth || 1;
+    const nextMode = g.order[g.idx + (dx < 0 ? 1 : -1)];
+    const hasTarget = !!nextMode;
+    g.dx = hasTarget ? dx : dx * 0.22;             // rubber band past either end
+    setSwipeX(g.dx, 0);
+    const next = hasTarget && document.querySelector(`.tab[data-mode="${nextMode}"]`);
+    // The ☰ tab's name is "Menu" (data-label); the glyph alone would ride in as "☰".
+    showSwipePeek(g.dx, next ? (next.dataset.label || next.textContent.trim()) : "");
+    placeTabIndicator(Math.max(0, Math.min(g.order.length - 1, g.idx - g.dx / W)));
+  }, { passive: false });
+  const release = (cancelled) => {
+    const st = g; g = null;
+    if (!st || st.lock !== "x") return;
+    document.querySelector(".tabs")?.classList.remove("is-dragging");
+    hideSwipePeek();
+    const W = window.innerWidth || 1;
+    const dir = st.dx < 0 ? 1 : -1;
+    const target = st.order[st.idx + dir];
+    const outcome = cancelled ? "back" : swipeOutcome(st.dx, st.vx, W, !!target);
+    if (outcome === "back") {
+      placeTabIndicator(st.idx);
+      if (reduce()) { clearSwipeX(); return; }
+      settleSwipe(0, 380, "cubic-bezier(.2, 1.3, .4, 1)");   // a little spring home
+      return;
+    }
+    // Commit: switch, then slide the new surface in from where the old one was headed —
+    // it starts one screen beyond the finger and settles with a small overshoot.
+    resetWander();
+    setMode(target);
+    if (reduce()) { clearSwipeX(); return; }
+    setSwipeX(st.dx + dir * W, 0);
+    void document.body.offsetWidth;                // lock that start position in
+    settleSwipe(0, 340, "cubic-bezier(.18, 1.12, .32, 1)");
+  };
+  document.addEventListener("touchend", () => release(false), { passive: true });
+  document.addEventListener("touchcancel", () => release(true), { passive: true });
 }
 
 function showMode(mode) {
@@ -6249,10 +7458,14 @@ function showMode(mode) {
   // N3: Explore is its own top tab now, so each tab lights only its own mode.
   document.querySelectorAll(".tab").forEach((t) =>
     t.classList.toggle("active", t.dataset.mode === mode));
+  placeTabIndicator(tabOrder().indexOf(mode));
   $("#decide").classList.toggle("hidden", mode !== "decide");
   $("#forest").classList.toggle("hidden", mode !== "forest");
   $("#browse").classList.toggle("hidden", mode !== "browse");
   $("#journal").classList.toggle("hidden", mode !== "journal");
+  $("#menu").classList.toggle("hidden", mode !== "menu");
+  // v354: the menu page has no masthead row and no bottom bar (CSS keys off is-menu).
+  document.body.classList.toggle("is-menu", mode === "menu");
   // Remember (the trail) + Explore still share one control head — the search slot
   // swaps by mode so the cluster never rearranges (owner 2026-07-04). Remember has
   // no sub-tabs any more; Explore is the catalog search.
@@ -6271,6 +7484,10 @@ function showMode(mode) {
     $("#journalSearch").classList.toggle("hidden", mode !== "journal");
     $("#forestFind").classList.toggle("hidden", mode !== "forest");
   }
+  // v353: the bottom bar's + is the Notebook's (a new note); the chips follow the tab.
+  $("#nbPlus").classList.toggle("hidden", mode !== "journal");
+  hideBarSugg();
+  renderBarChips();
 }
 
 function loadMode(mode) {
@@ -6278,6 +7495,7 @@ function loadMode(mode) {
   if (mode === "decide") return enterToday();   // U13: reuse the pending deck
   if (mode === "forest") return loadForest();
   if (mode === "browse") return loadBrowse();
+  if (mode === "menu") return Promise.resolve();   // v354: auth-ui fills it on mount
   return loadTrail();                          // N3: Remember = one interleaved trail
 }
 
@@ -6292,14 +7510,18 @@ function closeAllDoors() {
   if (typeof closeWanderMap === "function") closeWanderMap();
   closeAsidePile();                // the set-aside pile is a door too (Today only)
   if (_trailSelecting) exitTrailSelection();   // #48 (v2): leave selection on a tab switch
-  // Feedback #21 refinement (2026-07-07): an *expanded disclosure* is a door too —
-  // one left open on Today was still open on the next tab. Collapse them on a tab
-  // switch so each view opens tidy. (FB#97 retired the why-doors this also swept;
-  // the header's narrowing controls are what's left.)
-  document.querySelectorAll("#listenPref, #datePref")
-    .forEach((d) => d.removeAttribute("open"));
-  closeStyleBrowse();              // the Genre screen is a door too (v328)
+  // (Feedback #21's refinement also collapsed the header's open disclosures here; the
+  // last of them, the platforms chooser, was retired in v354.)
+  closeStyleBrowse();              // the Filter screen is a door too (v328)
 }
+
+// v354: auth-ui shows and hides the Menu tab as a menu mounts and goes, and has to be
+// able to step off the menu page when it goes (and re-light the bar when it comes).
+window.AOTDTabs = {
+  current: () => currentMode(),
+  setMode: (mode) => { resetWander(); return setMode(mode); },   // resolves once it's drawn
+  relight: () => placeTabIndicator(tabOrder().indexOf(currentMode())),
+};
 
 function setMode(mode) {
   // #58/#59: a guest gets the full nav now — Today, Explore, and a Notebook they
@@ -6414,13 +7636,32 @@ function wireDeepLinks() {
 // rides on and never delays it. Counts only: the service key + the coarse tier
 // (same posture as clientMode()'s header) — no album, no URL, no identity, so
 // the server can never say who listened to what.
+// Where a tapped link came from, for the Log (2026-10-07): "warm" — today's record, and
+// the link came with the day (pre-warmed); "new" — today's record, link looked up when it
+// was opened (the door); "other" — a record from another date (Search, the Notebook, an
+// artist page). One coarse word; no album, no person.
+const _dayLinks = new Map();          // uid -> Set of platform keys the day's list carried
+function noteDayLinks(albums) {
+  _dayLinks.clear();
+  for (const r of albums || []) {
+    const k = albumKey(r);
+    if (k) _dayLinks.set(k, new Set(Object.keys(r.platforms || {})));
+  }
+}
+function listenSource(anchor) {
+  const uid = uidForListen(anchor);
+  const warm = uid && _dayLinks.get(uid);
+  if (!warm) return "other";
+  return warm.has(anchor.dataset.listen) ? "warm" : "new";
+}
 function wireListenCount() {
   document.addEventListener("click", (e) => {
     const a = e.target.closest && e.target.closest("a[data-listen]");
     if (!a || !navigator.sendBeacon) return;
     try {
       navigator.sendBeacon("/api/usage/listen?svc="
-        + encodeURIComponent(a.dataset.listen) + "&tier=" + clientMode());
+        + encodeURIComponent(a.dataset.listen) + "&tier=" + clientMode()
+        + "&src=" + listenSource(a));
     } catch (err) { /* a counter never breaks a listen */ }
   });
 }
@@ -6444,16 +7685,15 @@ function openedToday(uid) {
 // record Album details is showing. null when it can't be told (then nothing is written).
 function uidForListen(anchor) {
   if (anchor.closest("#storyHead") && storyRid) return storyRid;
-  const host = anchor.closest(".deck-card[data-uid], .card[data-rid]");
+  const host = anchor.closest(".deck-card[data-uid], .card[data-rid], #listenSheet[data-uid]");
   return host ? (host.dataset.uid || host.dataset.rid || null) : null;
 }
 
-// Repaint just today's Listen row so its "✓ in Notebook" tag tracks the truth.
+// Keep today's "✓ in Notebook" mark (under the title since v352) telling the truth.
 function repaintDeckListen() {
-  const el = document.getElementById("deckListen");
+  const el = document.getElementById("deckOpened");
   if (!el || !deckState || deckState.idx >= deckState.records.length) return;
-  const a = deckState.records[deckState.idx];
-  el.innerHTML = listenBlockHtml(albumData[albumKey(a)] || a, { compact: true });
+  el.innerHTML = deckOpenedHtml(albumKey(deckState.records[deckState.idx]));
 }
 
 async function recordOpened(uid, service) {
@@ -6527,46 +7767,6 @@ function wireExternalLinksStandalone() {
   });
 }
 
-// The "♫ Select platforms" chooser is an ORDERED list, not just a set picker: the
-// stored array's order is your listen priority (drives the pick's primary "Listen
-// on ___" button and the chip order — pickListenPlatforms). Selected platforms sit
-// at the top, numbered by priority, and reorder by long-press-drag (wirePrefDrag);
-// the rest sit below the divider as off rows you can add. Membership still drives
-// both filters exactly as before — only the order is new.
-function renderPrefList() {
-  const list = document.getElementById("prefList");
-  if (!list) return;
-  const sel = loadListenPrefs();                                  // selected, in priority order
-  const rest = CONFIRMED_PLATFORMS.map(([k]) => k).filter((k) => !sel.includes(k));
-  const row = (key, on, idx) => {
-    const label = _platLabel[key] || key;
-    const cls = _platClass[key] || "";
-    // A priority number + a drag glyph make it clear the order is meaningful and
-    // draggable; the whole selected row is the drag surface (long-press to lift).
-    const rank = on ? `<span class="pref-rank" aria-hidden="true">${idx + 1}</span>` : "";
-    const grip = on ? `<span class="pref-grip" aria-hidden="true">⠿</span>` : "";
-    return `<div class="pref-row ${cls}${on ? " sel" : ""}" data-key="${esc(key)}"
-      role="listitem">
-      ${rank}
-      <button type="button" class="pref-toggle" data-key="${esc(key)}" role="switch"
-        aria-checked="${on ? "true" : "false"}"
-        aria-label="${on ? "Remove" : "Add"} ${esc(label)}">
-        <span class="pref-dot" aria-hidden="true"></span>
-        <span class="pref-name">${esc(label)}</span>
-      </button>
-      ${grip}
-    </div>`;
-  };
-  list.innerHTML =
-    sel.map((k, i) => row(k, true, i)).join("") +
-    (rest.length ? `<div class="pref-sep" aria-hidden="true"></div>` +
-      rest.map((k) => row(k, false)).join("") : "");
-  // The drag hint only earns its line once there's an order to set.
-  const drag = document.getElementById("listenPrefDragHint");
-  if (drag) drag.classList.toggle("hidden", sel.length < 2);
-  setListenPrefNote(sel);
-}
-
 // Apply a new pref array everywhere. `membershipChanged` distinguishes a set
 // change (add/remove — what surfaces changes, so refetch/redraw the pool) from a
 // pure reorder (the same albums surface, only priority changed — just restack the
@@ -6574,7 +7774,6 @@ function renderPrefList() {
 function commitListenPrefs(next, membershipChanged) {
   saveListenPrefs(next);
   applyListenPrefStyle(next);
-  renderPrefList();
   flashListenReflow();
   if (membershipChanged) refreshSurfaces();
   else repaintChoiceListen();
@@ -6583,9 +7782,9 @@ function commitListenPrefs(next, membershipChanged) {
 // FB#105: the first-run welcome asks where you listen, and onboarding.js needs the
 // platform list, the current selection, and a way to toggle one. It gets them through
 // here rather than keeping its own copy: CONFIRMED_PLATFORMS, the storage key and the
-// commit path (which re-renders the ☰ list, re-applies the door filter and refetches
-// the pool) all stay owned by this file, so the welcome can't drift out of step with
-// the chooser in the menu — they are two views of one preference.
+// commit path (which re-applies the door filter and refetches the pool) all stay owned
+// by this file, so the welcome can't drift out of step with More ways to listen — they
+// are two views of one preference.
 window.AOTDPlatforms = {
   list: () => CONFIRMED_PLATFORMS.map(([key, , label]) => ({ key, label })),
   selected: () => loadListenPrefs(),
@@ -6599,100 +7798,6 @@ function togglePlatformPref(key) {
     ? sel.filter((k) => k !== key)   // remove
     : sel.concat(key);               // add to the end of the priority order
   commitListenPrefs(next, true);
-}
-
-// Reorder the selected rows to a new key order (from a drag). Ignores anything
-// not currently selected, so the set is never changed by a drag.
-function reorderPlatformPrefs(keys) {
-  const sel = loadListenPrefs();
-  const next = keys.filter((k) => sel.includes(k));
-  if (next.length !== sel.length) return;             // guard: same members only
-  if (next.every((k, i) => k === sel[i])) return;     // no change
-  commitListenPrefs(next, false);
-}
-
-// Long-press drag reorder for the selected platform rows. Press-and-hold any
-// selected row to lift it; the lifted row then *tracks your thumb* (translateY
-// follows the pointer 1:1) while the rows it passes slide one slot to open a gap —
-// so you see exactly where it will land, instead of neighbours snapping past a
-// midpoint. The DOM isn't reordered mid-drag (that would make the lifted row jump);
-// we shift with transforms and commit the final index once, on drop. A quick tap
-// still toggles (via the click handler); a real drag sets _prefDragged so the
-// trailing click is ignored. `.pref-row.sel` carries touch-action:none so the drag
-// doesn't fight scroll. HTML5 DnD is avoided on purpose (poor on touch).
-let _prefDragged = false;
-function wirePrefDrag(list) {
-  let mode = null;                     // null | "pending" | "drag"
-  let dragEl = null, startY = 0, timer = null;
-  let rows = [], fromIndex = 0, toIndex = 0, step = 0;
-  const selRows = () => Array.from(list.querySelectorAll(".pref-row.sel"));
-  // Slide every non-dragged row that sits between the lifted row's origin and its
-  // current target by one step, opening the gap the lifted row will drop into.
-  const applyShifts = () => {
-    rows.forEach((r, i) => {
-      if (r === dragEl) return;
-      let sh = 0;
-      if (fromIndex < toIndex && i > fromIndex && i <= toIndex) sh = -step;
-      else if (fromIndex > toIndex && i < fromIndex && i >= toIndex) sh = step;
-      r.style.transform = sh ? `translateY(${sh}px)` : "";
-    });
-  };
-  const begin = () => {
-    mode = "drag"; _prefDragged = true;
-    rows = selRows();
-    fromIndex = rows.indexOf(dragEl);
-    toIndex = fromIndex;
-    // Row pitch (height + gap) from two adjacent rows, so the shift matches layout.
-    step = rows.length > 1
-      ? Math.abs(rows[1].offsetTop - rows[0].offsetTop)
-      : dragEl.getBoundingClientRect().height;
-    dragEl.classList.add("dragging");
-    dragEl.style.transition = "none";        // the lifted row must track 1:1, no lag
-    document.body.classList.add("pref-dragging");
-  };
-  const dragTo = (clientY) => {
-    const dy = clientY - startY;
-    dragEl.style.transform = `translateY(${dy}px) scale(1.03)`;
-    const t = Math.min(rows.length - 1,
-      Math.max(0, fromIndex + Math.round(dy / (step || 1))));
-    if (t !== toIndex) { toIndex = t; applyShifts(); }
-  };
-  const move = (e) => {
-    const y = e.clientY;
-    if (mode === "pending") {
-      if (Math.abs(y - startY) > 8) { clearTimeout(timer); begin(); }
-      else return;
-    }
-    if (mode === "drag") { e.preventDefault(); dragTo(y); }
-  };
-  const end = () => {
-    clearTimeout(timer);
-    document.removeEventListener("pointermove", move);
-    document.removeEventListener("pointerup", end);
-    document.removeEventListener("pointercancel", end);
-    document.body.classList.remove("pref-dragging");
-    if (mode === "drag" && dragEl) {
-      rows.forEach((r) => { r.style.transform = ""; r.style.transition = ""; });
-      dragEl.classList.remove("dragging");
-      if (toIndex !== fromIndex) {
-        const order = rows.map((r) => r.dataset.key);
-        const [k] = order.splice(fromIndex, 1);
-        order.splice(toIndex, 0, k);
-        reorderPlatformPrefs(order);         // commit + re-render (rank numbers update)
-      }
-    }
-    mode = null; dragEl = null; rows = [];
-  };
-  list.addEventListener("pointerdown", (e) => {
-    if (e.button != null && e.button > 0) return;      // primary button / touch only
-    const rowEl = e.target.closest(".pref-row.sel");
-    if (!rowEl) return;
-    mode = "pending"; dragEl = rowEl; startY = e.clientY; _prefDragged = false;
-    timer = setTimeout(() => { if (mode === "pending") begin(); }, 220);
-    document.addEventListener("pointermove", move, { passive: false });
-    document.addEventListener("pointerup", end);
-    document.addEventListener("pointercancel", end);
-  });
 }
 
 // Copy an "artist title" search string to the clipboard (F#10) — the honest
@@ -6746,33 +7851,6 @@ function legacyCopy(text, done) {
   } catch (e) { /* clipboard blocked: leave the string visible to copy by hand */ }
 }
 
-function wireListenPref() {
-  const box = document.getElementById("listenPref");
-  const list = document.getElementById("prefList");
-  if (!box || !list) return;
-  applyListenPrefStyle(loadListenPrefs());            // apply saved filter on load
-  renderPrefList();
-  list.addEventListener("click", (e) => {
-    // A toggle (or a drag's trailing click) re-renders the list, detaching the
-    // clicked node — so to an ancestor click-away closer the click then reads
-    // as "outside" (U20: the ☰ menu snapped shut on every platform tap). Stop
-    // list clicks here; the chooser's own dismiss is pointerdown-based.
-    e.stopPropagation();
-    if (_prefDragged) { _prefDragged = false; return; }  // that was a drag, not a tap
-    // ACC1 touch-targets: the whole 48px row is the pointer target, not the 17px
-    // inner button — both carry data-key. The <button role="switch"> stays the
-    // semantic control (Enter/Space on it bubbles here), so AT is unchanged; this
-    // only widens the tap area. The .sel row is still the drag surface (guarded above).
-    const rowEl = e.target.closest(".pref-row");
-    if (rowEl && rowEl.dataset.key) togglePlatformPref(rowEl.dataset.key);
-  });
-  wirePrefDrag(list);
-  // Tap outside the open "♫ Select platforms" popover to dismiss it (feedback: it
-  // stayed open until you toggled the summary again) — but exempt the feedback
-  // launcher/modal, matching the genre chooser + account menu (FB#57).
-  closePopoverOnOutsideTap(box);
-}
-
 // --- F26: the remember door --------------------------------------------------
 // "What's an album you remember?" — one search box with note-intent, the same
 // door for both hands: the guest's first taste of the journal (their reflection
@@ -6805,7 +7883,7 @@ async function rememberDoorSearch(q) {
   if (!q) { box.innerHTML = REMEMBER_HINT; return; }
   try {
     const data = await (await fetch("/api/search?" +
-      new URLSearchParams({ q }))).json();
+      new URLSearchParams({ q }), SEARCH_OPTS())).json();
     if ($("#rememberSearch").value.trim() !== q) return;   // stale response
     const albums = (data.albums || []).slice(0, 12);
     if (!albums.length) {
@@ -6967,9 +8045,12 @@ function wireDialogA11y() {
 
 function init() {
   wireDialogA11y();
-  wireListenPref();
+  applyListenPrefStyle(loadListenPrefs());            // apply the saved door filter on load
   wireGenrePref();
   wireStyleBrowse();
+  wireFirstRun();
+  wireTabSwipe();
+  wireTabIndicator();
   wireRememberDoor();
   document.querySelectorAll(".tab").forEach((t) =>
     t.addEventListener("click", () => {
@@ -6978,16 +8059,8 @@ function init() {
       resetWander();
       setMode(t.dataset.mode);
     }));
-  // #9/#10: the brand (icon + "Music Forest") is the home affordance — tapping it
-  // ends any wander and returns to Choose, like a logo click anywhere on the web.
-  const brandHome = $("#brandHome");
-  if (brandHome) {
-    const goHome = () => { resetWander(); setMode("decide"); };
-    brandHome.addEventListener("click", goHome);
-    brandHome.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goHome(); }
-    });
-  }
+  // (#9/#10's logo-tap back to Today went with the logo, 2026-10-04: the masthead is the
+  // day alone now, and the dock's Today tab is the way back from anywhere.)
   wireDeepLinks();
   // FB#91: the date rail follows ordinary scrolling (so the thumb always says where
   // you are) and re-measures when the viewport changes, since whether it shows at
@@ -6996,6 +8069,7 @@ function init() {
   window.addEventListener("resize", syncDateRail, { passive: true });
   wireListenCount();               // anonymous listen-tap count (svc + tier only)
   wireOpenedTap();                 // v9: the reader's own "opened" Notebook entry
+  wireListenSheet();               // v350: the ⌄ on Today's Listen button
   loadOpenedToday();
   wireExternalLinksStandalone();   // #5: keep the installed app from being replaced
   wireCopySearch();                // copy an "artist — title" search string (F#10)
@@ -7014,6 +8088,7 @@ function init() {
   $("#forestFind").addEventListener("submit", (e) => {
     e.preventDefault();
     clearTimeout(_exploreDebounce);
+    if (pickFirstBarSugg()) return;          // Enter on a day picks it
     runExploreSearch($("#forestSearchInput").value);
   });
   $("#forestSearchInput").addEventListener("input", () => {
@@ -7021,21 +8096,9 @@ function init() {
     _exploreDebounce = setTimeout(
       () => runExploreSearch($("#forestSearchInput").value), 280);
   });
-  // F33: the exact-day searcher — a typed month/day shows that MM-DD across years; the
-  // Today "By year" door jumps here and focuses the month field; ✕ clears back to text search.
-  const dayMonth = document.getElementById("forestDayMonth");
-  const dayDay = document.getElementById("forestDayDay");
-  const readDay = () => {
-    const m = parseInt(dayMonth && dayMonth.value, 10);
-    const d = parseInt(dayDay && dayDay.value, 10);
-    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-      runExploreDay(`${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
-    } else exitExploreDay(false);
-  };
-  if (dayMonth) dayMonth.addEventListener("input", readDay);
-  if (dayDay) dayDay.addEventListener("input", readDay);
-  const dayClear = document.getElementById("forestDayClear");
-  if (dayClear) dayClear.addEventListener("click", () => exitExploreDay(false));
+  // F33's exact-day searcher lives in the bottom bar since v353: a typed day ("oct 5",
+  // "10/5") is offered as "Records released on October 5" (renderBarSugg), its chip's ✕
+  // returns to text search. Filter's "See a specific day →" focuses the bar.
   const dayBtn = document.getElementById("specificDayBtn");
   if (dayBtn) dayBtn.addEventListener("click", gotoSpecificDay);
   // Today's set-aside pile (D2): the bottom bar pulls the pile open; ✕ / backdrop
@@ -7068,6 +8131,9 @@ function init() {
     if (e.target.closest("[data-share-label]")) { shareLabel(AOTDLabelPanel.currentName()); return; }
     if (e.target.closest("[data-share-person]")) { sharePerson(personPanelId, personPanelName); return; }
     if (e.target.closest("[data-clear-genres]")) { clearGenreFilter(); return; }
+    if (e.target.closest("[data-change-filters]")) { openStyleBrowse(); return; }
+    // v354: the platforms live in More ways to listen only (the ☰ chooser is gone).
+    if (e.target.closest("[data-change-platforms]")) { openListenSheet(); return; }
     // Deck-end thin-filter hint: clear the platform filter → the full day redraws.
     if (e.target.closest("[data-clear-platforms]")) { commitListenPrefs([], true); return; }
   });
@@ -7394,8 +8460,10 @@ function init() {
   // platform's grey at the platform's size. Take it over on the three real search
   // fields so clearing looks like the rest of the app and is a proper tap target.
   ["#journalSearch", "#forestSearchInput", "#search"].forEach((sel) => wireSearchClear($(sel)));
-  // The sticky "Take a note" pill opens the free composer (record-optional).
-  $("#trailPill").addEventListener("click", () => openNoteModal());
+  // v353: the bottom bar's + opens the free composer (record-optional) — the job of the
+  // ✎ Write a note pill it replaced.
+  $("#nbPlus").addEventListener("click", () => openNoteModal());
+  wireBottomBar();
   // Trail entries: a note opens to read/edit; a choice opens its chosen record. In
   // selection mode (long-press), a tap toggles the entry instead of opening it.
   $("#trail").addEventListener("click", (e) => {
@@ -7428,13 +8496,8 @@ function init() {
     const choiceEl = e.target.closest(".trail-entry.trail-choice, .trail-entry.trail-opened");
     if (choiceEl && choiceEl.dataset.uid) openStoryModal(choiceEl.dataset.uid);
   });
-  // v9: "Show opened" — flip, remember, redraw from the store (cheap; no network for
-  // an account or a guest).
-  const openedTog = $("#openedToggle");
-  if (openedTog) openedTog.addEventListener("click", () => {
-    setShowOpened(!showOpened());
-    loadTrail(true);
-  });
+  // FILTER BY DATE: since v353 the bottom bar sets the range (setNbRange); #nbFrom/#nbTo
+  // are its hidden state, read by nbDateRange().
   // #48 (v2): long-press an entry to enter selection mode; a bar deletes the batch.
   wireTrailLongPress($("#trail"));
   $("#trailSelectCancel").addEventListener("click", exitTrailSelection);
@@ -7637,44 +8700,121 @@ function init() {
   // see the comment there for why the old timer-based trigger was unwinnable.
 }
 
+// FIRST RUN (owner 2026-10-04, docs/mockups/welcome round 2 — "S5"). There is no
+// welcome card any more: a new guest's Today IS the welcome. Where the cover goes, the
+// services you can listen on plus "Everything"; where Listen goes, Start — live once
+// one of the six is chosen. Start saves the choice (tap order = which service Listen
+// tries first) and the first record lands in the same square.
+//
+// "Everything" keeps the honest path the old card protected ("choose none to see
+// everything"): a service narrows the day to records we can CONFIRM there, so the
+// widest day has to stay one tap away. It's exclusive with the services — choosing it
+// clears them, choosing a service clears it.
+//
+// No tour offer follows (owner: "drop the tour bubble"); the tour is ☰ › "How to use".
+// Both once-per-device flags are burned on SHOW, as the card did: a reload mid-choice
+// lands on the whole day, never on the picker again.
+let _firstRun = false;      // the picker is standing in for today's first record
+let _firstRunSel = [];      // service keys in tap order, or [FIRST_RUN_ALL]
+const FIRST_RUN_ALL = "all";
+
+// The next selection after tapping `key`: toggles it, keeps tap order, and makes
+// Everything exclusive with the services. Pure, so the test can pin it.
+function firstRunToggle(sel, key) {
+  if (sel.includes(key)) return sel.filter((k) => k !== key);
+  if (key === FIRST_RUN_ALL) return [FIRST_RUN_ALL];
+  return sel.filter((k) => k !== FIRST_RUN_ALL).concat(key);
+}
+
+function firstRunHtml() {
+  const opts = CONFIRMED_PLATFORMS.map(([key, , label]) => [key, label])
+    .concat([[FIRST_RUN_ALL, "Everything"]]);
+  const tiles = opts.map(([key, label]) => {
+    const on = _firstRunSel.includes(key);
+    const sub = key === FIRST_RUN_ALL ? `<small>no filter</small>` : "";
+    return `<button type="button" class="fr-opt${on ? " on" : ""}" data-fr="${esc(key)}"
+      aria-pressed="${on}">${esc(label)}${sub}</button>`;
+  }).join("");
+  // The question (owner, 2026-10-05: "add 'Where do you listen?' to the opening page so
+  // users have a nudge about what to do") sits where the eye lands first, above the
+  // square, in the record title's serif.
+  return `<article class="deck-card first-run">
+    <p class="fr-ask" id="frAsk">Where do you listen?</p>
+    <div class="fr-opts" role="group" aria-labelledby="frAsk"
+      aria-describedby="frHint">${tiles}</div>
+    <p class="sr-only" id="frHint">Choose one or more, or Everything, then Start.</p>
+    <div class="deck-listen"><button type="button" class="listen-primary fr-start"
+      id="frStart"${_firstRunSel.length ? "" : " disabled"}>Start</button></div>
+  </article>`;
+}
+
+function renderFirstRun() {
+  const wrap = $("#choice");
+  if (wrap) wrap.innerHTML = firstRunHtml();
+}
+
+function enterFirstRun() {
+  const ob = window.AOTDOnboarding;
+  try {
+    if (ob && ob.markSeen) ob.markSeen();
+    if (ob && ob.markTourSeen) ob.markTourSeen();
+  } catch (e) { /* a first run must never block the app */ }
+  _firstRun = true;
+  _firstRunSel = loadListenPrefs();
+  document.body.classList.add("is-first-run");
+  renderFirstRun();
+}
+
+function finishFirstRun() {
+  if (!_firstRun || !_firstRunSel.length) return;
+  _firstRun = false;
+  document.body.classList.remove("is-first-run");
+  const next = _firstRunSel.filter((k) => k !== FIRST_RUN_ALL);
+  if (next.join() !== loadListenPrefs().join()) {
+    commitListenPrefs(next, true);       // saves, filters the door, re-deals for them
+    return;
+  }
+  if (deckState) {
+    if (deckState.records.length) renderDeck();
+    else renderGenreFilteredEmpty();
+  } else if (_deckLoading) {
+    const w = $("#choice");              // the load under the picker will deal
+    if (w) w.innerHTML = deckLoadingHtml();
+    fastFirstCard(_deckSeq, mdParam());  // ...and its first card can come ahead of it
+  } else {
+    loadDeck(true);
+  }
+}
+
+function wireFirstRun() {
+  const wrap = $("#choice");
+  if (!wrap) return;
+  wrap.addEventListener("click", (e) => {
+    if (!_firstRun) return;
+    const opt = e.target.closest("[data-fr]");
+    if (opt) {
+      _firstRunSel = firstRunToggle(_firstRunSel, opt.dataset.fr);
+      renderFirstRun();
+      const again = wrap.querySelector(`[data-fr="${opt.dataset.fr}"]`);
+      if (again) again.focus({ preventScroll: true });   // keep a keyboard user's place
+      return;
+    }
+    if (e.target.closest("#frStart")) finishFirstRun();
+  });
+}
+
 function maybeWelcomeFirstRun() {
   const ob = window.AOTDOnboarding;
   if (!ob || !ob.shouldShowFirstRun || !ob.shouldShowFirstRun()) return;
-  setTimeout(() => {
-    if (document.querySelector(".modal:not(.hidden)")) return;   // a flow owns the screen
-    // onStart fires when the welcome is dismissed → start the guided tour next, so
-    // the two never stack (the deck-render trigger is modal-gated for the same
-    // reason). Both paths are idempotent via the once-per-device tour flag.
-    ob.maybeShowFirstRun({ onStart: maybeStartTour });
-  }, 350);
+  if (_firstRun) return;
+  enterFirstRun();
 }
 
-// The first-run guided tour (platforms → set aside → keep → Notebook): once per
-// device, deferred + gated on no modal owning the screen (so it never covers the
-// welcome / sign-in gate) and on the keep/set-aside pair being present (so the deck
-// is up and the tour's middle steps have targets). Also called from the deck render,
-// for a device that dismissed the welcome on an earlier visit.
-//
-// FB#99 (owner): this now OFFERS the tour rather than starting it. Same gating — the
-// offer is what's once-per-device, and "no" points at the ☰ menu's "Take the tour".
-function maybeStartTour() {
-  const ob = window.AOTDOnboarding;
-  if (!ob || !ob.shouldShowTour || !ob.shouldShowTour()) return;
-  setTimeout(() => {
-    if (document.querySelector(".modal:not(.hidden)")) return;   // a flow owns the screen
-    if (!document.getElementById("noteBtn")
-        || !document.getElementById("setAsideBtn")) return;
-    if (ob.showTourOffer) ob.showTourOffer();
-    else ob.maybeStartTour();          // an older onboarding.js still just starts it
-  }, 400);
-}
-
-// A genuine first login shows the tour even on a device that saw it as a guest:
-// signup resets the once-per-device flag (auth-ui.js), and revealApp() only unhides
-// the already-rendered deck (no re-render, so the deck's own maybeStartTour won't
-// re-fire) — so kick the tour here when the journal unlocks. Guarded by shouldShowTour,
-// so a returning unlock (flag still set) is a no-op.
-document.addEventListener("aotd:unlocked", () => { maybeStartTour(); loadOpenedToday(); });
+// The guided tour is never offered any more (owner, 2026-10-05: "Skip the bubble for
+// tour and everything. Just have it as an option in the pancake menu called 'How to
+// use'"). Not after the first run, not on a new account's first unlock — the ☰ item
+// starts it on demand (AOTDOnboarding.startTourOnDemand).
+document.addEventListener("aotd:unlocked", () => { loadOpenedToday(); });
 // FB#107: a background reconcile brought in changes (e.g. a write from another
 // device) after the Notebook already rendered from the local cache — re-render it,
 // but only if it's the view on screen (a no-op cost otherwise).

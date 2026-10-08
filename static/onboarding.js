@@ -8,10 +8,12 @@
  *
  * U18 (2026-07-02) made this non-auto-opening — the records are the welcome — but
  * U25 (2026-07-12) brought the FIRST-run open back: a real first-timer couldn't tell
- * what the app was, so app.js's maybeWelcomeFirstRun() calls maybeShowFirstRun() once
- * per device on a clean first visit. It's still ALSO a pull-only door behind the
- * guest header's visible "What is this?" button and the ☰ menu's copy of it
- * (show({ first: false })). The once-per-device seen/markSeen flag core is pure +
+ * what the app was, so app.js opened this card once per device on a clean first visit.
+ * v341 (owner 2026-10-04, docs/mockups/welcome round 2) retired that card: a new
+ * guest's Today is the welcome now — the services stand where the cover goes, with
+ * Start where Listen goes (app.js enterFirstRun) — and no tour offer follows it. The
+ * card's first-run mode (show({ first: true }), maybeShowFirstRun) has no caller; the
+ * once-per-device seen/markSeen flag core still gates the first run, and is pure +
  * injectable-storage + headlessly tested in tests/js/onboarding.test.mjs.
  *
  * Copy lives here, in one keyed catalog (cross-cutting R8), rather than scattered
@@ -72,9 +74,12 @@
     // path or the card would quietly make everyone's app smaller on day one. Its
     // wording is lifted from the chooser's own hint so the two never disagree.
     pickerLead: "Select your listening platform(s).",
-    // Verbatim from .listen-pref-hint in index.html — same promise, same words.
+    // The promise the old ☰ chooser's hint made, word for word (that chooser was
+    // retired in v354; this card and More ways to listen are where you choose now).
     pickerHint: "Only albums you can play there will surface — choose none to see everything.",
-    pickerMenuNote: "You can change this any time in the menu (☰).",
+    // v354: the ☰ no longer holds your platforms — the service half of Today's Listen
+    // row does (More ways to listen), so the card points there.
+    pickerChangeNote: "You can change this any time from the Listen button.",
     startFirst: "Start",
     startAgain: "Back to the records",
     // A quiet, pull-only "how it works" door — opens the architecture guide
@@ -89,32 +94,24 @@
     // modal, and the explain mode was left stranded. So in practice `/architecture`
     // is now linked from nowhere in the app; the route and its SW handling remain.
     // Kept behind the toggle rather than deleted so it returns if that door is ever
-    // rewired. If the guide should stay reachable, the honest home is a link inside
-    // `#dataModal` in index.html — raised with the owner rather than added here,
-    // since the ask was to remove it, not to move it.
+    // rewired. (A link inside `#dataModal` was its home from 2026-08 until v355, when
+    // About became the owner's own words alone — so /architecture is unlinked again.)
     howItWorks: "How Music Forest works ↗",
     closeTitle: "Close",
     // The first-run guided tour — a short sequence of gentle cues, in order, each
     // pointing at one control. keep/skip vocab + "private to you" (BRAND); one plain line each,
     // no pressure; skippable at any step.
     tour: [
-      // Platforms: adaptive target. Signed in, the "Where you listen" control is
-      // adopted into the ☰ menu (auth-ui.js), so point at the menu button; a guest /
-      // local build keeps it in the header, so point at it there. resolve() runs each
-      // render, reading where #listenPref currently lives.
-      { place: "below", resolve: function () {
-          var pref = document.getElementById("listenPref");
-          if (pref && pref.closest(".acct-pop")) {
-            return { sel: ".acct-btn", text: copy.tourPlatformsMenu };
-          }
-          return { sel: "#listenPref", text: copy.tourPlatformsHeader };
-        } },
-      // The two narrowing controls beside platforms (owner 2026-07-26) — grouped here so
-      // the three header filters are learned together, before the deck steps.
-      { sel: "#genrePref",
-        text: "Tap “Genre” to see every genre and style in today's records, with how many of each, and tick any to narrow today." },
-      { sel: "#datePref",
-        text: "“Year” narrows today to a decade, a span of years you type in, or the records released on one specific calendar day." },
+      // Platforms. Until v354 this pointed at the "Where you listen" chooser in the ☰
+      // (or the header, on a build with no menu); that chooser is retired, and your
+      // platforms are set from the service half of Today's Listen row on every build.
+      { sel: "#deckListen .listen-svc",
+        text: "Tap the service beside Listen to choose the ones you use — then each record's Listen opens right where you already listen. Hold one and drag it to choose which comes first." },
+      // The narrowing control beside platforms — grouped here so the filters are learned
+      // together, before the deck steps. One step since 2026-10-04, when Genre and Year
+      // (two steps from 2026-07-26) became the one Filter button.
+      { sel: "#filterPref",
+        text: "Tap “Filter” to narrow today by tags (every genre, mood and scene on today's records, with how many of each) or by year." },
       // The album door, and the two things people miss inside it (owner, from a live
       // run-through 2026-07-16): that a note can hang off ONE track, and how to get
       // back out. Both belong in this step rather than steps of their own — the tour
@@ -162,15 +159,16 @@
       // both sign-offs (the other is `.about-signoff` in index.html). Don't tidy it
       // back: the punctuation is his, not the style guide's.
       // FB#105: ✎ Feedback moved off the screen into the ☰ menu, so this step follows
-      // it. It has to resolve the same way the platforms step does rather than just
-      // naming ".acct-btn": a local single-user build mounts no menu at all and keeps
+      // it. It has to resolve its target rather than just naming the ☰ tab: a local
+      // single-user build mounts no menu at all and keeps
       // the floating chip, and pointing at an element that isn't there would make
       // _hasStep SKIP this step in silence — the tour would simply end one card early
       // and nobody would know the sign-off had gone missing.
       { resolve: function () {
           var btn = document.getElementById("feedbackBtn");
-          if (btn && btn.closest(".acct-pop")) {
-            return { sel: ".acct-btn", place: "below",
+          if (btn && btn.closest("#menuPage")) {
+            // v354: the ☰ is the dock's Menu tab, and Feedback a row on its page.
+            return { sel: '.tab[data-mode="menu"]', place: "above",
                      text: copy.tourFeedbackMenu };
           }
           return { sel: "#feedbackBtn", text: copy.tourFeedbackChip };
@@ -226,11 +224,7 @@
     tourOfferLabel: "Take a quick tour?",
     // Shown once, where the tour lives, when someone declines — so "no" isn't the
     // end of it. Anchored to ☰, which is the answer to "where did it go".
-    tourDeclinedText: "No problem. It's here under “Take the tour” whenever you want it.",
-    // Platforms step copy — one for the header chooser (guest), one for the ☰ menu
-    // (signed in), picked by the step's resolve() above.
-    tourPlatformsHeader: "Set the services you use — then each record's Listen link opens right where you already listen.",
-    tourPlatformsMenu: "Open the menu (☰) to choose the services you use — then each record's Listen link opens right where you already listen.",
+    tourDeclinedText: "No problem. It's here under “How to use” whenever you want it.",
     // Owner's words, 2026-07-16, kept verbatim — the long version was doing the
     // talking for him. Two homes since FB#105 (the ☰ menu, or the floating chip on a
     // build with no menu), so the sign-off is split from the "where" sentence rather
@@ -321,7 +315,7 @@
       '</div>';
     wrap.querySelector(".onboard-picker-lead").textContent = copy.pickerLead;
     wrap.querySelector(".onboard-picker-hint").textContent = copy.pickerHint;
-    wrap.querySelector(".onboard-picker-note").textContent = copy.pickerMenuNote;
+    wrap.querySelector(".onboard-picker-note").textContent = copy.pickerChangeNote;
     document.body.appendChild(wrap);
     // Backdrop click and ✕ both dismiss (a door, never a trap).
     wrap.addEventListener("click", (e) => {
@@ -519,26 +513,9 @@
       return;
     }
     _tourEl.style.visibility = "";
-    let r = _tourTarget.getBoundingClientRect();
-    // A menu/popover that opens BELOW the target is a floating overlay that doesn't
-    // grow the target's own box, so a "below" cue lands right on top of it. Find the
-    // open panel and extend the anchor's bottom past it so the cue clears the menu
-    // instead of covering the very chooser it points at. Two shapes: a guest's
-    // <details> platforms dropdown (its non-summary child), and the signed-in ☰
-    // account menu (a sibling .acct-pop next to the .acct-btn the step targets).
-    if (_tourForceBelow) {
-      let panel = null;
-      if (_tourTarget.tagName === "DETAILS" && _tourTarget.open) {
-        for (const c of _tourTarget.children) { if (c.tagName !== "SUMMARY") { panel = c; break; } }
-      } else if (_tourTarget.parentElement) {
-        panel = _tourTarget.parentElement.querySelector(".acct-pop:not(.hidden)");
-      }
-      const pr = panel && panel.getBoundingClientRect();
-      if (pr && pr.height > 0) {
-        r = { left: r.left, right: r.right, width: r.width, top: r.top,
-              bottom: Math.max(r.bottom, pr.bottom), height: r.height };
-      }
-    }
+    const r = _tourTarget.getBoundingClientRect();
+    // (Until v354 a "below" cue was pushed past an open platforms dropdown or ☰
+    // popover here; both are gone — the ☰ is a tab, the chooser retired.)
     const vw = window.innerWidth, vh = window.innerHeight;
     const pw = _tourEl.offsetWidth, ph = _tourEl.offsetHeight;
     // A "below"-pinned step (e.g. platforms) keeps the cue under its target even as
@@ -583,21 +560,6 @@
     const r = el.getBoundingClientRect();
     return r.width > 0 || r.height > 0;
   }
-  // When advancing off the platforms step, close the chooser it opened — the guest
-  // "Where you listen" <details> or the signed-in ☰ menu. Left open it lingers over
-  // the next record and, worse, hides the album so the "tap the album" step gets
-  // skipped (_hasStep sees .deck-cover as not visible under the overlay). No-op when
-  // nothing is open, so it's safe to call on every advance.
-  function _closeTourOverlays() {
-    const pref = document.getElementById("listenPref");
-    if (pref && pref.tagName === "DETAILS" && pref.open) pref.open = false;
-    const pop = document.querySelector(".acct-pop:not(.hidden)");
-    if (pop) {
-      const btn = pop.parentElement && pop.parentElement.querySelector(".acct-btn");
-      if (btn) btn.click();               // toggle the menu shut via the app's handler
-      else pop.classList.add("hidden");
-    }
-  }
   function _renderStep(i) {
     while (i < copy.tour.length && !_hasStep(i)) i++;   // skip a missing target
     if (i >= copy.tour.length) { endTour(); return; }
@@ -615,7 +577,7 @@
     const nextBtn = _tourEl.querySelector(".mf-tour-next");
     nextBtn.textContent = last ? copy.tourDone : copy.tourNext;
     nextBtn.onclick = last ? endTour
-      : function () { _closeTourOverlays(); _renderStep(_tourIdx + 1); };
+      : function () { _renderStep(_tourIdx + 1); };
     // Don't scroll a fixed element (the Feedback FAB is always in view anyway).
     try {
       if (getComputedStyle(_tourTarget).position !== "fixed") {
@@ -859,8 +821,8 @@
       (function tell() {
         const shown = showHint({
           key: "aotd.cue.tourdeclined.v1",
-          sel: ".acct-btn",
-          place: "below",
+          sel: '.tab[data-mode="menu"]',        // v354: the ☰ is the dock's Menu tab
+          place: "above",
           label: copy.tourOfferLabel,
           text: copy.tourDeclinedText,
           storage: storage,

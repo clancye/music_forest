@@ -74,23 +74,24 @@ function main() {
   // --- the tour steps, in the owner's order --------------------------------
   {
     const t = O.copy.tour;
-    ok(Array.isArray(t) && t.length === 9, "the tour has nine steps");
-    ok(typeof t[0].resolve === "function", "step 1 (platforms) resolves its target (header chip vs ☰ menu)");
-    ok(typeof O.copy.tourPlatformsHeader === "string" && typeof O.copy.tourPlatformsMenu === "string",
-      "platforms step has both header and ☰-menu copy");
-    ok(t[1].sel === "#genrePref", "step 2 points at By genre");
-    ok(t[2].sel === "#datePref", "step 3 points at By year");
-    ok(/deck-cover/.test(t[3].sel), "step 4 points at the album (tap for details)");
-    ok(t[4].sel === "#deckListen", "step 5 points at Listen (the #deckListen element)");
-    ok(t[5].sel === "#setAsideBtn", "step 6 points at Next (the #setAsideBtn element)");
-    ok(t[6].sel === "#noteBtn", "step 7 points at Write a note (Keep retired, v329)");
-    ok(/journal/.test(t[7].sel), "step 8 points at the Notebook tab");
+    ok(Array.isArray(t) && t.length === 8, "the tour has eight steps");
+    // v354: the ☰ chooser is retired; your platforms are set from the service half of
+    // Today's Listen row on every build, so the step has one home.
+    ok(t[0].sel === "#deckListen .listen-svc", "step 1 points at the service beside Listen");
+    ok(/drag/i.test(t[0].text), "platforms step copy says the order is set by dragging");
+    // v339: Genre and Year became one Filter button, so their two steps are one.
+    ok(t[1].sel === "#filterPref", "step 2 points at Filter");
+    ok(/deck-cover/.test(t[2].sel), "step 3 points at the album (tap for details)");
+    ok(t[3].sel === "#deckListen", "step 4 points at Listen (the #deckListen element)");
+    ok(t[4].sel === "#setAsideBtn", "step 5 points at Next (the #setAsideBtn element)");
+    ok(t[5].sel === "#noteBtn", "step 6 points at Write a note (Keep retired, v329)");
+    ok(/journal/.test(t[6].sel), "step 7 points at the Notebook tab");
     // FB#105: Feedback moved into the ☰ menu, so this step resolves its target the
     // same way the platforms step does — the menu where the button is adopted, or the
     // floating chip on a build that mounts no menu. It MUST stay resolvable: _hasStep
     // skips a step whose target is missing, so a hard-coded selector pointing at the
     // wrong home would delete the owner's sign-off card in silence.
-    ok(typeof t[8].resolve === "function", "step 9 (feedback) resolves its target (☰ menu vs floating chip)");
+    ok(typeof t[7].resolve === "function", "step 8 (feedback) resolves its target (☰ menu vs floating chip)");
     ok(typeof O.copy.tourFeedbackMenu === "string" && typeof O.copy.tourFeedbackChip === "string",
       "feedback step has both ☰-menu and floating-chip copy");
     ok(/Clancy/.test(O.copy.tourFeedbackMenu) && /Clancy/.test(O.copy.tourFeedbackChip),
@@ -140,7 +141,7 @@ function main() {
       "the offer asks about the tour in words");
     ok(typeof O.copy.tourOfferYes === "string" && typeof O.copy.tourOfferNo === "string",
       "the offer has both answers");
-    ok(typeof O.copy.tourDeclinedText === "string" && /take the tour/i.test(O.copy.tourDeclinedText),
+    ok(typeof O.copy.tourDeclinedText === "string" && /how to use/i.test(O.copy.tourDeclinedText),   // ☰ item renamed 2026-10-05
       "declining points at the menu item by its exact label");
     ok(typeof O.copy.tourDismissCard === "string",
       "✕ has its own label (FB#93) — it dismisses a card");

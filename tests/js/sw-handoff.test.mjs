@@ -68,6 +68,9 @@ const HANDS_OFF = [
   'https://musicforest.lol/api/pool/day',
   'https://musicforest.lol/admin',
   'https://musicforest.lol/static/admin.js',
+  // The cover cache's rolling window: the browser's HTTP cache (a few hours) holds these,
+  // never the SW's runtime cache, which would keep a removed cover until the next bump.
+  'https://musicforest.lol/covers/release/64a9ebd7-3984-45a3-ae1f-117152ecbf8e-500.jpg',
   'https://cdn.jsdelivr.net/npm/some-lib.js',
 ];
 for (const url of HANDS_OFF) {

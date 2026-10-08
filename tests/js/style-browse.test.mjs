@@ -26,23 +26,28 @@ function lift(re, what) {
 const code = [
   "let digMode = false; let deckState = null;",
   "const genreTags = new Set();",
+  "const deckEras = new Set(); let deckYearFrom = null, deckYearTo = null;",
   lift(/\nconst ATOMIC_GENRES = [^\n]*/, "ATOMIC_GENRES"),
   lift(/\nfunction genresOf\(a\) \{[\s\S]*?\n\}/, "genresOf"),
   lift(/\nconst _recordTagCache = new WeakMap\(\);\nfunction recordTags\(r\) \{[\s\S]*?\n\}/, "recordTags"),
   lift(/\nfunction tagKey\(t\) \{[^\n]*\}/, "tagKey"),
   lift(/\nconst _recordTagKeyCache = new WeakMap\(\);\nfunction recordTagKeys\(r\) \{[\s\S]*?\n\}/, "recordTagKeys"),
   lift(/\nfunction applyGenreFilter\(list\) \{[\s\S]*?\n\}/, "applyGenreFilter"),
+  lift(/\nfunction decadeOf\(a\) \{[\s\S]*?\n\}/, "decadeOf"),
+  lift(/\nfunction applyYearFilters\(list, \{ decades = true \} = \{\}\) \{[\s\S]*?\n\}/, "applyYearFilters"),
+  lift(/\nfunction eraCounts\(\) \{[\s\S]*?\n\}/, "eraCounts"),
   lift(/\nfunction styleIndex\(\) \{[\s\S]*?\n\}/, "styleIndex"),
   lift(/\nfunction sbBand\(n\) \{[\s\S]*?\n\}/, "sbBand"),
   lift(/\nfunction sbLetter\(label\) \{[\s\S]*?\n\}/, "sbLetter"),
   lift(/\nfunction sbOrderedTags\(idx, order, q\) \{[\s\S]*?\n\}/, "sbOrderedTags"),
   "return { applyGenreFilter, styleIndex, sbBand, sbLetter, sbOrderedTags, tagKey, genreTags,",
+  "  eraCounts, deckEras, setSpan:(a,b)=>{deckYearFrom=a; deckYearTo=b},",
   "  setDay:(all)=>{deckState={all}}, setDig:(v)=>{digMode=v} };",
 ].join("\n");
 // eslint-disable-next-line no-new-func
 const api = new Function(code)();
 const { applyGenreFilter, styleIndex, sbBand, sbLetter, sbOrderedTags, tagKey, genreTags,
-  setDay, setDig } = api;
+  eraCounts, deckEras, setSpan, setDay, setDig } = api;
 
 let passed = 0, failed = 0;
 function ok(c, m) { if (c) { passed++; } else { failed++; console.error("  ✗ FAIL:", m); } }
@@ -135,6 +140,43 @@ ok(trow("doom") && trow("doom").n === 1, "a mood/style tag is a row");
 genreTags.add(tagKey("berlin"));
 ok(ids(applyGenreFilter(tagged)) === "21,22", "ticking berlin yields exactly those records");
 genreTags.clear();
+setDay(day);
+
+// 2026-10-05: the two sides count under each other ("if 'acoustic' is selected, the
+// 'years' filter should then show how many acoustic records are available").
+const years = [
+  { id: 31, genres: "folk", styles: "acoustic", year: 1971 },
+  { id: 32, genres: "folk", styles: "acoustic", year: 1975 },
+  { id: 33, genres: "rock", styles: "", year: 1978 },
+  { id: 34, genres: "folk", styles: "acoustic", year: 1994 },
+  { id: 35, genres: "rock", styles: "grunge", year: 1993 },
+];
+setDay(years);
+const yrow = (label) => styleIndex().tags.find((t) => t.label === label);
+ok(yrow("acoustic").n === 3 && yrow("grunge").n === 1, "no year filter: tags count the whole day");
+deckEras.add("1970s");
+ok(yrow("acoustic").n === 2 && yrow("rock").n === 1, "1970s picked: tags count 1970s records only");
+ok(yrow("grunge").n === 0, "a tag the year filter empties counts 0…");
+ok(!sbOrderedTags(styleIndex(), "az", "").some((t) => t.label === "grunge"), "…and isn't listed");
+genreTags.add(tagKey("grunge"));
+ok(sbOrderedTags(styleIndex(), "az", "").some((t) => t.label === "grunge" && t.n === 0),
+   "…unless it's ticked: then it shows its 0, so it can be unticked");
+genreTags.clear(); deckEras.clear();
+genreTags.add(tagKey("acoustic"));
+let ec = eraCounts();
+ok(ec.get("1970s") === 2 && ec.get("1990s") === 1, "acoustic ticked: each decade counts acoustic records");
+ok(ec.present.has("1990s") && ec.present.has("1970s"), "every decade on the day is still known");
+deckEras.add("1990s");
+ec = eraCounts();
+ok(ec.get("1970s") === 2, "a picked decade doesn't narrow its siblings' counts");
+genreTags.clear(); deckEras.clear();
+setSpan(1990, 1999);
+ok(eraCounts().get("1990s") === 2 && !eraCounts().has("1970s"), "the year span narrows the decade counts");
+ok(yrow("acoustic").n === 1, "…and the tag counts");
+setSpan(null, null);
+setDig(true); deckEras.add("1970s");
+ok(yrow("grunge").n === 1, "dig ignores the year filters too");
+setDig(false); deckEras.clear();
 setDay(day);
 
 console.log(`style-browse: ${passed} passed, ${failed} failed`);

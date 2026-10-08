@@ -15,10 +15,13 @@ choice_for_day over albums.db) is completely unchanged. All pool SQL lives here;
 albums.db SQL stays in db.py (its "all SQL in one place" seam, one level down).
 """
 import json
+import os
 import random
 import re
 import sqlite3
 import sys
+import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 
 import config
@@ -998,6 +1001,175 @@ def mb_release_ids_for(uid):
     return [m for m in ids if m] if isinstance(ids, list) else []
 
 
+# --- The day, held in memory (2026-10-05, server-only) ------------------------
+# Building a day is the slow part of serving it: ~2,800-3,600 pool rows, each joined to
+# the catalog, the link cache, tags and genres, then de-duplicated. That's 220-250 ms on
+# the Mac, ~1.1 s on Render's one slow core and network disk, and ~20 s when the pool's
+# pages have fallen out of memory (one seen on staging 2026-10-05). So each process
+# builds TODAY's and TOMORROW's available day once and serves every reader from that
+# copy (owner, 2026-10-05):
+#   * rebuilt when it's 10 minutes old, or as soon as the Mac pushes new pool files —
+#     rsync_pool.sh (and the catalog ships) replace a file whole, so its inode changes;
+#     the server's own writes (a reader's link lookup into live.sqlite, an art lookup
+#     into albums.db) keep the inode and don't count, or a busy hour would rebuild
+#     non-stop;
+#   * a reader never waits on a rebuild: the held copy is served while a fresh one
+#     builds in the background. Only a cold start waits (once per process and day, and
+#     the boot warm-up usually gets there first);
+#   * the platform filter is applied per request, and every caller gets copies;
+#   * the first card's candidates (/api/pool/first) are this same day's ready records.
+# Dig (the full union, ~5,300 records) is held the same way, as its own copy (owner,
+# 2026-10-05). Its build is I/O, not CPU: 1-2 s of CPU, but ~5,000 scattered rows read
+# off the network disk — 10 s on prod when its pages are cold (0.6 s warm), 24-30 s on
+# staging, whose 512 MB can't keep them cached at all. Other dates are built per request.
+_DAY_TTL = 600.0
+_DAY_FILES = ("POOL_DB_PATH", "LIVE_DB_PATH", "DB_PATH", "CATALOG_DB_PATH",
+              "BANDCAMP_DB_PATH", "MB_TAGS_DB_PATH")
+_day_memo = {}            # (month, day, dig) -> (built monotonic, files sig, rows, ready)
+_day_building = set()
+_day_lock = threading.Lock()
+_day_cold = {}            # (month, day, dig) -> Lock: a cold start builds once, not per reader
+
+
+def _pool_files_sig():
+    """Which pool files are on disk, by inode (see above). A missing file is None."""
+    sig = []
+    for name in _DAY_FILES:
+        try:
+            sig.append(os.stat(getattr(config, name)).st_ino)
+        except (OSError, AttributeError):
+            sig.append(None)
+    return tuple(sig)
+
+
+def day_in_window(month, day):
+    """Is this the reader's today or tomorrow (config.today_local)? Only those are held."""
+    t = config.today_local()
+    n = t + timedelta(days=1)
+    return (month, day) in ((t.month, t.day), (n.month, n.day))
+
+
+def _first_card_ready(a):
+    """Ready for a first card: cover + Spotify + YouTube in hand, and not a
+    compilation (B25 deals those later, so they don't open a visit either)."""
+    have = a.get("platforms") or {}
+    return bool(a.get("cover") and have.get("spotify") and have.get("youtube")
+                and not a.get("is_compilation"))
+
+
+def _remember_day(key, rows, sig):
+    # A first card comes from the available day only, so a held dig keeps no ready list.
+    ready = [] if key[2] else [a for a in rows if _first_card_ready(a)]
+    with _day_lock:
+        _day_memo[key] = (time.monotonic(), sig, rows, ready)
+        _day_building.discard(key)
+        kind = [k for k in _day_memo if k[2] == key[2]]
+        for old in sorted(kind, key=lambda k: _day_memo[k][0])[:-3]:
+            del _day_memo[old]           # yesterday's, as the day turns over
+    return rows, ready
+
+
+def _build_day(key):
+    sig = _pool_files_sig()     # taken BEFORE the build: a push landing mid-build rebuilds
+    t0 = time.monotonic()
+    rows = pool_day(key[0], key[1], available_only=not key[2])
+    print(f"[day] held {key[0]:02d}-{key[1]:02d}{' dig' if key[2] else ''}: {len(rows)} "
+          f"records built in {time.monotonic() - t0:.1f}s", flush=True)
+    return _remember_day(key, rows, sig)
+
+
+def _rebuild_day(key):
+    try:
+        _build_day(key)
+    except Exception as e:  # noqa: BLE001 - a failed rebuild keeps serving the held copy
+        print(f"[day] rebuild {key} failed, still serving the held copy: {e}", flush=True)
+        with _day_lock:
+            _day_building.discard(key)
+
+
+def _held(month, day, *, rows=None, dig=False):
+    """(rows, ready) for a day: the held copy, refreshed as described above. `rows` is a
+    day the caller has just built (the boot warm-up), remembered instead of rebuilt.
+    Both lists are SHARED — copy before changing anything."""
+    key = (month, day, bool(dig))
+    sig = _pool_files_sig()
+    if rows is not None:
+        return _remember_day(key, rows, sig)
+    with _day_lock:
+        hit = _day_memo.get(key)
+        fresh = (hit is not None and hit[1] == sig
+                 and time.monotonic() - hit[0] < _DAY_TTL)
+        rebuild = hit is not None and not fresh and key not in _day_building
+        if rebuild:
+            _day_building.add(key)
+        cold = _day_cold.setdefault(key, threading.Lock()) if hit is None else None
+    if hit is not None:
+        if rebuild:
+            threading.Thread(target=_rebuild_day, args=(key,), name="day-rebuild",
+                             daemon=True).start()
+        return hit[2], hit[3]
+    with cold:                  # the first reader builds; the others wait for that build
+        with _day_lock:
+            hit = _day_memo.get(key)
+        if hit is not None:
+            return hit[2], hit[3]
+        return _build_day(key)
+
+
+def held_day(month, day, *, platforms=None, dig=False):
+    """The day's AVAILABLE records (or, with `dig`, the full union) from the held copy,
+    filtered to `platforms`, as fresh dicts — exactly what pool_day(month, day,
+    available_only=not dig, platforms=...) builds (de-dup, then the platform filter),
+    without building it."""
+    rows, _ready = _held(month, day, dig=dig)
+    if platforms:
+        rows = _platform_filter(rows, platforms)
+    return [dict(a) for a in rows]
+
+
+def held_day_age(month, day, *, dig=False):
+    """Seconds since the held copy of this day was built, or None if none is held."""
+    hit = _day_memo.get((month, day, bool(dig)))
+    return None if hit is None else time.monotonic() - hit[0]
+
+
+def ready_for_day(month, day, *, rows=None):
+    """The day's first-card candidates: the held day's ready records (shared). A date
+    outside the window (a device a day ahead or behind) is built for the asker and not
+    held, so it can't push today out of memory."""
+    if (rows is None and not day_in_window(month, day)
+            and (month, day, False) not in _day_memo):
+        rows = pool_day(month, day, available_only=True)
+        return [a for a in rows if _first_card_ready(a)]
+    return _held(month, day, rows=rows)[1]
+
+
+def first_candidates(month, day, *, platforms=None, uid=None, n=4):
+    """Records a fresh visit can open on, as fresh dicts: your saved place first when
+    it's still today's and on your platforms (any record, ready or not — it's where you
+    were), then up to `n` ready records at random. The caller ranks them (the cover
+    cache knows which covers are held) and the client makes the final call (what you've
+    already met today never leaves your device)."""
+    ready = ready_for_day(month, day)
+    out = []
+    if uid:
+        hit = next((a for a in ready if a.get("uid") == uid), None)
+        if hit is None:
+            got = albums_by_uids([uid])
+            hit = got[0] if got else None
+            if hit is not None and (hit.get("release_month") != month
+                                    or hit.get("release_day") != day
+                                    or hit.get("listenable") is False):
+                hit = None
+        if hit is not None and (not platforms or _platform_filter([hit], platforms)):
+            out.append(dict(hit))
+    pool = _platform_filter(ready, platforms) if platforms else ready
+    if out:
+        pool = [a for a in pool if a.get("uid") != uid]
+    out.extend(dict(a) for a in random.sample(pool, min(len(pool), max(1, n))))
+    return out
+
+
 def pool_day_count(month, day, *, available_only=True):
     """How many albums the day has (available, or the full union)."""
     sql = ("SELECT COUNT(*) FROM pool p "
@@ -1060,7 +1232,10 @@ from pooldoor import (  # noqa: F401,E402 - re-exported for back-compat
     purge_spotify,
     read_crawl_status,
     record_spotify_day_log,
+    spotify_hold,
     spotify_log,
+    spotify_spent_today,
     spotify_stamp_stats,
+    spotify_trouble,
     write_crawl_status,
 )

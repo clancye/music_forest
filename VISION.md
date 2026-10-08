@@ -66,6 +66,10 @@ Standing decisions — not "not yet," but "no," unless this document changes:
   toward more.
 - **No doing the wandering for you.** Suggestions, when they exist at all, are
   questions you can ignore, in places you chose to go — never interruptions.
+- **No commenting on what you choose.** The app never remarks on what you filter for,
+  how often, or what you haven't tried — no "try something new." What keeps a reader
+  from walling themselves in is built in, never said: the day changes every day,
+  Filter's ticks reset every visit, and the whole list is always one tap away.
 
 ## How to evaluate a feature
 

@@ -209,8 +209,9 @@ def _apply_door_spotify(uid, prow, result):
     Spotify surface at runtime for any album on any day, without a stored index."""
     if not result or result.get("status") != "ok":
         return result
+    outcome = "err"
     try:
-        backfill_spotify(uid)
+        outcome = backfill_spotify(uid)
     except Exception:
         pass                                    # never let Spotify break the door
     try:
@@ -218,6 +219,14 @@ def _apply_door_spotify(uid, prow, result):
     except Exception:
         return result
     result["spotify_url"] = sp
+    # What a reader may be told about Spotify for this record (2026-10-07): "ok" (a
+    # confirmed link), "none" (Spotify answered: no match — or a remembered one), or
+    # "unchecked" (it failed, or the lookups are paused / over today's budget). Only
+    # "none" may ever be read as "not on Spotify"; "unchecked" is unknown (the honesty
+    # rule), and the app says it couldn't check.
+    result["spotify_status"] = ("ok" if sp else
+                                "unchecked" if outcome in ("err", "paused", "absent") else
+                                "none")
     links = dict(result.get("links") or {})
     if sp:
         links["spotify"] = sp
@@ -455,6 +464,62 @@ def _clear_spotify(c, uid, links_json):
         "links_json = ? WHERE uid = ?", (json.dumps(links), uid))
 
 
+def spotify_spent_today(*, now=None):
+    """Searches spent today (UTC — the clock the quota resets on): this host's own
+    on-demand lookups (opsdb) plus the prewarm's real searches from today's log rows
+    (filled + miss + err — `attempted` also counts links it already had, which spent
+    nothing). On prod the log arrives with the pool push."""
+    now_dt = now or datetime.now(timezone.utc)
+    day = now_dt.strftime("%Y-%m-%d")
+    burn = opsdb.spotify_burn_today(now=now_dt) or {}
+    prewarm = 0
+    for r in spotify_log(50):
+        if (r.get("run_at") or "").startswith(day):
+            prewarm += (r.get("filled") or 0) + (r.get("miss") or 0) + (r.get("err") or 0)
+    return (burn.get("searches") or 0) + prewarm
+
+
+def spotify_hold(*, now=None):
+    """Why the on-demand door should NOT call Spotify right now, or None: 'not answering'
+    (paused after a run of errors) or 'budget' (today's ceiling is spent — going past it
+    is what earned the 7.3h ban on 2026-07-16)."""
+    st = opsdb.spotify_pause_state(now=now)
+    if st["paused"]:
+        return "not answering"
+    try:
+        if spotify_spent_today(now=now) >= config.SPOTIFY_DAILY_CEILING:
+            return "budget"
+    except Exception:
+        pass
+    return None
+
+
+def spotify_trouble(*, now=None):
+    """Should a reader who listens on Spotify be told Spotify isn't answering today?
+    -> None, or {"reason", "since"}. Only for a real Spotify failure: the door's lookups
+    paused after a run of errors, or today's warm-up stopping on 10 errors in a row (its
+    heartbeat says 'throttled'). Our own budget stop is NOT one — per record that still
+    reads "couldn't check", but the day-level line names Spotify, so it waits for Spotify
+    to actually fail."""
+    now_dt = now or datetime.now(timezone.utc)
+    st = opsdb.spotify_pause_state(now=now_dt)
+    if st["paused"]:
+        return {"reason": "not answering", "since": st["since"]}
+    try:
+        hb = read_crawl_status("spotify")
+    except Exception:
+        hb = None
+    if hb and hb.get("state") == "throttled" and hb.get("updated_at"):
+        try:
+            at = datetime.strptime(hb["updated_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc)
+        except ValueError:
+            at = None
+        if at and (now_dt - at).total_seconds() < 24 * 3600:
+            return {"reason": "warm-up stopped", "since": hb["updated_at"]}
+    return None
+
+
 def backfill_spotify(uid, *, resolver=None, ttl_days=None, now=None):
     """ON-DEMAND (safe on the request path): fill or refresh a cached 'ok' door row's
     Spotify link from the DIRECT Spotify Search resolver (coverage_study.spotify_
@@ -477,6 +542,10 @@ def backfill_spotify(uid, *, resolver=None, ttl_days=None, now=None):
     With NO resolver available (no creds / a lapsed app) a stale link is deleted so
     it can't linger past its window -> 'evicted'; an absent one -> 'absent'. This is
     what makes termination cleanup automatic once spotify_album() no-ops.
+
+    On the REQUEST PATH only (no resolver passed — the on-demand door), a lookup is
+    skipped while Spotify is paused after a run of errors, or once today's budget is
+    spent -> 'paused' (couldn't check; no Search spent, nothing remembered).
 
     `resolver(artist, title) -> (hit, url, err)` is injectable for tests; the default
     is coverage_study.spotify_album (itself a no-op without creds)."""
@@ -505,7 +574,23 @@ def backfill_spotify(uid, *, resolver=None, ttl_days=None, now=None):
     if not existing and _spotify_fresh(miss_at, ttl_days=config.SPOTIFY_MISS_DAYS,
                                        now=now_dt):
         return "known-miss"
+    # The on-demand door (no resolver passed) is the request path: it honours the pause
+    # after a run of errors and today's budget, and reports each outcome to the pause.
+    # The prewarm passes its own patient resolver and is never paused here.
+    on_request_path = resolver is None
     resolver = resolver or _spotify_resolver()
+    # A host WITHOUT creds can't ask at all — and the real spotify_album no-ops to
+    # (False, None, False), the exact shape of "no match", so every door open on a
+    # credless box (the local dev server) used to stamp a 30-day "not on Spotify" into
+    # live.sqlite, which the push then carried to prod (found 2026-10-07). On the request
+    # path that's now "couldn't check", like having no resolver. (Only for the REAL
+    # resolver: a stand-in a test injects is its own answer.)
+    if on_request_path and resolver is not None and not _spotify_configured() \
+            and resolver is getattr(_coverage_study(), "spotify_album", None):
+        resolver = None
+    if on_request_path and resolver is not None and _spotify_configured() \
+            and spotify_hold(now=now_dt):
+        return "paused"                    # couldn't check: never a verdict, nothing spent
     if resolver is None:
         if existing:                       # stale + can't refresh -> drop, don't linger
             with _conn() as c:
@@ -525,6 +610,8 @@ def backfill_spotify(uid, *, resolver=None, ttl_days=None, now=None):
     if _spotify_configured():
         opsdb.record_spotify_search(
             "err" if err else ("filled" if (hit and url) else "miss"), now=now_dt)
+        if on_request_path:
+            opsdb.note_spotify_outcome(bool(err), now=now_dt)
     if err:
         return "err"                       # transient: leave the row as-is
     if not hit or not url:

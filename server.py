@@ -29,10 +29,10 @@ import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import quote, quote_plus
+from urllib.parse import quote, quote_plus, urlsplit
 
 from flask import (Blueprint, Flask, abort, current_app, g, jsonify, request,
-                   send_from_directory)
+                   send_file, send_from_directory)
 from werkzeug.exceptions import HTTPException
 
 # Flask-Limiter is a HOSTED-ONLY dependency (requirements-hosted.txt), imported
@@ -60,6 +60,7 @@ import auth
 import bio
 import catalogdb
 import config
+import covercache
 import db
 import dbsanity
 import vintage
@@ -425,6 +426,12 @@ def _abs_url(url):
     return f"{scheme}://{request.host}/{url.lstrip('/')}"
 
 
+def _is_apple_art(url):
+    """Artwork served from Apple's CDN (iTunes / Apple Music covers)."""
+    host = (urlsplit(url or "").hostname or "").lower()
+    return any(host == h or host.endswith("." + h) for h in ("mzstatic.com", "apple.com"))
+
+
 def _record_og_tags(album, share_url):
     """The og:/twitter: block for one record. Every interpolated value is
     HTML-escaped — artist/title are catalog text and land inside an attribute."""
@@ -435,7 +442,14 @@ def _record_og_tags(album, share_url):
     released = (album.get("released") or "")[:10]
     desc = (f"Released {released}. Find music, write notes." if released
             else "Find music, write notes.")
-    cover = _abs_url(album.get("cover")) or _abs_url("/static/icons/icon-512.png")
+    # The archive's own address, never this host's cached copy (no share images from the
+    # cover cache), and a blocklisted cover isn't shared at all. Nor is Apple artwork:
+    # Apple allows it only beside an Apple Music link, and a link preview has none
+    # (owner, 2026-10-05) — the card falls back to the app icon.
+    shared = covercache.scrub_url(album.get("cover"))
+    if _is_apple_art(shared):
+        shared = None
+    cover = _abs_url(shared) or _abs_url("/static/icons/icon-512.png")
     tags = [
         # Kept as `website`: music.album is the semantically tighter type but is
         # unevenly supported, and a wrong-typed card is worse than a plain one.
@@ -669,6 +683,10 @@ def api_choice():
 # untouched: with the flag off these 404, so shipping this changes nothing in the
 # live app until AOTD_USE_POOL is set. The frontend cutover is a later step.
 # (The MM-DD / ?platforms= query parsing these routes share lives in reqparams.)
+# The kinds of open the app reports (X-MF-Open) — anything else is ignored.
+_OPEN_KINDS = ("first", "again", "reload", "platforms")
+
+
 @bp.route("/api/pool/day")
 @_LIMIT_CATALOG
 def api_pool_day():
@@ -684,12 +702,35 @@ def api_pool_day():
         _mode = request.headers.get("X-MF-Mode")   # coarse tier flag, not an identity
         if _mode in ("guest", "account"):
             opsdb.bump("today_" + _mode)
+        # What kind of open (app.js openKind): one allowlisted word, never an identity.
+        # "first" is a device's first fetch of its own day, so its count is devices.
+        _kind = request.headers.get("X-MF-Open")
+        if _kind in _OPEN_KINDS:
+            opsdb.bump("open_" + _kind)
+            if _mode in ("guest", "account"):
+                opsdb.bump("open_" + _kind + "_" + _mode)
     platforms = _platforms_param(dig)
-    albums = pooldb.pool_day(month, day, available_only=not dig,
-                             platforms=platforms)
-    return jsonify({"month": month, "day": day, "dig": dig,
-                    "filtered": bool(platforms),
-                    "count": len(albums), "albums": albums})
+    # Today and tomorrow come from the held copy (pooldb "The day, held in memory"), dig
+    # included; any other date is built per request, as before.
+    held = pooldb.day_in_window(month, day)
+    if held:
+        albums = pooldb.held_day(month, day, platforms=platforms, dig=dig)
+    else:
+        albums = pooldb.pool_day(month, day, available_only=not dig, platforms=platforms)
+    # Is Spotify failing today (pooldoor.spotify_trouble)? The app tells a reader who
+    # listens there, quietly, instead of letting their day shrink with no reason given.
+    # Read per response, never held: it changes on its own clock.
+    try:
+        sp_trouble = bool(pooldb.spotify_trouble())
+    except Exception:  # noqa: BLE001 - a status line never breaks the day
+        sp_trouble = False
+    resp = jsonify({"month": month, "day": day, "dig": dig,
+                    "filtered": bool(platforms), "spotify_trouble": sp_trouble,
+                    "count": len(albums), "albums": covercache.annotate(albums)})
+    age = pooldb.held_day_age(month, day, dig=dig) if held else None
+    if age is not None:
+        resp.headers["X-MF-Day-Age"] = str(int(age))   # how old the held copy is, in s
+    return resp
 
 
 @bp.route("/api/pool/pick")
@@ -707,11 +748,41 @@ def api_pool_pick():
     except (TypeError, ValueError):
         n = 2
     platforms = _platforms_param(dig)
-    albums = pooldb.pool_pick(month, day, n, available_only=not dig,
-                              platforms=platforms)
+    albums = covercache.annotate(pooldb.pool_pick(month, day, n, available_only=not dig,
+                                                  platforms=platforms))
     return jsonify({"month": month, "day": day, "dig": dig,
                     "filtered": bool(platforms),
                     "count": len(albums), "albums": albums})
+
+
+@bp.route("/api/pool/first")
+@_LIMIT_CATALOG
+def api_pool_first():
+    """A few records a fresh visit can open on, so the first card doesn't wait for the
+    whole day (pooldb.first_candidates). ?uid= is your saved place (it leads when it's
+    still today's and on your platforms); ?platforms= as /api/pool/day. Ready records
+    whose cover this host holds come first, then other Cover Art Archive covers, then
+    the rest; the client picks the first it can show. Not counted as a day served —
+    the full /api/pool/day right behind it is."""
+    if not config.POOL_ENABLED:
+        return jsonify({"error": "pool serving disabled"}), 404
+    month, day = _md_or_today()
+    platforms = _platforms_param(False)
+    uid = (request.args.get("uid") or "").strip() or None
+    try:
+        n = min(max(int(request.args.get("n", 6)), 1), 8)
+    except (TypeError, ValueError):
+        n = 6
+    albums = covercache.annotate(pooldb.first_candidates(
+        month, day, platforms=platforms, uid=uid, n=12))
+    lead = [albums.pop(0)] if uid and albums and albums[0].get("uid") == uid else []
+
+    def rank(a):
+        if a.get("cover_cached"):
+            return 0
+        return 1 if covercache.caa_key(a.get("cover")) else 2
+    albums = lead + sorted(albums, key=rank)[:n - len(lead)]
+    return jsonify({"month": month, "day": day, "count": len(albums), "albums": albums})
 
 
 @bp.route("/api/pool/door")
@@ -727,7 +798,25 @@ def api_pool_door():
     if not uid:
         return jsonify({"error": "uid required"}), 400
     opsdb.bump("door_open")            # anonymized Usage counter (count only, no user)
-    return jsonify(pooldb.door_links(uid))
+    links = pooldb.door_links(uid)
+    if links.get("cover"):
+        links["cover"] = covercache.scrub_url(links["cover"])
+    return jsonify(links)
+
+
+# The host's own copy of today's and tomorrow's Cover Art Archive thumbnails
+# (covercache.py). The day's list marks the ones held here (`cover_cached`) and the
+# client's caaThumb() asks for those; anything not held, blocklisted or malformed is a
+# plain 404, and the client falls back to the archive. Browser-cached for a few hours
+# only: the window rolls daily and a removal should reach readers' copies too.
+@bp.route("/covers/<kind>/<name>")
+def cover_thumb(kind, name):
+    path = covercache.serve_path(kind, name)
+    if path is None:
+        abort(404)
+    resp = send_file(path, mimetype="image/jpeg", conditional=True, max_age=6 * 3600)
+    resp.headers["Cache-Control"] = "public, max-age=21600"
+    return resp
 
 
 # The services a Listen tap can name — db.PLATFORM_ORDER, the same fixed set the
@@ -751,6 +840,11 @@ def api_usage_listen():
     tier = (request.args.get("tier") or "").strip().lower()
     if tier in ("guest", "account"):
         opsdb.bump("listen_" + tier)
+    # Where the link came from (app.js listenSource, 2026-10-07): pre-warmed with the day,
+    # looked up when the record was opened, or a record from another date. One word.
+    src = (request.args.get("src") or "").strip().lower()
+    if src in ("warm", "new", "other"):
+        opsdb.bump("listen_src_" + src)
     return "", 204
 
 
@@ -769,6 +863,9 @@ def api_search():
     if not q:
         return jsonify({"q": q, "albums": [], "count": 0})
     opsdb.bump("explore_search")       # anonymized Usage counter (count only, no query)
+    _mode = request.headers.get("X-MF-Mode")   # coarse tier flag (2026-10-07), not an identity
+    if _mode in ("guest", "account"):
+        opsdb.bump("explore_search_" + _mode)
     month = day = None
     if request.args.get("date"):
         month, day = _parse_md(request.args.get("date"))
@@ -786,7 +883,7 @@ def api_search():
     # B24: fold in the pool's MB-only arm, which albums_fts can't see (see
     # _merge_search_arms). MB rows already carry the pool's date, so they join
     # AFTER the overlay above.
-    albums = _merge_search_arms(albums, q, month, day, field)
+    albums = covercache.annotate(_merge_search_arms(albums, q, month, day, field))
     return jsonify({"q": q, "month": month, "day": day,
                     "count": len(albums), "albums": albums})
 
@@ -1075,11 +1172,11 @@ def api_art_ensure():
         if not a:
             continue
         if a["cover"]:                       # already cached
-            out[str(rid)] = a["cover"]
+            out[str(rid)] = covercache.scrub_url(a["cover"])
             continue
         try:
             fetch_art.fetch_one(rid, a["artist"], a["title"])
-            out[str(rid)] = db.get_album(rid)["cover"]  # may be None on a miss
+            out[str(rid)] = covercache.scrub_url(db.get_album(rid)["cover"])  # may be None
         except Exception:                    # noqa: BLE001 - never fail the batch
             out[str(rid)] = None
     return jsonify(out)
@@ -2046,9 +2143,10 @@ def api_sync_account_delete():
 # It deliberately does NOT touch hosted Supabase feedback rows — those must go
 # bucket-objects-first via tools/prune_feedback.py (service-role key), or the
 # readable screenshots would outlive their rows as unlisted orphans.
-# Started once per process per (store, feedback dir) target; create_app is
-# called freely by tests, so the latch keeps threads bounded. Every part is
-# best-effort: a sweep failure is logged, never raised, and never blocks boot.
+# Started by the server's first request (see "Boot work starts in the process
+# that serves"), once per process per (store, feedback dir) target — the latch
+# keeps threads bounded. Every part is best-effort: a sweep failure is logged,
+# never raised, and never blocks boot.
 _RETENTION_STARTED = set()
 _RETENTION_LOCK = threading.Lock()
 
@@ -2123,9 +2221,8 @@ def create_app(overrides=None):
     # The sync store is built from config (SYNC_DB_PATH / SUPABASE_DB_URL); drop
     # any cached one so a fresh app picks up (possibly overridden) config.
     store.reset_store()
-    # Data-retention sweep (daily, daemon, best-effort). Runs here rather than
-    # in main() because gunicorn imports server:app and never calls main().
-    _start_retention_sweep()
+    # The data-retention sweep starts with the server's first request, not here
+    # (see "Boot work starts in the process that serves", below).
     application = Flask(__name__, static_folder="static",
                         static_url_path="/static")
     application.register_blueprint(bp)
@@ -2185,8 +2282,9 @@ app = create_app()
 # 2026-07-10). This primes today's + tomorrow's AVAILABLE slice into the OS page cache
 # on worker boot, through the real serve path (enrich + cluster + availability, which
 # also warms catalog.sqlite), so the first user request lands warm. Best-effort +
-# daemon + non-blocking; it runs in the request-serving worker (render.yaml runs
-# gunicorn WITHOUT --preload, so module import happens per-worker) a moment after boot.
+# daemon + non-blocking; it runs in the request-serving worker, started by its first
+# request (see "Boot work starts in the process that serves", below), and the day it
+# builds is the one that worker serves from memory.
 # Off when the pool isn't the source (POOL_ENABLED) or AOTD_WARM_POOL=0. Never raises.
 # NOTE: this is a mitigation, not the full fix — the box's RAM < the pool, so other
 # days / Browse stay disk-bound; the complete fix is the H5 plan bump (2 GB fits it).
@@ -2198,7 +2296,10 @@ def _warm_pool_slice():
         base = config.today_local()    # warm the days we actually serve (ET)
         for d in (base, base + timedelta(days=1)):
             try:
-                rows += len(pooldb.pool_day(d.month, d.day, available_only=True, limit=None))
+                day_rows = pooldb.pool_day(d.month, d.day, available_only=True, limit=None)
+                rows += len(day_rows)
+                # The first card's candidates come out of the same build (v348).
+                pooldb.ready_for_day(d.month, d.day, rows=day_rows)
             except Exception:   # noqa: BLE001 - one bad day mustn't abort the warm
                 pass
         log.info("pool warm-up primed today+tomorrow", extra={
@@ -2217,7 +2318,52 @@ def _maybe_warm_pool():
     threading.Thread(target=_warm_pool_slice, name="pool-warm", daemon=True).start()
 
 
-_maybe_warm_pool()
+# The cover cache's warmer (covercache.py): each worker starts the thread, one wins the
+# disk lock and warms today's + tomorrow's Cover Art Archive thumbnails. Same gates as
+# the pool warm-up: never under pytest, only when the pool is the source, and only with
+# the cover cache on (on by default in hotlink mode, i.e. the hosted app).
+def _maybe_warm_covers():
+    if "pytest" in sys.modules:
+        return
+    if not getattr(config, "POOL_ENABLED", False) or not config.COVER_CACHE_ENABLED:
+        return
+    covercache.start_warmer()
+
+
+# --- Boot work starts in the process that serves -----------------------------
+# The retention sweep and both warm-ups start on the first request this process
+# serves, not when the module is imported. Render runs gunicorn with --preload (its
+# GUNICORN_CMD_ARGS, on both services; render.yaml's startCommand doesn't show it), so
+# the import happens in the gunicorn MASTER, which forks the worker and never serves.
+# Started at import, all three threads lived there (measured 2026-10-05): the warm-up's
+# day was held where no reader saw it (the worker built its own on its first request —
+# 0.9 s on prod, 4.5 s on staging, after a deploy), the cover warmer held and rebuilt a
+# second copy of both days, and the sweep could open its database connection before
+# the fork, handing the worker a socket the master also uses. Render's health check is
+# the worker's first request, seconds after boot, so the warm-up still lands before
+# readers do. Works the same without --preload and under `python server.py`; apps that
+# tests build with create_app() never start any of it.
+_boot_started = False
+_boot_lock = threading.Lock()
+
+
+def _start_boot_work():
+    global _boot_started
+    if _boot_started:
+        return
+    with _boot_lock:
+        if _boot_started:
+            return
+        _boot_started = True
+    for start in (_start_retention_sweep, _maybe_warm_pool, _maybe_warm_covers):
+        try:
+            start()
+        except Exception:  # noqa: BLE001 - boot work is best-effort; never fail the request
+            log.exception("boot work failed to start", extra={
+                "event": "boot_work_failed", "what": start.__name__})
+
+
+app.before_request(_start_boot_work)
 
 
 def main():
