@@ -204,3 +204,30 @@ def test_audit_leaves_a_correct_cover_alone(built_db, monkeypatch):
     flagged = fetch_art.audit_cached_covers(fix=True, verbose=False)
     assert all(f["release_id"] != rid for f in flagged)
     assert db.get_album(rid)["cover"] == good
+
+
+def test_fetch_for_day_reports_progress(monkeypatch):
+    # The nightly covers run reports its progress so the Agents page can tell "still
+    # working" from "died" (owner, 2026-10-14). No network: the lookup is stubbed.
+    rows = [{"release_id": i, "artist": "A", "title": f"T{i}"} for i in range(3)]
+    monkeypatch.setattr(db, "albums_missing_art", lambda m, d: rows)
+    monkeypatch.setattr(fetch_art, "_lookup_and_store",
+                        lambda rid, a, t: (None, "itunes", "ok" if rid else "notfound"))
+    monkeypatch.setattr(config, "ART_REQUEST_DELAY", 0)
+    monkeypatch.setattr(config, "ensure_dirs", lambda: None)
+    seen = []
+    fetch_art.fetch_for_day(10, 15, progress=lambda i, n, ok: seen.append((i, n, ok)))
+    assert seen == [(1, 3, 0), (2, 3, 1), (3, 3, 2)]
+
+
+def test_progress_beat_is_throttled(monkeypatch):
+    hb = pytest.importorskip("tools.heartbeat")     # private: absent from the public mirror
+    beats = []
+    monkeypatch.setattr(hb, "beat", lambda *a, **k: beats.append((a, k)))
+    tick = fetch_art._progress_beat(every=3600)
+    for i in range(1, 6):
+        tick(i, 5, i)
+    assert len(beats) == 1                          # the first, then nothing for an hour
+    args, fields = beats[0]
+    assert args == ("fetch_art", "running")
+    assert fields["seen"] == 1 and fields["total"] == 5 and "started_at" in fields

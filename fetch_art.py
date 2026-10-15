@@ -353,7 +353,9 @@ def fetch_one(release_id, artist, title, use_fallback=True):
     return result
 
 
-def fetch_for_day(month, day, max_items=None, dry_run=False):
+def fetch_for_day(month, day, max_items=None, dry_run=False, progress=None):
+    """Fetch art for every album on MM-DD still missing it. `progress(i, n, ok)`, when
+    given, is called after each album — the nightly run reports through it."""
     config.ensure_dirs()
     todo = db.albums_missing_art(month, day)
     if max_items:
@@ -374,9 +376,37 @@ def fetch_for_day(month, day, max_items=None, dry_run=False):
         except Exception as e:  # noqa: BLE001 - one bad row shouldn't stop the run
             db.save_art(rid, status="error")
             print(f"\n  ! {artist} - {title}: {e}", file=sys.stderr)
+        if progress:
+            progress(i, len(todo), ok)
         time.sleep(config.ART_REQUEST_DELAY)  # be polite to the APIs
     if not dry_run:
         print(f"\nCached artwork for {ok}/{len(todo)} albums.")
+
+
+def _progress_beat(every=120.0):
+    """The nightly covers run's progress, for the operator console's Agents page. The
+    run used to say "running" once and then nothing for its 7–11 hours, which the page
+    could only read as dead (owner, 2026-10-14). Beats at most every `every` seconds.
+    The import is lazy and guarded: tools/ is private (absent from the public mirror),
+    and a health signal must never break the run it reports on. None if unavailable."""
+    try:
+        from tools.heartbeat import beat
+    except Exception:  # noqa: BLE001
+        return None
+    started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    last = [None]
+
+    def tick(i, n, ok):
+        now = time.monotonic()
+        if last[0] is not None and now - last[0] < every:
+            return
+        last[0] = now
+        try:
+            beat("fetch_art", "running", note="tomorrow's covers", seen=i, total=n, ok=ok,
+                 started_at=started)
+        except Exception:  # noqa: BLE001
+            pass
+    return tick
 
 
 def _same_art(u1, u2):
@@ -475,7 +505,8 @@ def main():
         t = date.today()
         month, day = t.month, t.day
 
-    fetch_for_day(month, day, max_items=args.max, dry_run=args.dry_run)
+    progress = _progress_beat() if args.tomorrow and not args.dry_run else None
+    fetch_for_day(month, day, max_items=args.max, dry_run=args.dry_run, progress=progress)
 
 
 if __name__ == "__main__":

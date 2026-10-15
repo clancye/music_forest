@@ -3772,41 +3772,44 @@ body.auth-pending > *:not(#authGate):not(.mf-cue) { visibility: hidden; }
 .opc-meter .mf { display: block; height: 100%; border-radius: 5px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
 .opc-meter .mf.warn { background: linear-gradient(90deg, #b98f2e, #e0b13c); }
 
-/* --- System tab: live background-agent board --------------------------------- */
-.opc-sysbar { display: flex; align-items: center; gap: var(--sp-10); margin: var(--sp-16) 0 var(--sp-12);
-  padding: 9px 13px; border-radius: 10px; font-size: 13px; color: var(--text);
+/* --- Health › Agents: one plain list (owner, 2026-10-14; mockup option A) ------ */
+/* The dot and the word carry the state: sage = fine or done, a sage ring = running,
+   amber = needs a look, red = gone silent, grey = no report yet. Running is calm —
+   the old board drew it amber, which read as a warning on a healthy crawler. */
+.opc-agsum { display: flex; align-items: flex-start; gap: var(--sp-10); margin: var(--sp-12) 0;
+  padding: 11px 14px; border-radius: 12px; font-size: 14.5px; color: var(--text);
   background: color-mix(in srgb, var(--accent) 9%, var(--panel));
-  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line)); }
-.opc-sysbar b { font-weight: 700; font-variant-numeric: tabular-nums; }
-.opc-sysbar .opc-stamp { margin-left: auto; }
-.opc-sysbar.opc-sysbad { background: color-mix(in srgb, #d0553f 12%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); }
+.opc-agsum.bad { background: color-mix(in srgb, #d0553f 11%, var(--panel));
   border-color: color-mix(in srgb, #d0553f 45%, var(--line)); }
-.opc-sysbar.opc-sysbad b { color: #d0553f; }
-/* 24h schedule strip */
-.opc-timeline { background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px;
-  padding: var(--sp-12) var(--sp-12) var(--sp-8); margin-bottom: var(--sp-16); }
-.opc-tlrow { display: flex; align-items: center; height: 20px; }
-.opc-tllbl { width: 92px; flex: 0 0 auto; font-size: 11px; color: var(--muted);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 8px; }
-.opc-tltrack { position: relative; flex: 1; height: 20px; }
-.opc-tltrack::before { content: ""; position: absolute; left: 0; right: 0; top: 9px; border-top: 1px dashed var(--line); }
-.opc-tlhead .opc-tltrack::before { border: 0; }
-.opc-tlax { position: absolute; top: 4px; transform: translateX(-50%); font-size: 9px; color: var(--muted); }
-.opc-tlnow { position: absolute; top: 0; bottom: 0; width: 1px; background: color-mix(in srgb, var(--accent-2) 70%, transparent); }
-.opc-tlbar { position: absolute; top: 7px; height: 6px; border-radius: 3px; opacity: .85; }
-.opc-tlcont { position: absolute; left: 0; right: 0; top: 9px; height: 2px; border-radius: 1px; opacity: .5; }
-.opc-tltick { position: absolute; top: 6px; width: 7px; height: 7px; border-radius: 50%; transform: translateX(-50%); }
-.opc-tlnote { font-size: 10px; color: var(--muted); margin-top: 6px; padding-left: 92px; }
-/* agent rows */
-.opc-job { display: flex; gap: var(--sp-10); padding: var(--sp-10) 2px; align-items: flex-start; }
-.opc-job + .opc-job { border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
-.opc-jdot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; margin-top: 4px; }
-.opc-jmain { flex: 1; min-width: 0; }
-.opc-jhead { display: flex; align-items: baseline; gap: var(--sp-8); }
-.opc-jname { font-size: 14px; font-weight: 600; }
-.opc-jsched { font-size: 11px; color: var(--muted); }
-.opc-jmeta { font-size: 12px; color: var(--text); margin-top: 2px; font-variant-numeric: tabular-nums; }
-.opc-jblurb { font-size: 11.5px; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+.opc-agsum .opc-agdot { margin-top: 6px; }
+.opc-agsub { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.opc-card.opc-aglist { padding: 0; }
+.opc-agrow { display: block; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer;
+  background: transparent; border: 0; padding: 12px 14px; }
+.opc-agrow + .opc-agrow { border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
+.opc-agrow:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; border-radius: 10px; }
+.opc-agtop { display: flex; align-items: center; gap: var(--sp-10); }
+.opc-agname { flex: 1; min-width: 0; font-size: 15px; }
+.opc-agdot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; background: var(--living); }
+.opc-agdot.run { background: transparent; border: 2px solid var(--living); }
+.opc-agdot.warn { background: #e0b13c; }
+.opc-agdot.bad { background: #d0553f; }
+.opc-agdot.never { background: var(--line); }
+.opc-agword { font-size: 13px; font-weight: 600; color: var(--accent-2); white-space: nowrap; }
+.opc-agword.warn { color: #e0b13c; }
+.opc-agword.bad { color: #d0553f; }
+.opc-agword.never { color: var(--muted); font-weight: 400; }
+.opc-agline { display: block; margin: 3px 0 0 19px; font-size: 13px; line-height: 1.45; color: var(--muted);
+  font-variant-numeric: tabular-nums; }
+.opc-agline b { color: var(--text); font-weight: 500; }
+.opc-agbar { display: block; height: 4px; margin-top: 7px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+.opc-agbar i { display: block; height: 100%; background: var(--living); border-radius: 3px; }
+.opc-agwhy { display: block; margin-top: 6px; color: var(--text); }
+.opc-agtodo { display: block; margin-top: 3px; font-size: 12.5px; }
+.opc-agdet { display: block; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);
+  font-size: 12.5px; line-height: 1.5; }
+.opc-agdet code { font-family: var(--font-mono); font-size: 11.5px; }
 
 /* Requests tab */
 .opc-reqcounts { margin-bottom: var(--sp-8); }
