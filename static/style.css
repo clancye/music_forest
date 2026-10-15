@@ -224,6 +224,25 @@ header {
   letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
   text-wrap: balance;
 }
+/* 2026-10-15 (owner): the day is a button that opens "how today works" — looking exactly
+   like the caption it was, plus a small ⓘ. The tap box grows 12px above and below (the
+   negative margin keeps the row's height) so it's a real touch target. */
+.day-why {
+  font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit;
+  text-align: inherit; background: none; border: 0; cursor: pointer;
+  padding: 12px 0; margin: -12px 0; -webkit-tap-highlight-color: transparent;
+}
+.day-why:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 3px; border-radius: 6px; }
+.day-i {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 17px; height: 17px; margin-left: 9px; vertical-align: 2px;
+  border: 1px solid currentColor; border-radius: 50%;
+  font: italic 600 11px/1 var(--font-serif); letter-spacing: 0; text-transform: none;
+}
+.day-why:hover .day-i { color: var(--accent-2); }
+/* The two doors' last line (Our promises → the Privacy Policy; how today works → Our promises). */
+.onboard-body .promise-foot { margin-top: var(--sp-14); font-size: 13.5px; color: var(--muted); }
+.promise-foot button.pull-link { font: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 /* v353: Notebook and Search have no masthead row — their one search bar moved to the
    foot of the screen (.bottom-bar, below), so the row would only be empty padding. */
 body.is-remember header .brand { display: none; }

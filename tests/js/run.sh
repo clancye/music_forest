@@ -47,6 +47,7 @@ echo "== first-run (the services stand in for the first record) ==" ; node first
 echo "== tab-swipe (snap on, or spring back) ==" ; node tab-swipe.test.mjs
 echo "== first-card-speed (small covers, ready record first) ==" ; node first-card-speed.test.mjs
 echo "== open-kind (the Log's first / again / reload / platforms) ==" ; node open-kind.test.mjs
+echo "== today-why (how today works, behind the date's ⓘ) ==" ; node today-why.test.mjs
 echo "== analytics parity vs journal.py =="
 python3 "$ROOT/tests/js/parity_gen.py" > /tmp/aotd_parity.json
 PARITY_JSON=/tmp/aotd_parity.json node parity_check.mjs

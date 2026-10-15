@@ -5,7 +5,7 @@
 // service-worker cache name — because the worker can swap its cache to a new build
 // in the background while a resumed PWA keeps running old code, which made a stale
 // page wrongly report "up to date". BUMP THIS WITH sw.js VERSION on any shell change.
-window.__MF_BUILD = "v359";
+window.__MF_BUILD = "v360";
 
 // --- tiny helpers -----------------------------------------------------------
 const $ = (sel) => document.querySelector(sel);
@@ -5756,6 +5756,47 @@ function applyInsetOverride() {
 function openAboutDoor() { $("#dataModal").classList.remove("hidden"); }
 function closeAboutDoor() { $("#dataModal").classList.add("hidden"); }
 
+// OUR PROMISES + HOW TODAY WORKS (owner, 2026-10-15; docs/mockups/promises). The owner:
+// the app "doesn't exactly make it clear that there are no recommendations/tracking
+// happening." ☰ › Our promises opens the first door (its words are in index.html); the ⓘ
+// on Today's date opens the second, which says what this day is, built here so it can
+// name the day, its real count, and whether your own services narrow it. Every sentence
+// is checked against how the deal works (dealOrder, dayEndpoint) — keep it literally true.
+function openPromisesDoor() { closeTodayWhy(); $("#promisesModal").classList.remove("hidden"); }
+function closePromisesDoor() { $("#promisesModal").classList.add("hidden"); }
+function nextMd(md) {        // "10-15" -> "10-16"; a leap year, so Feb 28 -> Feb 29
+  const [m, d] = String(md || "").split("-").map(Number);
+  const t = new Date(2024, (m || 1) - 1, (d || 1) + 1);
+  return String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
+}
+// The door's sentences. `n` is the day's record count (omitted until the whole day has
+// loaded: the first card arrives alone); `mine` = your chosen services narrow it; `dig` =
+// the unfiltered union, which nothing narrows (honesty rule: dig is always unfiltered).
+function todayWhyLines({ md, n, mine, dig }) {
+  const day = mdDisplay(md), count = n > 1 ? Number(n).toLocaleString("en-US") : "";
+  const first = dig
+    ? `You're digging: these are all the records released on ${day}, in any year, that we ` +
+      `know of${count ? ` (${count} of them)` : ""}, including ones we haven't found a place to play yet.`
+    : `These are the records released on ${day}, in any year, that can be played ` +
+      `${mine ? "on the services you listen on" : "somewhere"}${count ? `: ${count} of them today` : ""}.`;
+  return [first,
+    "They're shuffled fresh every time you open the app, with genres taking turns so no one sound takes over.",
+    `Nobody selected them. Not us, not a label, and not an algorithm that knows you. Tomorrow it's ${mdDisplay(nextMd(md))}'s turn.`,
+    dig ? "Dig ignores your services and Filter, so nothing narrows it."
+      : "The only things that narrow them are the ones you set: the services you listen on, and Filter."];
+}
+function openTodayWhy() {
+  const md = (deckState && deckState.key) || mdParam();
+  const n = deckState && deckState.all ? deckState.all.length : 0;
+  $("#todayWhyTitle").textContent = `Released on ${mdDisplay(md)}`;
+  $("#todayWhyBody").innerHTML =
+    todayWhyLines({ md, n, mine: !digMode && filterPlatformKeys().length > 0, dig: digMode })
+      .map((line) => `<p>${esc(line)}</p>`).join("") +
+    '<p class="promise-foot"><button type="button" class="pull-link today-why-promises">Our promises ›</button></p>';
+  $("#todayWhyModal").classList.remove("hidden");
+}
+function closeTodayWhy() { $("#todayWhyModal").classList.add("hidden"); }
+
 // A shared link lands as origin/?album|artist|person|label=…; on boot, open that
 // entity's door over the default view (a door — closing returns you to Today/Explore).
 // The URL is cleaned first so a refresh doesn't reopen it and the address bar stays tidy.
@@ -7252,7 +7293,10 @@ function setSubtitleFor(mode, md) {
   const text = subtitleText(mode, md);
   // FB#105 (2026-08-07): this line collapses on Notebook and Explore. The tabs sit in
   // a fixed dock at the foot, so nothing up here can shift them.
-  el.textContent = text;
+  // 2026-10-15: the day is a button with a small ⓘ — it opens "how today works"
+  // (openTodayWhy). The whole line is the target, not just the ⓘ.
+  el.innerHTML = text ? `<button type="button" class="day-why" aria-haspopup="dialog">${
+    esc(text)}<span class="day-i" aria-hidden="true">i</span><span class="sr-only"> — how today works</span></button>` : "";
   el.classList.toggle("hidden", !text);
 }
 
@@ -8641,6 +8685,19 @@ function init() {
   $("#dataClose").addEventListener("click", closeAboutDoor);
   $("#dataModal").addEventListener("click", (e) => {
     if (e.target.id === "dataModal") closeAboutDoor();
+  });
+  // Our promises (☰) and how today works (the ⓘ on Today's date) — pull-only doors.
+  $("#promisesClose").addEventListener("click", closePromisesDoor);
+  $("#promisesModal").addEventListener("click", (e) => {
+    if (e.target.id === "promisesModal") closePromisesDoor();
+  });
+  $("#todayWhyClose").addEventListener("click", closeTodayWhy);
+  $("#todayWhyModal").addEventListener("click", (e) => {
+    if (e.target.id === "todayWhyModal") closeTodayWhy();
+    else if (e.target.closest(".today-why-promises")) openPromisesDoor();
+  });
+  $("#subtitle").addEventListener("click", (e) => {
+    if (e.target.closest(".day-why")) openTodayWhy();
   });
   // Send-feedback modal.
   $("#feedbackBtn").addEventListener("click", openFeedbackModal);

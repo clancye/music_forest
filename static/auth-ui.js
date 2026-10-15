@@ -145,6 +145,7 @@
   // Line icons, drawn in the tile in the muted colour. aria-hidden: the name says it.
   const MENU_ICONS = {
     about: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><path d="M12 7.6v.1"/>',
+    promises: '<path d="M12 3.5 19 6.5V12c0 4.2-3 7.4-7 8.5-4-1.1-7-4.3-7-8.5V6.5z"/><path d="m9 12 2 2 4-4"/>',
     tour: '<path d="M4.5 6.5 9 5l6 1.5L19.5 5v13L15 19.5 9 18l-4.5 1.5z"/><path d="M9 5v13"/><path d="M15 6.5v13"/>',
     feedback: '<path d="M5 5.5h14v10H10l-4.5 3.5v-3.5H5z"/>',
     signin: '<path d="M14 4.5h4.5v15H14"/><path d="M4.5 12h10"/><path d="m11 8.5 3.5 3.5-3.5 3.5"/>',
@@ -226,6 +227,8 @@
         // data on screen comes from (which the footer used to carry).
         menuRow("acct-whatis", "about", "About",
           "Why Music Forest exists") +
+        // 2026-10-15 (owner): what Music Forest doesn't do, said plainly (app.js).
+        menuRow("acct-promises", "promises", "Our promises", "No recommendations, no trackers, no ads") +
         // FB#99: the tour is offered, not forced — so it needs a permanent home for
         // anyone who said no (or wants it again).
         menuRow("acct-tour", "tour", "How to use", "A walk through the app, one tip at a time") +
@@ -238,6 +241,9 @@
       '</div>';
     _guestMenu.querySelector(".acct-whatis").addEventListener("click", () => {
       if (window.openAboutDoor) window.openAboutDoor();
+    });
+    _guestMenu.querySelector(".acct-promises").addEventListener("click", () => {
+      if (window.openPromisesDoor) window.openPromisesDoor();
     });
     _guestMenu.querySelector(".acct-tour").addEventListener("click", () => {
       startTourOnToday();
@@ -2133,6 +2139,7 @@
         // door (it used to re-open the first-run welcome).
         menuRow("acct-whatis", "about", "About",
           "Why Music Forest exists") +
+        menuRow("acct-promises", "promises", "Our promises", "No recommendations, no trackers, no ads") +
         menuRow("acct-tour", "tour", "How to use", "A walk through the app, one tip at a time") +
         '<span class="menu-slot-feedback"></span>' +
         // Operator-only (admin-in-pwa-tab): hidden until AOTDOperator.gate() confirms
@@ -2210,6 +2217,9 @@
     // meets, and the tour can be restarted from there.)
     _acctMenu.querySelector(".acct-whatis").addEventListener("click", () => {
       if (window.openAboutDoor) window.openAboutDoor();
+    });
+    _acctMenu.querySelector(".acct-promises").addEventListener("click", () => {
+      if (window.openPromisesDoor) window.openPromisesDoor();
     });
     _acctMenu.querySelector(".acct-tour").addEventListener("click", () => {
       startTourOnToday();

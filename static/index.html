@@ -431,6 +431,52 @@
 <!-- ABOUT (FB#97, was U19's "About the data"): the ☰ menu's About door — why this
      exists, in the owner's own words and nothing else (v355). Same calm card shape as
      the welcome. Pull-only; it never opens itself. -->
+<!-- OUR PROMISES (owner, 2026-10-15; docs/mockups/promises): what Music Forest doesn't do,
+     said plainly, behind ☰ › Our promises — a door like About. The owner: the app "doesn't
+     exactly make it clear that there are no recommendations/tracking happening. this is
+     such a central part of the app". Every sentence was checked against the code on
+     2026-10-15 (the deal, the shuffle, what's counted, what's encrypted). If any of those
+     change, this changes with them — it is a promise, so it has to stay literally true. -->
+<div id="promisesModal" class="modal onboard-modal hidden" role="dialog"
+     aria-modal="true" aria-labelledby="promisesTitle">
+  <div class="onboard-card">
+    <button id="promisesClose" type="button" class="modal-close onboard-close"
+      title="Close">✕</button>
+    <h3 id="promisesTitle">Our promises</h3>
+    <div class="onboard-body promises">
+      <p><b>No recommendations.</b> Today is every record released on this date, in any year,
+        that can be played somewhere. Nothing is selected for you.</p>
+      <p><b>A fresh shuffle, every time.</b> Each time you open the app, Today's records are
+        shuffled, with genres taking turns. The only things that narrow them are the ones you
+        set: the services you listen on, and Filter.</p>
+      <p><b>Nothing you've done decides what you see.</b> Your notes, the records you open and
+        your searches never shape Today. The records you pass with Next wait in Seen for the
+        rest of the day, so you don't meet them twice.</p>
+      <p><b>No ads, no paid placement.</b> Nobody can pay to put a record in front of you.</p>
+      <p><b>No trackers.</b> No analytics, no advertising cookies, no third-party trackers. We
+        count a few totals — how often the app is opened, Listen taps per service, searches —
+        never who.</p>
+      <p><b>Your notebook is yours.</b> With an account, it's encrypted on your device before
+        it's saved, and we can't read it. As a guest, it never leaves this browser.</p>
+      <p><b>Nothing comes looking for you.</b> No notifications, no streaks, no "on this day"
+        reminders. It's here when you want it.</p>
+      <p class="promise-foot">The details are in our <a href="/privacy" class="pull-link"
+        target="_blank" rel="noopener">Privacy Policy</a>.</p>
+    </div>
+  </div>
+</div>
+<!-- HOW TODAY WORKS: the door behind the ⓘ on Today's date (same session). app.js fills
+     it on open (openTodayWhy) with the day, the day's real count, and whether your own
+     services narrow it — so it can say exactly what you're looking at. -->
+<div id="todayWhyModal" class="modal onboard-modal hidden" role="dialog"
+     aria-modal="true" aria-labelledby="todayWhyTitle">
+  <div class="onboard-card">
+    <button id="todayWhyClose" type="button" class="modal-close onboard-close"
+      title="Close">✕</button>
+    <h3 id="todayWhyTitle">How today works</h3>
+    <div class="onboard-body promises" id="todayWhyBody"></div>
+  </div>
+</div>
 <div id="dataModal" class="modal onboard-modal hidden" role="dialog"
      aria-modal="true" aria-label="About Music Forest">
   <div class="onboard-card">
